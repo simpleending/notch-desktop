@@ -1,0 +1,18 @@
+export {
+  saveMemory,
+  loadMemories,
+  loadMemoriesByType,
+  deleteMemory,
+  searchMemories,
+  formatMemoriesForPrompt,
+  getMemoryDir,
+  getMemorySummaryPath,
+  getMemoryPromptStats,
+  compactMemoriesWithModel,
+  extractMemoryCandidate,
+  rememberUserPreference,
+  type Memory,
+  type MemoryType,
+  type MemoryPromptStats,
+  type MemoryCompactionResult,
+} from './store.js';

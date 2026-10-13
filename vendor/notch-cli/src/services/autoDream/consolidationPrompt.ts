@@ -1,0 +1,114 @@
+/**
+ * Notch CLI — autoDream Consolidation Prompt
+ *
+ * The 4-phase dream prompt. Sent to a forked `general` subagent with tool
+ * access scoped (by the caller) to the memory + sessions directories.
+ *
+ * Phases:
+ *   1. Orient    — ls the memory dir, read MEMORY.md, skim existing entries
+ *   2. Gather    — list recent session files, skim first pages, cross-ref
+ *   3. Consolidate — fix drifted memories, promote recurring topics
+ *   4. Prune     — keep MEMORY.md under 25KB / 200 lines
+ *
+ * Port of yasasbanukaofficial/claude-code's
+ * `src/services/autoDream/consolidationPrompt.ts`, adapted to Notch's memory
+ * layout: flat `~/.notch/memory/` with `<type>_<slug>.md` files and a
+ * generated `MEMORY.md` index (see src/memory/store.ts).
+ *
+ * Copyright 2026 Driftrail. Apache-2.0.
+ */
+
+import path from 'node:path';
+import os from 'node:os';
+
+const MEMORY_DIR = path.join(os.homedir(), '.notch', 'memory');
+const SESSION_DIR = path.join(os.homedir(), '.notch', 'sessions');
+const INDEX_FILE = 'MEMORY.md';
+const MAX_INDEX_LINES = 200;
+const MAX_INDEX_BYTES = 25 * 1024;
+
+/**
+ * The prompt body, pre-rendered with concrete paths for THIS install.
+ * Exported as a constant string because it never depends on per-call input —
+ * the subagent works out everything else from the filesystem.
+ */
+export const DREAM_PROMPT: string = buildPrompt();
+
+function buildPrompt(): string {
+  return `# Dream: Memory Consolidation
+
+You are performing a dream — a reflective pass over your memory files. The goal is to synthesize what the user has been working on recently into durable, well-organized memories so that future notch sessions can orient quickly.
+
+You are a background subagent. The user is not watching. Be precise, conservative, and opinionated. Do not narrate; do the work.
+
+Memory directory: \`${MEMORY_DIR}\`
+Session transcripts: \`${SESSION_DIR}\` (JSON files — read first 5KB, don't load whole files)
+Index file: \`${INDEX_FILE}\` at the top of the memory directory. Auto-generated; you may update pointers and one-line hooks but never dump content into it.
+
+---
+
+## Phase 1 — Orient
+
+- \`glob\` pattern \`${MEMORY_DIR}/*.md\` to see what already exists (files are named \`<type>_<slug>.md\` where type is one of user / feedback / project / reference).
+- \`read\` \`${MEMORY_DIR}/${INDEX_FILE}\` to understand the current index.
+- Skim a few existing topic files before you touch anything, so you improve them rather than creating near-duplicates.
+
+## Phase 2 — Gather recent signal
+
+- \`glob\` pattern \`${SESSION_DIR}/*.json\` sorted by mtime. List the 10 most recent.
+- For each recent session, \`read\` only its first ~5KB (offset 1, limit 80) and extract:
+  - What topic / project was being worked on?
+  - Any explicit "remember this" / "we should capture" moments from the user?
+  - Any corrections to earlier assumptions (those often reveal drifted memories)?
+- If you need to check a specific term, \`grep\` the sessions dir narrowly — do NOT dump whole files:
+  \`grep -n "<narrow term>" ${SESSION_DIR}\`
+
+## Phase 3 — Consolidate
+
+For each thing worth remembering, \`write\` or \`edit\` a memory file inside \`${MEMORY_DIR}\`. Follow Notch's file format exactly:
+
+\`\`\`
+---
+name: <short title>
+description: <one-line hook under ~150 chars>
+type: user | feedback | project | reference
+updated: YYYY-MM-DD
+---
+
+<body — markdown, short, load-bearing facts only>
+\`\`\`
+
+Operations to perform, in this order:
+
+1. **Drifted memories.** A memory is drifted when its content no longer matches the current state of the project (e.g. memory says "tool X exists" but X was renamed, or memory pins a version that has moved). Confirm drift by checking the repo the memory points at (use \`read\` / \`grep\` in the project cwd if you have it). Update the file in place — fix the wrong fact, bump \`updated:\`, preserve everything else.
+
+2. **Dead memories.** If a memory describes a feature that no longer exists at all (not renamed, not moved — gone), delete the file. Use \`edit\` with an empty replacement is NOT the way; instead \`shell\` \`rm\` the specific file. Only delete if you are certain — when in doubt, leave the memory and add a \`(stale as of <date>)\` note to the description.
+
+3. **Promote recurring topics.** If a topic appears in >=3 recent sessions but has NO matching memory, create a new one. Pick the right \`type\`:
+   - \`user\` — durable facts about the human (name, email, time zone, personal workflows)
+   - \`feedback\` — behavioral corrections the user explicitly gave (never X, always Y)
+   - \`project\` — facts about a specific project in the user's codebase
+   - \`reference\` — external API docs / leaked source / protocol specs worth remembering
+
+4. **Merge duplicates.** If two files cover overlapping ground, fold the newer facts into the richer file and delete the redundant one.
+
+Keep every memory under ~400 lines. If a memory grows past that, split it by subtopic.
+
+## Phase 4 — Prune and re-index
+
+The \`${INDEX_FILE}\` is auto-generated by \`updateIndex()\` in the memory store; it will be rebuilt by any \`saveMemory\` call. You do NOT need to hand-edit it in most cases. However, verify:
+
+- \`${INDEX_FILE}\` is under ${MAX_INDEX_BYTES} bytes and under ${MAX_INDEX_LINES} lines.
+- Each index entry is one line: \`- [<filename>](<filename>) — <description>\`.
+- If the index is over budget, the fix is to shrink \`description:\` fields in individual memory frontmatter — not to truncate the index file directly (it will be regenerated).
+
+After your writes, if you want to force a rebuild, \`edit\` a single memory file to bump its \`updated:\` line and save — the index refreshes automatically.
+
+---
+
+## Output
+
+Return a brief plain-text summary of what you consolidated, updated, promoted, or pruned — one bullet per change. If nothing changed (memories already tight), say exactly that. Do not ask the user questions — they are not watching.
+
+Conservative default: if you are unsure, DO NOTHING rather than invent structure. Dreams run every 24h; there is always another chance.`;
+}

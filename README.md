@@ -1,14 +1,16 @@
-# Notch Desktop
+# notch desktop
 
 Public development repository for a free desktop coding workbench, with local open models first and optional OpenRouter, OpenAI and Anthropic API keys.
 
-The desktop port has started. This repository currently provides tested upstream inspection, the published Notch CLI model-management bridge, and cached lab/publisher logos. The full editor/session integration is still being implemented; this is not a finished IDE release.
+The desktop port is in development. Its session adapter runs the real CLI provider/tool loop, streams assistant/tool messages, requests exact tool approvals, cancels active work and saves conversation state. An isolated Electron prototype retains the upstream workbench. Full editor/session integration, both themes and release verification are still being completed; this is not a finalized IDE release.
 
 ```sh
 npm ci --ignore-scripts
 npm test
 npm run models
 npm run inspect:upstream -- --installation "/path/to/installed/app" --out analysis.json
+npm run build:core
+npm run build:prototype -- --installation "/path/to/installed/app"
 ```
 
 Node.js 22.19+ is required. Notch CLI 0.7.0 is pinned so the desktop uses its tested model sizing, Hugging Face downloads, isolated Ollama runtime, optional Apple Silicon MLX and memory-release behavior. API keys stay with the CLI credential store. An editor renderer will receive explicit IPC capabilities rather than arbitrary Node or shell access.
@@ -18,3 +20,9 @@ The user confirmed written modification and redistribution rights for the instal
 The port replaces application branding and provider routing. Actual open model names and repository IDs remain accurate, including Qwen models when selected from the model dropdown. A repository creation date is used for newest-first ordering; it does not establish model capability or quality.
 
 MLX is beta pending Apple hardware verification. No Qoder performance-parity claim or production desktop build is made yet.
+
+The shared CLI core source is included under `vendor/notch-cli` with its license, so the desktop harness can be rebuilt and inspected without a private checkout. The published CLI stays at 0.7.0; desktop approval/session extensions are bundled separately here. Agent tool restrictions apply independently of global full access.
+
+Initial live harness verification used the installed Hugging Face Qwen3.5 4B model: it read a test, requested write and shell approvals, created a correct finite-number addition function and ran the test successfully. The model was unloaded afterward. An earlier native prototype started with a separate user-data directory; the complete lowercase rename is being validated against inherited runtime/schema assumptions.
+
+The lowercase SVG [wordmark](assets/notch-wordmark.svg) has [dark](assets/notch-wordmark-dark.svg) and [light](assets/notch-wordmark-light.svg) variants. The finalized dark-mode IDE capture will be used on freesyntax.dev after the end-to-end UI gate passes.

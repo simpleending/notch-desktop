@@ -1,0 +1,104 @@
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import type { ModelMessage } from 'ai';
+import { loadConfig, selectModel } from './config.js';
+import { resolveModel } from './providers/registry.js';
+import { runAgentLoop, buildSystemPrompt, type AgentConfig } from './agent/loop.js';
+import { CheckpointManager } from './agent/checkpoints.js';
+import { parsePatch } from './tools/apply-patch.js';
+import { loadPermissions, checkPermission, type PermissionRule } from './permissions/index.js';
+import { checkAccess, type AccessMode } from './permissions/access.js';
+import type { ToolContext } from './tools/types.js';
+
+export { CheckpointManager };
+export { detectLocalHardware, modelFit } from './providers/local-models.js';
+export type { ModelMessage, AccessMode };
+export interface DesktopTurn {
+  cwd: string;
+  sessionId: string;
+  messages: ModelMessage[];
+  model?: string;
+  baseUrl?: string;
+  contextWindow?: number;
+  ollamaBatch?: number;
+  tools?: string[];
+  allowedTools?: string[];
+  disallowedTools?: string[];
+  instructions?: string;
+  accessMode: AccessMode;
+  signal: AbortSignal;
+  checkpoints: CheckpointManager;
+  approve: NonNullable<ToolContext['confirmTool']>;
+  maxIterations?: number;
+  onText?: AgentConfig['onTextChunk'];
+  onToolCall?: AgentConfig['onToolCall'];
+  onToolResult?: AgentConfig['onToolResult'];
+  onLog?: (message: string) => void;
+  onLifecycle?: (event: string, payload: Record<string, unknown>) => Promise<void>;
+}
+
+const desktopToolNames: Record<string, string> = { Read: 'read', Write: 'write', Edit: 'edit', Bash: 'shell', Glob: 'glob', Grep: 'grep', Git: 'git', ApplyPatch: 'apply_patch', WebFetch: 'web_fetch', Agent: 'task' };
+export function desktopToolName(name: string): string { return desktopToolNames[name] ?? name; }
+export function definitionRules(values: string[] = [], level: 'allow' | 'deny'): PermissionRule[] {
+  return values.map(value => {
+    const match = /^([\w*.-]+)(?:\((.+)\))?$/.exec(value);
+    if (!match) throw new Error(`Unsupported desktop tool policy: ${value}`);
+    if (match[1]!.includes('*') && match[1] !== '*') throw new Error(`Unsupported desktop tool wildcard: ${value}`);
+    return { tool: desktopToolName(match[1]!), level, ...(match[2] ? { pattern: match[2] } : {}) };
+  });
+}
+
+/** The desktop uses the CLI's real provider, tool and permission implementation. */
+export async function runDesktopTurn(turn: DesktopTurn) {
+  const cwd = await fs.realpath(turn.cwd);
+  if (!(await fs.stat(cwd)).isDirectory()) throw new Error('Choose a workspace directory.');
+  if (!['approve', 'read-only', 'full-access'].includes(turn.accessMode)) throw new Error('Invalid desktop access mode.');
+  turn.signal.throwIfAborted();
+  const config = await loadConfig({ projectRoot: cwd });
+  const selection = { ...(turn.model && turn.model !== 'auto' ? selectModel(config.models.chat, { model: turn.model }) : config.models.chat),
+    ...(turn.baseUrl ? { baseUrl: turn.baseUrl } : {}),
+    ...(turn.contextWindow ? { contextWindow: turn.contextWindow } : {}),
+    ...(turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}),
+  };
+  if (selection.byokProvider === 'ollama' && selection.baseUrl?.replace(/\/v1\/?$/, '') === 'http://127.0.0.1:11436') {
+    const { managedOllama } = await import('./providers/ollama-runtime.js');
+    await managedOllama('0.30.0', turn.signal);
+  }
+  if (selection.byokProvider === 'mlx') {
+    const { startMlx } = await import('./providers/local-runner.js');
+    const { parseByokRef } = await import('./providers/byok.js');
+    selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
+  }
+  const permissions = await loadPermissions(cwd);
+  const allowed = definitionRules(turn.allowedTools, 'allow'), denied = definitionRules(turn.disallowedTools, 'deny');
+  const ctx: ToolContext = {
+    cwd, abortSignal: turn.signal, accessMode: turn.accessMode,
+    requireConfirm: false, confirm: async () => false, confirmTool: turn.approve,
+    onlyTools: turn.tools?.map(desktopToolName),
+    permissionSurface: 'interactive', permissionSessionId: turn.sessionId,
+    log: turn.onLog || (() => {}),
+    checkPermission: (name, args) => {
+      if (checkPermission({ default: 'allow', rules: denied }, name, args) === 'deny') return 'deny';
+      if (allowed.length && checkPermission({ default: 'deny', rules: allowed }, name, args) !== 'allow') return 'deny';
+      return checkAccess(turn.accessMode, permissions, name, args);
+    },
+    runHook: async (event, payload) => {
+      await turn.onLifecycle?.(event, payload);
+      if (event !== 'pre-tool') return;
+      const args = payload.args as Record<string, unknown>;
+      if ((payload.tool === 'write' || payload.tool === 'edit') && typeof args.path === 'string') await turn.checkpoints.recordBefore(path.resolve(cwd, args.path));
+      if (payload.tool === 'apply_patch' && typeof args.input === 'string') for (const action of parsePatch(args.input)) {
+        await turn.checkpoints.recordBefore(path.resolve(cwd, action.target));
+        if (action.kind === 'update' && action.moveTo) await turn.checkpoints.recordBefore(path.resolve(cwd, action.moveTo));
+      }
+    },
+  };
+  try {
+    return await runAgentLoop(turn.messages, {
+      model: resolveModel(selection), modelId: selection.model,
+      systemPrompt: (await buildSystemPrompt(cwd, selection.model, ctx)) + (turn.instructions ? `\n\nDesktop agent instructions:\n${turn.instructions}` : ''), toolContext: ctx,
+      maxIterations: turn.maxIterations, contextWindow: selection.contextWindow,
+      onTextChunk: turn.onText, onToolCall: turn.onToolCall, onToolResult: turn.onToolResult,
+    });
+  } finally { await turn.checkpoints.commit('Desktop turn'); }
+}

@@ -1,0 +1,469 @@
+{
+  "schema_version": 1,
+  "_notes": "Human-readable approval prompts for high-stakes (consequential) tool calls. Modeled after OpenAI Codex's consequential_tool_message_templates.json but simplified for Notch's tool surface. The first entry that matches wins. When no entry matches, the caller falls back to the generic paramSummary prompt.",
+  "templates": [
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "rm -rf" },
+      "message": "Recursively delete {target}?",
+      "template_params": [
+        { "name": "target", "from_arg": "command", "extract": "after:rm -rf " }
+      ]
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git push --force" },
+      "message": "Force-push branch (rewrites remote history)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git push -f" },
+      "message": "Force-push branch (rewrites remote history)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git push --force-with-lease" },
+      "message": "Force-push with lease (rewrites remote history if your ref is current)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git reset --hard" },
+      "message": "Hard-reset the working tree (discards uncommitted changes)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git checkout -- ." },
+      "message": "Discard ALL unstaged changes in the working tree?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git checkout ." },
+      "message": "Discard ALL unstaged changes in the working tree?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git restore ." },
+      "message": "Restore ALL tracked files from HEAD (discards working-tree changes)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git clean -f" },
+      "message": "Force-remove all untracked files from the working tree?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git branch -D" },
+      "message": "Force-delete branch {branch} (unmerged commits will be lost)?",
+      "template_params": [
+        { "name": "branch", "from_arg": "command", "extract": "after:git branch -D " }
+      ]
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "git tag -d" },
+      "message": "Delete git tag {tag}?",
+      "template_params": [
+        { "name": "tag", "from_arg": "command", "extract": "after:git tag -d " }
+      ]
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_regex": "git\\s+push\\s+\\S+\\s+(master|main)(\\s|$)" },
+      "message": "Push directly to the default branch (main/master)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "kill -9" },
+      "message": "Send SIGKILL (uncatchable) to process {pid}?",
+      "template_params": [
+        { "name": "pid", "from_arg": "command", "extract": "after:kill -9 " }
+      ]
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "kill -KILL" },
+      "message": "Send SIGKILL (uncatchable) to process {pid}?",
+      "template_params": [
+        { "name": "pid", "from_arg": "command", "extract": "after:kill -KILL " }
+      ]
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "pkill -9" },
+      "message": "Send SIGKILL to all processes matching {pattern}?",
+      "template_params": [
+        { "name": "pattern", "from_arg": "command", "extract": "after:pkill -9 " }
+      ]
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "npm publish" },
+      "message": "Publish package to the npm registry (irreversible)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "yarn publish" },
+      "message": "Publish package to the npm registry via yarn (irreversible)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "pnpm publish" },
+      "message": "Publish package to the npm registry via pnpm (irreversible)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "cargo publish" },
+      "message": "Publish crate to crates.io (irreversible)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "pip install --break-system-packages" },
+      "message": "Install pip package into the system Python (bypasses PEP 668 protection)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "sudo pip install" },
+      "message": "Install pip package with sudo (modifies system Python)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "chmod -R 777" },
+      "message": "Recursively set world-writable permissions on {target}?",
+      "template_params": [
+        { "name": "target", "from_arg": "command", "extract": "after:chmod -R 777 " }
+      ]
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "chown -R" },
+      "message": "Recursively change ownership of files?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "dd if=" },
+      "message": "Run low-level dd write (can destroy disks/filesystems)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "mkfs" },
+      "message": "Create a new filesystem (ERASES the target device)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "shutdown" },
+      "message": "Shutdown the machine?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "reboot" },
+      "message": "Reboot the machine?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_contains": "curl " },
+      "message": "Run curl against external URL (network egress)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_regex": "\\|\\s*sh(\\s|$)" },
+      "message": "Pipe remote content into sh (execute untrusted code)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "shell",
+      "match": { "command_regex": "\\|\\s*bash(\\s|$)" },
+      "message": "Pipe remote content into bash (execute untrusted code)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "write",
+      "match": { "path_basename": ".env" },
+      "message": "Write environment file .env (may contain secrets)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "write",
+      "match": { "path_contains": ".env." },
+      "message": "Write environment file {path} (may contain secrets)?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "exact:path" }
+      ]
+    },
+    {
+      "tool_name": "write",
+      "match": { "path_basename": "secrets.json" },
+      "message": "Write secrets file {path}?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "path-basename:path" }
+      ]
+    },
+    {
+      "tool_name": "write",
+      "match": { "path_basename": "credentials.json" },
+      "message": "Write credentials file {path}?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "path-basename:path" }
+      ]
+    },
+    {
+      "tool_name": "write",
+      "match": { "path_contains": "/etc/" },
+      "message": "Write system config file at {path}?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "exact:path" }
+      ]
+    },
+    {
+      "tool_name": "write",
+      "match": { "path_contains": "/.ssh/" },
+      "message": "Write to SSH config/keys at {path}?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "exact:path" }
+      ]
+    },
+    {
+      "tool_name": "edit",
+      "match": { "path_basename": ".env" },
+      "message": "Edit environment file .env (may contain secrets)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "edit",
+      "match": { "path_contains": ".env." },
+      "message": "Edit environment file {path} (may contain secrets)?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "exact:path" }
+      ]
+    },
+    {
+      "tool_name": "edit",
+      "match": { "path_basename": "secrets.json" },
+      "message": "Edit secrets file {path}?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "path-basename:path" }
+      ]
+    },
+    {
+      "tool_name": "edit",
+      "match": { "path_basename": "credentials.json" },
+      "message": "Edit credentials file {path}?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "path-basename:path" }
+      ]
+    },
+    {
+      "tool_name": "edit",
+      "match": { "path_contains": "/etc/" },
+      "message": "Edit system config file at {path}?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "exact:path" }
+      ]
+    },
+    {
+      "tool_name": "edit",
+      "match": { "path_contains": "/.ssh/" },
+      "message": "Edit SSH config/keys at {path}?",
+      "template_params": [
+        { "name": "path", "from_arg": "path", "extract": "exact:path" }
+      ]
+    },
+    {
+      "tool_name": "apply_patch",
+      "match": { "patch_contains": ".env" },
+      "message": "Apply patch that touches an .env file?",
+      "template_params": []
+    },
+    {
+      "tool_name": "apply_patch",
+      "match": { "patch_contains": "secrets.json" },
+      "message": "Apply patch that touches secrets.json?",
+      "template_params": []
+    },
+    {
+      "tool_name": "apply_patch",
+      "match": { "patch_contains": "credentials.json" },
+      "message": "Apply patch that touches credentials.json?",
+      "template_params": []
+    },
+    {
+      "tool_name": "git",
+      "match": { "arg_equals": { "op": "push_force" } },
+      "message": "Force-push branch (rewrites remote history)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "git",
+      "match": { "arg_equals": { "op": "reset_hard" } },
+      "message": "Hard-reset the working tree (discards uncommitted changes)?",
+      "template_params": []
+    },
+    {
+      "tool_name": "git",
+      "match": { "arg_equals": { "op": "branch_delete_force" } },
+      "message": "Force-delete branch {branch} (unmerged commits will be lost)?",
+      "template_params": [
+        { "name": "branch", "from_arg": "branch", "extract": "exact:branch" }
+      ]
+    },
+    {
+      "tool_name": "git",
+      "match": { "arg_equals": { "op": "tag_delete" } },
+      "message": "Delete git tag {tag}?",
+      "template_params": [
+        { "name": "tag", "from_arg": "tag", "extract": "exact:tag" }
+      ]
+    },
+    {
+      "tool_name": "git",
+      "match": { "arg_equals": { "op": "push", "branch": "main" } },
+      "message": "Push directly to main?",
+      "template_params": []
+    },
+    {
+      "tool_name": "git",
+      "match": { "arg_equals": { "op": "push", "branch": "master" } },
+      "message": "Push directly to master?",
+      "template_params": []
+    },
+    {
+      "tool_name": "github",
+      "match": { "arg_equals": { "op": "pr_merge" } },
+      "message": "Merge pull request #{number} in {repo}?",
+      "template_params": [
+        { "name": "number", "from_arg": "number", "extract": "exact:number" },
+        { "name": "repo", "from_arg": "repo", "extract": "exact:repo" }
+      ]
+    },
+    {
+      "tool_name": "github",
+      "match": { "arg_equals": { "op": "pr_close" } },
+      "message": "Close pull request #{number} in {repo}?",
+      "template_params": [
+        { "name": "number", "from_arg": "number", "extract": "exact:number" },
+        { "name": "repo", "from_arg": "repo", "extract": "exact:repo" }
+      ]
+    },
+    {
+      "tool_name": "github",
+      "match": { "arg_equals": { "op": "repo_delete" } },
+      "message": "DELETE repository {repo} (irreversible)?",
+      "template_params": [
+        { "name": "repo", "from_arg": "repo", "extract": "exact:repo" }
+      ]
+    },
+    {
+      "tool_name": "github",
+      "match": { "arg_equals": { "op": "release_create" } },
+      "message": "Publish GitHub release {tag} in {repo}?",
+      "template_params": [
+        { "name": "tag", "from_arg": "tag", "extract": "exact:tag" },
+        { "name": "repo", "from_arg": "repo", "extract": "exact:repo" }
+      ]
+    },
+    {
+      "tool_name_regex": "^mcp_[a-z0-9_-]+_send(_message)?$",
+      "message": "Send a message via {server} to {channel}?",
+      "template_params": [
+        { "name": "server", "from_tool_name": true, "extract": "regex:^mcp_([a-z0-9-]+)_" },
+        { "name": "channel", "from_arg": "channel", "extract": "exact:channel" }
+      ]
+    },
+    {
+      "tool_name_regex": "^mcp_[a-z0-9_-]+_post(_message)?$",
+      "message": "Post a message via {server}?",
+      "template_params": [
+        { "name": "server", "from_tool_name": true, "extract": "regex:^mcp_([a-z0-9-]+)_" }
+      ]
+    },
+    {
+      "tool_name_regex": "^mcp_[a-z0-9_-]+_create_[a-z0-9_-]+$",
+      "message": "Create {resource} via {server}?",
+      "template_params": [
+        { "name": "server", "from_tool_name": true, "extract": "regex:^mcp_([a-z0-9-]+)_" },
+        { "name": "resource", "from_tool_name": true, "extract": "regex:^mcp_[a-z0-9-]+_create_([a-z0-9_-]+)$" }
+      ]
+    },
+    {
+      "tool_name_regex": "^mcp_[a-z0-9_-]+_delete_[a-z0-9_-]+$",
+      "message": "Delete {resource} via {server} (irreversible)?",
+      "template_params": [
+        { "name": "server", "from_tool_name": true, "extract": "regex:^mcp_([a-z0-9-]+)_" },
+        { "name": "resource", "from_tool_name": true, "extract": "regex:^mcp_[a-z0-9-]+_delete_([a-z0-9_-]+)$" }
+      ]
+    },
+    {
+      "tool_name_regex": "^mcp_[a-z0-9_-]+_update_[a-z0-9_-]+$",
+      "message": "Update {resource} via {server}?",
+      "template_params": [
+        { "name": "server", "from_tool_name": true, "extract": "regex:^mcp_([a-z0-9-]+)_" },
+        { "name": "resource", "from_tool_name": true, "extract": "regex:^mcp_[a-z0-9-]+_update_([a-z0-9_-]+)$" }
+      ]
+    },
+    {
+      "tool_name_regex": "^mcp_email_.*send.*$",
+      "message": "Send an email to {to} via {server}?",
+      "template_params": [
+        { "name": "server", "from_tool_name": true, "extract": "regex:^mcp_([a-z0-9-]+)_" },
+        { "name": "to", "from_arg": "to", "extract": "exact:to" }
+      ]
+    },
+    {
+      "tool_name_regex": "^mcp_slack_.*$",
+      "message": "Perform Slack action via {server}?",
+      "template_params": [
+        { "name": "server", "from_tool_name": true, "extract": "regex:^mcp_([a-z0-9-]+)_" }
+      ]
+    },
+    {
+      "tool_name": "code_exec",
+      "message": "Run a script (cell {cell_id}) that may invoke other tools?",
+      "template_params": [
+        { "name": "cell_id", "from_arg": "cell_id", "extract": "exact:cell_id" }
+      ]
+    },
+    {
+      "tool_name": "code_wait",
+      "message": "Resume running cell {cell_id}?",
+      "template_params": [
+        { "name": "cell_id", "from_arg": "cell_id", "extract": "exact:cell_id" }
+      ]
+    },
+    {
+      "tool_name": "web_fetch",
+      "match": { "arg_contains": { "arg": "url", "value": "localhost" } },
+      "message": "Fetch localhost URL {url} (may reach internal services)?",
+      "template_params": [
+        { "name": "url", "from_arg": "url", "extract": "exact:url" }
+      ]
+    },
+    {
+      "tool_name": "web_fetch",
+      "match": { "arg_contains": { "arg": "url", "value": "127.0.0.1" } },
+      "message": "Fetch loopback URL {url} (may reach internal services)?",
+      "template_params": [
+        { "name": "url", "from_arg": "url", "extract": "exact:url" }
+      ]
+    }
+  ]
+}

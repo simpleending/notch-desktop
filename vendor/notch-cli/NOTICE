@@ -1,0 +1,8 @@
+This directory contains the Apache-2.0 Notch CLI core by Driftrail, based on
+@freesyntax/notch-cli 0.7.0 / FreeSyntax source commit 37968726, with desktop
+session/approval extensions. It is included as source so the shared harness
+can be rebuilt without a private repository checkout.
+
+Desktop changes add structured approvals, stable tool-call identities,
+agent definition restrictions, lifecycle journaling and a reusable turn API.
+The public npm 0.7.0 artifact is a separate, previously verified release.
