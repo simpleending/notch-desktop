@@ -17,11 +17,14 @@ try {
     const api = window.notchDesktop || window.qoderDesktop;
     return await api.listChatComposerModels({ fetchStrategy: 'cache', executionHostKind: 'local', workspaceDirectories: [] });
   });
-  await window.screenshot({ path: reportFile.replace(/\.json$/, '.png') });
-  const state = await window.evaluate(() => ({ title: document.title, text: document.body.innerText.slice(0, 8000), globals: Object.keys(window).filter(key => /qoder|notch/i.test(key)) }));
+  const state = await window.evaluate(() => ({ title: document.title, text: document.body.innerText.slice(0, 8000), globals: Object.keys(window).filter(key => /qoder|notch/i.test(key)), apiKeys: Object.keys(window.notchDesktop || window.qoderDesktop || {}).filter(key => /workspace|setting|theme|session/i.test(key)) }));
   const identity = await app.evaluate(({ app, BrowserWindow }) => ({ name: app.getName(), dataDirectory: app.getPath('userData'), windows: BrowserWindow.getAllWindows().length }));
   const report = { executable, elapsedMs: Date.now() - started, identity, state, catalog, errors };
   await writeFile(reportFile, JSON.stringify(report, null, 2));
+  if (process.argv.includes('--capture')) {
+    await app.evaluate(({ BrowserWindow }) => { for (const window of BrowserWindow.getAllWindows()) window.show(); });
+    await window.screenshot({ path: reportFile.replace(/\.json$/, '.png'), timeout: 15000 });
+  }
   console.log(JSON.stringify({ reportFile, identity, globals: state.globals, errors: errors.slice(0, 3) }, null, 2));
 } catch (error) {
   await writeFile(reportFile, JSON.stringify({ executable, error: error.message, errors }, null, 2)); throw error;
