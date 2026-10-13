@@ -1,0 +1,13 @@
+node_modules/
+.env*
+!.env.example
+.npmrc
+.notch.json
+.notch/
+upstream/
+analysis/
+dist/
+release/
+*.log
+*.tgz
+*.asar
