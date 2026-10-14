@@ -13,6 +13,8 @@ npm run build:core
 npm run build:prototype -- --installation "/path/to/installed/app"
 ```
 
+On Windows x64, `npm run package:windows` packages the current prototype as an unsigned preview installer. It uses pinned electron-builder 26.15.3 and its cached Windows resource editor. The installer launches notch directly, without a separate update launcher, and keeps application data on uninstall. `npm run verify:settings -- /path/to/Notch.exe` visits all visible settings sections in an isolated profile. The package check verifies the secondary artwork, product labels and renderer imports before creating an installer.
+
 Node.js 22.19+ is required. The desktop uses CLI 0.7.2 for guided Hugging Face installs and a vendored CLI harness for agent turns. The model picker exposes only specific IPC methods. Desktop API keys are validated with their provider and saved through Electron’s asynchronous OS encryption; no secure store means session-only keys. Keys are not returned to the renderer, included in conversation state, or forwarded to unrelated child processes.
 
 The user confirmed written modification and redistribution rights for the installed Qoder application. Read-only inspection identified its Electron workbench and agent SDK boundary. See [the upstream analysis](upstream-analysis.md). Generated upstream archives, extracted application files, credentials and machine-specific analysis are excluded from Git. Third-party notices must remain with any redistributed components.

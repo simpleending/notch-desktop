@@ -2,9 +2,26 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from 'acorn';
 import { createNotchWorkbench } from '../src/workbench-skin.mjs';
-import { patchWorkbenchRenderer } from '../src/workbench-patch.mjs';
+import { patchWorkbenchRenderer, patchSecondaryArtwork } from '../src/workbench-patch.mjs';
 const React = { createElement(type, props, ...children) { return { type, props: props || {}, children }; } };
 function all(tree) { return [tree, ...tree.children.flat(Infinity).filter(child => child && typeof child === 'object').flatMap(all)]; }
+
+test('all secondary illustrations use the canonical notch symbol and patching is repeatable',()=>{
+  const names=['emptyIllustrationRaw','renderErrorIllustrationRaw','liveVoiceEmptyIllustration','emptyTimelineIllustration','failedMarkRaw','applePromptTitleRaw','workspaceFilesEmptyIllustrationRaw'];
+  const source=names.map(name=>`const ${name}=\`<svg>old vendor illustration</svg>\`;`).join('\n');
+  const patched=patchSecondaryArtwork(source);parse(patched,{ecmaVersion:'latest'});
+  assert.doesNotMatch(patched,/old vendor illustration/);assert.equal((patched.match(/aria-label=\\"notch/g)||[]).length,7);
+  assert.equal(patchSecondaryArtwork(patched),patched);
+  assert.equal(patchWorkbenchRenderer('/* notch workbench skin */\n'+source),'/* notch workbench skin */\n'+patched);
+  assert.throws(()=>patchSecondaryArtwork('const emptyIllustrationRaw=unknownMarkup;'),/declaration changed/);
+  const controls='function GeneralSettings(){return jsx.jsxs(Section,{children:[jsx.jsx(SettingsItem,{title:t("settings.homeGame"),control:game}),jsx.jsx(SettingsItem,{title:t("settings.notifications"),control:notification})]});} function DesktopPetSurface(){return oldPet();} const picker={children:applicationIconOptions.map(draw)};';
+  const cleaned=patchSecondaryArtwork(controls);parse(cleaned,{ecmaVersion:'latest'});
+  assert.doesNotMatch(cleaned,/settings.homeGame|oldPet/);assert.match(cleaned,/settings.notifications/);assert.match(cleaned,/filter\(style=>style==='notch'\)/);
+  const profile=patchSecondaryArtwork('function ProfileStickerCanvas(){return oldStickers();} function ProfileStickerExperience({children}){subscribeToStickers();return children;}');
+  assert.doesNotMatch(profile,/oldStickers|subscribeToStickers/);
+  const render=new Function(`${profile};return ProfileStickerExperience;`)();
+  assert.equal(render({children:'profile'}),'profile');
+});
 test('appearance controls forward explicit choices to the existing preferences', () => {
   const choices = [], theme = { resolvedTheme: 'forest-dark', themeMode: 'dark', setThemeMode: value => choices.push(value) };
   const { ThemeControls, Appearance, QuickStart, ModeSwitch, PanelLauncher } = createNotchWorkbench(React, () => theme);
@@ -32,7 +49,7 @@ test('appearance controls forward explicit choices to the existing preferences',
 
 const fixture = `
 function preloadDoodleAssets(){loadTrees();}
-${['AgentGreetingMark','AppleTreeDoodle','ImageDoodle','PartnerPlanGreetingMark','MobileAppDownloadPromo','NewChatCursorGrid','WorkbenchModeThemeSync','WorkbenchSidebarModeSwitch','WorkspaceTabsEmptyState','normalizeThemeMode','readInitialThemeMode','readColorMode','AppearanceSettings','ProfileMenu','ProfileSettingsForm','isChatComposerVoiceHoldPlaceholderPhaseAvailable','notchLogoLoader','notchLogo'].map(name => `function ${name}(){oldAppearance();}`).join('\n')}
+${['AgentGreetingMark','AppleTreeDoodle','ImageDoodle','PartnerPlanGreetingMark','MobileAppDownloadPromo','NewChatCursorGrid','FeedbackFloatingButton','FeedbackDialog','WorkbenchModeThemeSync','WorkbenchSidebarModeSwitch','WorkspaceTabsEmptyState','normalizeThemeMode','readInitialThemeMode','readColorMode','AppearanceSettings','ProfileMenu','ProfileSettingsForm','isChatComposerVoiceHoldPlaceholderPhaseAvailable','notchLogoLoader','notchLogo'].map(name => `function ${name}(){oldAppearance();}`).join('\n')}
 function ThemeProvider(){reactExports.useEffect(()=>{document.documentElement.setAttribute("data-theme",d1)},[d1]);}
 function SettingsView(){const N2=p1?void 0:w2==="developer"?"general":w2;const H2=M2.flatMap(D3=>D3.items);return H2;}
 function NewChatHomeContent(){return jsxRuntimeExports.jsxs("div",{"data-new-chat-b1-content":!0,children:[jsxRuntimeExports.jsx(PartnerPlanGreetingMark,{}),jsxRuntimeExports.jsx("h1",{children:"Beyond Coding"}),jsxRuntimeExports.jsx("div",{className:"mt-7 w-full max-w-[924px]",children:jsxRuntimeExports.jsx(NewChatWelcomeDashboard,{attentionEnabled:t1,attentionCount:n1,activity:r1,loadCreditsHeatmap:i1,onActivityPlaygroundEvent:s1,gameEntryDismissRequestId:h2})}),jsxRuntimeExports.jsx(ChatComposer,{onSubmit:J1,onStop:W1,placeholder:i2("newChat.placeholder")})]});}
@@ -51,4 +68,15 @@ test('reskin removes inherited art while preserving composer actions and native 
   assert.match(source,/data-notch-appearance|dataset.notchAppearance/);
   assert.equal(patchWorkbenchRenderer(source), source);
   assert.throws(() => patchWorkbenchRenderer(fixture.replace('data-new-chat-b1-content','changed-layout')), /anchor changed/);
+});
+
+test('feedback entry point and dialog render nothing without registering listeners or submitting', () => {
+  const source = patchWorkbenchRenderer(fixture);
+  const functions = parse(source, { ecmaVersion: 'latest', sourceType: 'module' }).body
+    .filter(node => node.type === 'FunctionDeclaration' && ['FeedbackFloatingButton', 'FeedbackDialog'].includes(node.id.name));
+  assert.equal(functions.length, 2);
+  for (const node of functions) {
+    const render = new Function(`${source.slice(node.start, node.end)};return ${node.id.name};`)();
+    assert.equal(render({ open: true }), null);
+  }
 });

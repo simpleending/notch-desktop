@@ -4,7 +4,7 @@ The production goal is active. Inherited code and passing UI tests do not establ
 
 | Requirement | Current evidence / remaining work |
 | --- | --- |
-| First launch, branding, quiet setup, dark/light UI, keyboard navigation | Windows setup and workbench verifiers pass on the packaged prototype. Broader surface audit remains. |
+| First launch, branding, quiet setup, dark/light UI, keyboard navigation | Windows preview setup and workbench checks pass on the installed app. All 19 visible settings sections pass the branding check; all 552 renderer files are scanned, secondary illustrations replaced and renderer exports checked. Rare interactive states still need wider manual coverage. |
 | Real local inference through the IDE | `verify:agent` runs the installed Hugging Face Qwen3.5 4B model through the real composer, native approval UI and CLI tools. Independent tests validate the resulting file. |
 | Exact write and command approvals | Native write approval holds the file unchanged until approved; shell execution receives its own approval. Read-only selection, automatic-mode semantics and full-access UI coverage remain. |
 | Accurate execution status and context usage | Packaged `verify:agent` proves known idle state, nonzero provider counts, correct context limit and persistence. Unit tests cover running/requires-action transitions and latest-request counts without summing earlier requests. |
@@ -19,7 +19,7 @@ The production goal is active. Inherited code and passing UI tests do not establ
 | Security and private data | Renderer isolation and workspace authorization are retained. IPC/navigation, credentials, untrusted content, permissions and sandbox/fuse audits remain. |
 | Dependencies and bundled notices | Full npm audit is clean after upgrading esbuild to 0.28.2; core build, strict typecheck and policy/adapter tests pass. Native-module and third-party notice completeness remain release gates. |
 | Performance and resource cleanup | File search runs separately and releases idle indexes. Local inference is unloaded after QA. Startup, editing under inference, large repositories and memory need measured comparison with the original baseline. |
-| Reproducible distribution and updates | Current packaging relies on a pinned installed upstream archive and records missing unpacked files. Fresh install/uninstall, artifact integrity, installer, supported OS builds, signing/update policy and public release remain. |
+| Reproducible distribution and updates | The Windows preview has a pinned NSIS packaging script, its own executable metadata, bundled notices and SHA-256 checksums. Startup launches directly without a previous update launcher. Packaging still relies on the pinned installed base archive; signing, automatic updates and other OS builds remain. |
 | Public source and final landing-page capture | Development source is public. Publish verified release artifacts and add the final dark IDE capture to freesyntax.dev only after these gates pass. |
 
 Verification reports contain machine-specific paths and remain outside the public repository. Commands and fixture checks belong in the repository so results can be reproduced. Release readiness requires all gates, including platform and performance requirements, rather than only the currently passing subset.

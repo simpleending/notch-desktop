@@ -1,15 +1,52 @@
 import { readFile, writeFile, cp, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { patchFunction } from './bundle-patch.mjs';
+import { readFileSync } from 'node:fs';
+import { parse } from 'acorn';
+
+const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
+export function patchSecondaryArtwork(source) {
+  source=source.replaceAll('https://github.com/simpleending/notch-desktop/commits/main/','https://github.com/simpleending/notch-desktop/releases');
+  for(const name of ['emptyIllustrationRaw','renderErrorIllustrationRaw','liveVoiceEmptyIllustration','emptyTimelineIllustration','failedMarkRaw','applePromptTitleRaw','workspaceFilesEmptyIllustrationRaw']) {
+    const expression=new RegExp(`\\b${name}=\x60([\\s\\S]*?)\x60`,'g');
+    const matches=[...source.matchAll(expression)];
+    if(!matches.length) {
+      if(source.includes(`${name}=`) && !source.includes(`${name}=${JSON.stringify(symbolMarkup)}`)) {
+        const previous=readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8');
+        if(source.includes(`${name}=${JSON.stringify(previous)}`)){source=source.replace(`${name}=${JSON.stringify(previous)}`,`${name}=${JSON.stringify(symbolMarkup)}`);continue;}
+        throw new Error(`Artwork declaration changed: ${name}`);
+      }
+      continue;
+    }
+    if(matches.length!==1 || matches[0][1].includes('${'))throw new Error(`Artwork declaration is ambiguous: ${name}`);
+    source=source.replace(expression,()=>`${name}=${JSON.stringify(symbolMarkup)}`);
+  }
+  source=source.replace('children:applicationIconOptions.map(',"children:applicationIconOptions.filter(style=>style==='notch').map(");
+  if(source.includes('function DesktopPetSurface('))source=patchFunction(source,'DesktopPetSurface','function DesktopPetSurface(){return null;}');
+  if(source.includes('function ProfileStickerCanvas('))source=patchFunction(source,'ProfileStickerCanvas','function ProfileStickerCanvas(){return null;}');
+  if(source.includes('function ProfileStickerExperience('))source=patchFunction(source,'ProfileStickerExperience','function ProfileStickerExperience({children}){return children;}');
+  if(source.includes('function GeneralSettings('))source=patchFunction(source,'GeneralSettings',body=>{
+    const spans=[];
+    function visit(node){
+      if(!node || typeof node!=='object')return;
+      if(node.type==='CallExpression' && node.arguments?.[0]?.name==='SettingsItem' && node.arguments[1]?.properties?.some(prop=>prop.key.name==='title' && prop.value.arguments?.[0]?.value==='settings.homeGame'))spans.push(node);
+      for(const value of Object.values(node))if(Array.isArray(value))value.forEach(visit);else visit(value);
+    }
+    visit(parse(body,{ecmaVersion:'latest'}));
+    for(const span of spans.sort((a,b)=>b.start-a.start))body=body.slice(0,span.start)+'null'+body.slice(span.end);
+    return body;
+  });
+  return source;
+}
 
 function replaceOnce(source, before, after) {
   if (source.split(before).length !== 2) throw new Error(`Workbench skin anchor changed: ${before.slice(0, 70)}`);
   return source.replace(before, after);
 }
 export function patchWorkbenchRenderer(source) {
-  if (source.includes('/* notch workbench skin */')) return source;
+  if (source.includes('/* notch workbench skin */')) return patchSecondaryArtwork(source);
   source = patchFunction(source, 'preloadDoodleAssets', 'function preloadDoodleAssets(){}');
-  for (const name of ['AgentGreetingMark', 'AppleTreeDoodle', 'ImageDoodle', 'PartnerPlanGreetingMark', 'MobileAppDownloadPromo', 'NewChatCursorGrid']) {
+  for (const name of ['AgentGreetingMark', 'AppleTreeDoodle', 'ImageDoodle', 'PartnerPlanGreetingMark', 'MobileAppDownloadPromo', 'NewChatCursorGrid', 'FeedbackFloatingButton', 'FeedbackDialog']) {
     source = patchFunction(source, name, `function ${name}(){return null;}`);
   }
   source = patchFunction(source, 'WorkbenchModeThemeSync', 'function WorkbenchModeThemeSync(){return null;}');
@@ -48,7 +85,7 @@ export function patchWorkbenchRenderer(source) {
         item("Local workspace",()=>nav.push({kind:"settings",section:"profile",query:""})),
         item(resolvedTheme.endsWith("-dark")?"Light appearance":"Dark appearance",()=>setThemeMode(resolvedTheme.endsWith("-dark")?"light":"dark")),
         jsxRuntimeExports.jsx(DropdownMenuSeparator,{}),
-        item("Release notes",()=>workbenchClient.openExternalUrl("https://github.com/simpleending/notch-desktop/commits/main/")),
+        item("Release notes",()=>workbenchClient.openExternalUrl("https://github.com/simpleending/notch-desktop/releases")),
         item("About notch",()=>workbenchClient.openExternalUrl("https://freesyntax.dev"))
       ]})
     ]});
@@ -64,7 +101,7 @@ export function patchWorkbenchRenderer(source) {
   source = replaceOnce(source, 'const NotchSetup=createNotchSetup(reactExports);', 'const {Brand:NotchWindowBrand,ThemeControls:NotchThemeControls,ModeSwitch:NotchModeSwitch,Welcome:NotchWelcome,QuickStart:NotchQuickStart,PanelLauncher:NotchPanelLauncher,Appearance:NotchAppearance,LocalProfile:NotchLocalProfile,Symbol:NotchSymbol}=createNotchWorkbench(reactExports,useTheme);const NotchSetup=createNotchSetup(reactExports);');
   // Initialize after the bundle's house components, before React renders.
   source = source.replace('const NotchSetup=createNotchSetup(reactExports);','const NotchModelMenu=createModelMenu(reactExports,{Popover,PopoverTrigger,PopoverContent},useTheme);const NotchSetup=createNotchSetup(reactExports);');
-  return '/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench} from "./workbench-skin.mjs";\n' + source;
+  return patchSecondaryArtwork('/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench} from "./workbench-skin.mjs";\n' + source);
 }
 
 export async function installWorkbenchAssets(application, root) {

@@ -106,5 +106,11 @@ export function rebrandWorkbenchText(source) {
   // Disabled upstream endpoints must never turn into requests to unrelated domains.
   source = source.replace(/https?:\/\/(?:[a-z0-9-]+\.)*qoder\.(?:com\.cn|com|ai|sh)(?=[:/"'`\s]|$)/gi, 'https://disabled.notch.invalid');
   return source.replace(/qoder/gi, 'notch').replace(/Notch/g, 'notch')
+    .replace(/\bQoduck\b|Q\s?达鸭/g,'notch')
     .replaceAll('/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/u', '/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/iu');
+}
+
+export function patchDirectStartup(source) {
+  // The notch installer launches the app directly and does not ship the legacy update launcher.
+  return patchFunction(source,'aBt','function aBt(){return "current";}');
 }

@@ -73,7 +73,7 @@ export function createNotchSetup(React) {
           h('nav', { 'aria-label': 'Setup steps' }, ...['Welcome', 'Your workflow'].map((label, index) =>
             h('button', { key: label, type: 'button', disabled: busy, 'aria-current': step === index ? 'step' : undefined,
               onClick: () => setStep(index) }, h('span', { 'aria-hidden': true }, `0${index + 1}`), label))),
-          h('div', { className: 'notch-setup-signature' }, h('span', { className: 'notch-setup-dot', 'aria-hidden': true }), 'local first · by Driftrail')),
+          h('div', { className: 'notch-setup-signature' }, h('span', { className: 'notch-setup-dot', 'aria-hidden': true }), 'local first · by freesyntax.dev')),
         h('section', { className: 'notch-setup-content', 'aria-labelledby': 'notch-setup-heading' },
           h('span', { className: 'notch-setup-eyebrow' }, step ? 'YOUR WORKFLOW' : 'WELCOME TO YOUR WORKSPACE'),
           h('h1', { id: 'notch-setup-heading', ref: heading, tabIndex: -1 }, step ? 'Start small. Build freely.' : 'Your code.\nYour machine.'),
