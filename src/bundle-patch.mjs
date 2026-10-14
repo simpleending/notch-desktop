@@ -33,6 +33,22 @@ export function patchClassMethod(source, className, methodName, body) {
   const start = methods[0], stop = closingBrace(source, start);
   return source.slice(0, start) + `{${body}}` + source.slice(stop);
 }
+export function patchFunction(source, name, replacement) {
+  const matches = [...source.matchAll(new RegExp(`\\bfunction ${name}\\(`, 'g'))];
+  if (matches.length !== 1) throw new Error(`Expected one upstream function ${name}.`);
+  const start = matches[0].index, scanner = tokenizer(source.slice(start), { ecmaVersion: 'latest', sourceType: 'module' });
+  scanner.getToken(); scanner.getToken(); scanner.getToken();
+  let depth = 1;
+  while (depth) {
+    const kind = scanner.getToken().type.label;
+    if (kind === '(') depth++;
+    else if (kind === ')') depth--;
+    else if (kind === 'eof') throw new Error('Unclosed upstream function parameters.');
+  }
+  const body = scanner.getToken();
+  if (body.type.label !== '{') throw new Error('Expected upstream function body.');
+  return source.slice(0, start) + replacement + source.slice(closingBrace(source, start + body.start));
+}
 export function patchWorkbench(source) {
   const changes = [
     ['gae', 'initializeState', 'this.cache=null;this.setState(globalThis.__notchHost.identity);'],
@@ -62,12 +78,20 @@ export function patchWorkbench(source) {
     ['vae', 'track', 'return false;'],
     ['vae', 'trackImmediate', 'return false;'],
     ['ZAe', 'refresh', 'const rows=this.dataService.getSnapshot().runtimeEngines;for(const row of rows){if(row.placement==="local"&&(!t||row.id===t))await this.dataService.updateRuntime({...row,status:"ready",error:null,executablePath:null,pathSource:null,version:"0.7.0",updatedAt:new Date().toISOString()});}return this.dataService.getSnapshot().runtimeEngines;'],
+    ['Ude', 'windowOptions', 'return {...t,title:"notch setup",show:false,frame:false,transparent:false,backgroundColor:"#101418",hasShadow:true,resizable:true,movable:true,minWidth:Math.min(640,t.width),minHeight:Math.min(460,t.height),minimizable:false,maximizable:false,fullscreenable:false,acceptFirstMouse:true,webPreferences:{preload:this.options.preloadPath,contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false,devTools:this.options.developerToolsEnabled}};'],
+    ['Ude', 'dialogBounds', 'const width=Math.min(960,Math.max(1,t.width-48)),height=Math.min(660,Math.max(1,t.height-48));return {x:t.x+Math.round((t.width-width)/2),y:t.y+Math.round((t.height-height)/2),width,height};'],
   ];
   for (const [className, method, body] of changes) source = patchClassMethod(source, className, method, body);
   const reporting = 'enabled:GF&&(ot.isPackaged||process.env.QODER_RUM_DEV_REPORT==="1")';
   if (!source.includes(reporting)) throw new Error('Upstream RUM initialization differs from the inspected baseline.');
   source = source.replace(reporting, 'enabled:false');
   source = source.replace('Ev.startReporter();', 'void 0;');
+  const overlayBounds = 'const a=r==="immersive"?n.bounds:this.dialogBounds(n.workArea)';
+  if (!source.includes(overlayBounds)) throw new Error('Upstream setup window bounds differ from the baseline.');
+  source = source.replace(overlayBounds, 'const a=this.dialogBounds(n.workArea)');
+  const prepareProfile = 'H3r=ws.measureSync("user_data_prepared",!0,()=>{';
+  if (!source.includes(prepareProfile)) throw new Error('Upstream profile preparation differs from the baseline.');
+  source = source.replace(prepareProfile, prepareProfile + 'if(globalThis.__notchProfileOverride){const p=globalThis.__notchProfileOverride,s={userDataPath:p.directory,requestedPath:p.directory,temporary:false,dispose(){}};return {applicationDataRoot:p.directory,applicationProfileExistedAtStartup:p.existed,preparedUserData:s,preparedApplicationData:s,preparedAuthenticationData:s};}');
   const registration = 'function Z9t(t){';
   if (!source.includes(registration)) throw new Error('Upstream runtime validation differs from the baseline.');
   source = source.replace(registration, registration + 'if(t.runtime?.provider==="qoder"&&globalThis.__notchHost){t={...t,runtime:{...t.runtime,status:"ready"},registration:{...t.registration,id:t.registration?.id??"notch-builtin",status:"ready"}};}');

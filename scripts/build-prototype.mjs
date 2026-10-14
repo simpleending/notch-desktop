@@ -6,6 +6,8 @@ import { extractAll, createPackageWithOptions } from '@electron/asar';
 import { inspectInstallation } from '../src/upstream-inspection.mjs';
 import { patchWorkbench, rebrandWorkbenchText } from '../src/bundle-patch.mjs';
 import { readdir } from 'node:fs/promises';
+import { rebrandTree } from '../src/rebrand-tree.mjs';
+import { installSetupRenderer } from '../src/renderer-patch.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { values } = parseArgs({ options: { installation: { type: 'string' }, output: { type: 'string' } } });
@@ -49,22 +51,16 @@ await rebrandDirectory(path.join(application, 'out'));
 const packageFile = path.join(application, 'package.json'), pkg = JSON.parse(await readFile(packageFile, 'utf8'));
 pkg.name = 'notch-desktop'; pkg.version = '0.1.0'; pkg.description = 'Notch local coding workbench'; pkg.main = './notch-bootstrap.mjs'; pkg.homepage = 'https://freesyntax.dev'; pkg.author = { name: 'Driftrail' };
 await writeFile(packageFile, JSON.stringify(pkg, null, 2));
-await writeFile(path.join(application, 'notch-bootstrap.mjs'), `import {app,session} from 'electron';
-import path from 'node:path';
-import {createHost} from './notch/src/notch-host.mjs';
-app.setName('Notch');
-app.setPath('userData',path.join(app.getPath('appData'),'com.freesyntax.notch.desktop'));
-globalThis.__notchHost=createHost(app.getPath('userData'));
-app.whenReady().then(()=>session.defaultSession.webRequest.onBeforeRequest({urls:['*://*.qoder.com/*','*://*.qoder.com.cn/*','*://*.qoder.ai/*','*://*.qoder.sh/*']},(_details,callback)=>callback({cancel:true})));
-globalThis.__notchHost.listModels().catch(()=>{});
-await import('./out/main/index.js');
-`);
+await writeFile(path.join(application, 'notch-bootstrap.mjs'), "await import('./notch/src/app-bootstrap.mjs');\n");
 const product = { ...inspection.product, displayName: 'Notch', electronApplicationName: 'Notch', appId: 'com.freesyntax.notch.desktop', dataDirectoryName: 'com.freesyntax.notch.desktop', packageName: 'notch-desktop', protocolScheme: 'notch', windowsLauncherDirectory: 'Notch/Launcher', windowsLauncherFileName: 'Notch Launcher.exe', windowsLauncherMutexName: 'Local/NotchDesktopLauncher' };
-await writeFile(path.join(resources, 'product.json'), JSON.stringify(product, null, 2));
-await writeFile(path.join(resources, 'build-manifest.json'), JSON.stringify({ ...inspection.manifest, product: 'Notch', productVersion: '0.1.0', electronVersion: '43.7.9' }, null, 2));
+await writeFile(path.join(resources, 'product.json'), rebrandWorkbenchText(JSON.stringify(product, null, 2)));
+await writeFile(path.join(resources, 'build-manifest.json'), rebrandWorkbenchText(JSON.stringify({ ...inspection.manifest, product: 'notch', productVersion: '0.1.0', electronVersion: '43.7.9' }, null, 2)));
 for (const name of ['application-icons', 'bundled-resources', 'dynamic-text', 'extensions', 'bin', 'node-repl', 'tray', 'native-messaging-host', 'app-icon.ico']) {
   const source = path.join(installation, 'resources', name); try { await access(source); await cp(source, path.join(resources, name), { recursive: true }); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
+await rebrandTree(application);
+await installSetupRenderer(application, root);
+for (const name of ['extensions','dynamic-text','bundled-resources','application-icons']) await rebrandTree(path.join(resources, name));
 await createPackageWithOptions(application, path.join(resources, 'app.asar'), { unpack: '**/*.{node,dll,exe,so,dylib}' });
 await writeFile(path.join(output, 'prototype-build.json'), JSON.stringify({ version: '0.1.0', baseline: inspection.archiveSha256, methodPatches: patched.changes, missingUpstreamFiles: inspection.missingUnpacked,
   limitations: ['Development prototype; full branding and compatibility migration remain in progress.', 'Not yet a signed production release or verified performance-parity build.'] }, null, 2));

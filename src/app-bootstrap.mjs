@@ -5,7 +5,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { migrateBrandDatabase } from './brand-migration.mjs';
 import { createHost } from './notch-host.mjs';
 app.setName('notch');
-app.setPath('userData', path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
+const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
+app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
+globalThis.__notchProfileOverride = requestedProfile ? { directory: app.getPath('userData'), existed: existsSync(path.join(app.getPath('userData'), 'main.sqlite')) } : null;
 globalThis.__notchHost = createHost(app.getPath('userData'));
 const databasePath = path.join(app.getPath('userData'), 'main.sqlite');
 if (existsSync(databasePath)) { const database = new DatabaseSync(databasePath); try { migrateBrandDatabase(database); } finally { database.close(); } }

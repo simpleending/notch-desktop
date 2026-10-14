@@ -9,7 +9,8 @@
     "inspect:upstream": "node scripts/inspect-upstream.mjs",
     "models": "node scripts/local-models.mjs",
     "build:core": "node scripts/build-core.mjs",
-    "build:prototype": "node scripts/build-prototype.mjs"
+    "build:prototype": "node scripts/build-prototype.mjs",
+    "verify:setup": "node scripts/verify-setup.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.79",

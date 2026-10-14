@@ -4,6 +4,9 @@ import { extractFile, createPackageWithOptions } from '@electron/asar';
 import { patchWorkbench, rebrandWorkbenchText } from '../src/bundle-patch.mjs';
 import { inspectInstallation } from '../src/upstream-inspection.mjs';
 import { rebrandTree } from '../src/rebrand-tree.mjs';
+import { installSetupRenderer } from '../src/renderer-patch.mjs';
+import { fileURLToPath } from 'node:url';
+const root = fileURLToPath(new URL('../', import.meta.url));
 const output = path.resolve(process.argv[2] || 'release/Notch-prototype');
 const marker = JSON.parse(await readFile(path.join(output, 'prototype-build.json'), 'utf8'));
 if (marker.baseline !== 'e1c9f8eaa1edcdaffc42f2cf12d4f879702eb924c1109219801dbc12d848ae28') throw new Error('This is not a verified Notch prototype build.');
@@ -12,6 +15,8 @@ if ((await inspectInstallation(installation)).archiveSha256 !== marker.baseline)
 const application = path.join(output, 'build-app');
 const original = extractFile(path.join(path.resolve(installation), 'resources/app.asar'), path.join('out','main','index.js')).toString('utf8');
 const patched = patchWorkbench(original); await writeFile(path.join(application, 'out/main/index.js'), patched.source);
+const rendererFile = path.join('out', 'renderer', 'assets', 'index-nRmb_3VI.js');
+await writeFile(path.join(application, rendererFile), extractFile(path.join(path.resolve(installation), 'resources/app.asar'), rendererFile));
 async function rebrand(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const file = path.join(directory, entry.name);
@@ -27,6 +32,7 @@ await cp('src', path.join(application, 'notch/src'), { recursive: true });
 await writeFile(path.join(application, 'notch-bootstrap.mjs'), "await import('./notch/src/app-bootstrap.mjs');\n");
 await cp('vendor/notch-core', path.join(application, 'notch/vendor/notch-core'), { recursive: true });
 await rebrandTree(application);
+await installSetupRenderer(application, root);
 const productFile = path.join(output, 'resources/product.json');
 const product = JSON.parse(await readFile(productFile, 'utf8'));
 await writeFile(productFile, rebrandWorkbenchText(JSON.stringify({ ...product, displayName: 'notch', electronApplicationName: 'notch', productId: 'notch' }, null, 2)));
