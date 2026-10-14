@@ -49,7 +49,7 @@
   "engines": {
     "node": ">=22.19.0"
   },
-  "license": "Apache-2.0",
+  "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
     "url": "https://github.com/simpleending/notch-desktop.git"
