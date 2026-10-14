@@ -37,7 +37,8 @@ async function index(root, content) {
 async function allFiles(entry) {
   if (!value(await entry.finder.waitForScan(5000))) throw new Error('Workspace indexing is incomplete; retry the search.');
   entry.ready = true;
-  const found = value(entry.finder.glob('**/*', { pageSize: Math.max(1, value(entry.finder.getScanProgress()).scannedFilesCount) }));
+  // The u32 page limit covers the locked index even when a rescan resets its progress counter.
+  const found = value(entry.finder.glob('**/*', { pageSize: 0xffffffff }));
   if (found.items.length !== found.totalMatched) throw new Error('Workspace file enumeration is incomplete.');
   return found.items.filter(item => visible(item.relativePath));
 }
@@ -114,7 +115,7 @@ async function tool(operation, root, params, active) {
     throw new Error('Workspace changed during indexing; retry the glob.');
   }
   if (operation === 'glob') {
-    const native = entry.equal ? value(entry.finder.glob(params.pattern, { pageSize: Math.max(1, files.length) })) : null;
+    const native = entry.equal ? value(entry.finder.glob(params.pattern, { pageSize: 0xffffffff })) : null;
     if (native && native.items.length !== native.totalMatched) throw new Error('Native glob results are incomplete.');
     const expected = entry.listed.filter(file =>
       visible(file) && !file.split('/').some(part => ['node_modules', 'dist', 'build'].includes(part)) && minimatch(file, params.pattern, { dot: false }));

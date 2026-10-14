@@ -10,11 +10,11 @@ import { createWorkspaceSearch } from '../src/workspace-search.mjs';
 import { grepTool } from '../vendor/notch-cli/src/tools/grep.ts';
 import { globTool } from '../vendor/notch-cli/src/tools/glob.ts';
 
-async function fixture(t) {
+async function fixture(t, execArgv = []) {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-native-'));
   assert.equal(path.dirname(cwd), path.resolve(os.tmpdir()));
   const service = createWorkspaceSearch(() => {
-    const child = fork(fileURLToPath(new URL('../src/workspace-search-worker.mjs', import.meta.url)), [], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'], execArgv: [] });
+    const child = fork(fileURLToPath(new URL('../src/workspace-search-worker.mjs', import.meta.url)), [], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'], execArgv });
     child.postMessage = message => child.send(message); return child;
   });
   t.after(async () => { await service.shutdown(); await fs.rm(cwd, { recursive: true, force: true }); });
@@ -24,7 +24,7 @@ async function fixture(t) {
   return { cwd, service, ctx, grep, glob };
 }
 
-function lines(output) { return output === '(no matches)' ? [] : output.trimEnd().split('\n').filter(line => line !== '--').map(line => line.replaceAll('\\', '/')).sort(); }
+function lines(output) { return output === '(no matches)' ? [] : output.replace(/\n$/, '').split('\n').filter(line => line !== '--').map(line => line.replaceAll('\\', '/')).sort(); }
 
 test('native grep pages retain every match, full long lines, Unicode and overlapping CRLF context', async t => {
   const { cwd, service, grep } = await fixture(t);
@@ -95,4 +95,30 @@ test('index invalidation makes edits and ignore changes visible immediately; out
   assert.equal(denied.isError, true); assert.match(denied.content, /outside/);
   const controller = new AbortController(); controller.abort();
   await assert.rejects(service.tool('grep', cwd, { pattern: 'NEW', context: 0, max_results: 50 }, controller.signal));
+});
+
+test('native enumeration stays complete when ignore rescans reset the progress counter', async t => {
+  const preload = `
+    import { FileFinder } from ${JSON.stringify(import.meta.resolve('@ff-labs/fff-node'))};
+    const scanFiles = FileFinder.prototype.scanFiles, getScanProgress = FileFinder.prototype.getScanProgress;
+    let rescanned = false;
+    FileFinder.prototype.scanFiles = function () { rescanned = true; return scanFiles.call(this); };
+    FileFinder.prototype.getScanProgress = function () {
+      const result = getScanProgress.call(this);
+      return rescanned && result.ok ? { ...result, value: { ...result.value, scannedFilesCount: 0 } } : result;
+    };
+  `;
+  const { cwd, service, grep, glob } = await fixture(t, ['--import', `data:text/javascript,${encodeURIComponent(preload)}`]);
+  await Promise.all(Array.from({ length: 220 }, (_, i) => fs.writeFile(path.join(cwd, `file-${i}.ts`), 'MARKER\n')));
+  await fs.writeFile(path.join(cwd, '.gitignore'), '');
+  assert.equal(lines((await grep({ pattern: 'MARKER' })).content).length, 220);
+  await fs.appendFile(path.join(cwd, 'file-0.ts'), 'FRESH\n'); service.invalidate(cwd);
+  assert.ok((await grep({ pattern: 'FRESH' })).content.includes('file-0.ts:2:FRESH'));
+  await fs.writeFile(path.join(cwd, '.gitignore'), 'file-0.ts\n'); service.invalidate(cwd);
+  assert.equal((await grep({ pattern: 'FRESH' })).content, '(no matches)');
+  assert.equal(lines((await grep({ pattern: 'MARKER' })).content).length, 219);
+  const found = await glob({ pattern: '**/*' });
+  assert.equal(found.isError, undefined, found.content);
+  assert.match(found.content, /^Found 219 file\(s\):/);
+  assert.doesNotMatch(found.content, /file-0\.ts|\.gitignore/);
 });
