@@ -47,7 +47,9 @@ export function patchFunction(source, name, replacement) {
   }
   const body = scanner.getToken();
   if (body.type.label !== '{') throw new Error('Expected upstream function body.');
-  return source.slice(0, start) + replacement + source.slice(closingBrace(source, start + body.start));
+  const end = closingBrace(source, start + body.start);
+  const next = typeof replacement === 'function' ? replacement(source.slice(start, end)) : replacement;
+  return source.slice(0, start) + next + source.slice(end);
 }
 export function patchWorkbench(source) {
   const changes = [

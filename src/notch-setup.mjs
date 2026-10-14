@@ -23,7 +23,11 @@ export function createNotchSetup(React) {
     const heading = React.useRef(null);
     const completion = React.useRef(false);
     React.useEffect(() => {
-      try { localStorage.setItem('notch.setup.theme', theme); } catch { /* Keep the appearance usable without storage. */ }
+      try {
+        localStorage.setItem('notch.setup.theme', theme);
+        localStorage.setItem('notch-ui:theme-mode', theme);
+        localStorage.setItem('notch-ui:color-mode', theme);
+      } catch { /* Keep the appearance usable without storage. */ }
       document.documentElement.style.colorScheme = theme;
     }, [theme]);
     React.useEffect(() => {

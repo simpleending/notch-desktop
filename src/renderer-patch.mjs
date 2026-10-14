@@ -1,6 +1,7 @@
 import { readFile, writeFile, readdir, cp, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { patchFunction, patchClassMethod } from './bundle-patch.mjs';
+import { patchWorkbenchRenderer, installWorkbenchAssets } from './workbench-patch.mjs';
 
 export function patchSetupRenderer(source) {
   if (source.includes('/* notch setup renderer */')) return source;
@@ -35,7 +36,7 @@ export async function installSetupRenderer(application, root) {
     if (source.includes('function OnboardingOverlaySurface(')) candidates.push({ name, source });
   }
   if (candidates.length !== 1) throw new Error('Expected one setup renderer bundle.');
-  await writeFile(path.join(assets, candidates[0].name), patchSetupRenderer(candidates[0].source));
+  await writeFile(path.join(assets, candidates[0].name), patchWorkbenchRenderer(patchSetupRenderer(candidates[0].source)));
   for (const name of ['notch-setup.mjs', 'notch-setup.css']) await cp(path.join(root, 'src', name), path.join(assets, name));
   for (const name of ['notch-wordmark-dark.svg', 'notch-wordmark-light.svg']) await cp(path.join(root, 'assets', name), path.join(assets, name));
   const htmlFile = path.join(renderer, 'index.html');
@@ -45,6 +46,7 @@ export async function installSetupRenderer(application, root) {
     html = html.replace('</head>', '<link rel="stylesheet" href="./assets/notch-setup.css">\n</head>');
   }
   await writeFile(htmlFile, html);
+  await installWorkbenchAssets(application, root);
   for (const name of await readdir(assets)) {
     if (/^onboarding(?:Opening|Typing|Send|FinalSend)-[^/]+\.wav$/.test(name)) await unlink(path.join(assets, name));
   }
