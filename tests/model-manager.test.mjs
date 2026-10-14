@@ -58,6 +58,7 @@ test('cloud catalog shows chat models while requiring tools for coding, orders b
   const rows=cloudModelRows([{...model,id:'old',created:1},model,{...model,id:'no-tools',supported_parameters:[]}],true);
   assert.equal(rows[0].key,'openrouter/lab/new-model');assert.equal(rows.length,3);assert.equal(rows[0].defaultContextWindow,32768);
   assert.equal(rows.find(row=>row.key==='openrouter/no-tools').enabled,false);assert.match(rows.find(row=>row.key==='openrouter/no-tools').description,/Chat model/);
+  for(const supported_parameters of ['tools',{},null])assert.equal(cloudModelRows([{...model,supported_parameters}],true)[0].enabled,false);
   assert.deepEqual(rows[0].pricing,{input:1,output:2});assert.equal(cloudModelRows([model],false)[0].enabled,false);
 });
 

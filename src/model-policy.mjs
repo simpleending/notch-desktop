@@ -42,7 +42,7 @@ export function cloudModelRows(data, connected) {
       const choices = [...new Set([8192, 16384, 32768, 65536, 131072, 262144, cap].filter(n => n <= cap))].sort((a,b)=>a-b);
       const initial = Math.min(32768, cap);
       if (!choices.includes(initial)) choices.push(initial);
-      const tools=row.supported_parameters?.includes('tools')===true;
+      const tools=Array.isArray(row.supported_parameters) && row.supported_parameters.includes('tools');
       return { key: `openrouter/${row.id}`, displayName: typeof row.name==='string' && row.name ? row.name : row.id, description: !tools?'Chat model · coding tools not supported':!connected?'Connect your OpenRouter key to use':'OpenRouter · cloud',
         provider: 'openrouter', source: 'system', enabled: connected && tools, tools, isDefault: false, isNew: false, priceFactor: 1, tags: ['cloud'],
         maxInputTokens: cap, maxOutputTokens: Math.min(Number.isSafeInteger(row.top_provider?.max_completion_tokens) && row.top_provider.max_completion_tokens>0 ? row.top_provider.max_completion_tokens : 4096, 8192),
