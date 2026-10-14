@@ -13,7 +13,7 @@ export function createWorkspaceSearch(startWorker = startUtility) {
   const pending = new Map();
   const service = {
     engine: null,
-    async search(searchId, root, generation, query) {
+    async search(searchId, root, generation, query, operation = 'search', params) {
       if (closed) throw cancelled();
       if (typeof searchId !== 'string' || typeof root !== 'string' || typeof query !== 'string' || query.length > 1024 || !Number.isSafeInteger(generation) || generation < 0) throw new Error('Invalid file search request.');
       service.cancel(searchId);
@@ -35,7 +35,7 @@ export function createWorkspaceSearch(startWorker = startUtility) {
               if (!request) return;
               pending.delete(reply.id); clearTimeout(request.timer);
               if (reply.error) request.reject(new Error(reply.error));
-              else { service.engine = 'fff'; request.resolve(reply.result); }
+              else { service.engine = reply.result?.fallback ? 'ripgrep' : reply.result?.engine || 'fff'; request.resolve(reply.result); }
               if (!pending.size) { idle = setTimeout(() => stop(cancelled()), 60000); idle.unref?.(); }
             });
             child.on('error', () => { if (worker === child) stop(new Error('File search worker failed.')); });
@@ -44,19 +44,33 @@ export function createWorkspaceSearch(startWorker = startUtility) {
           }).finally(() => { starting = undefined; });
           await starting;
         }
-        if (pending.has(id)) worker.postMessage({ id, searchId, root, query });
+        if (pending.has(id)) worker.postMessage({ id, searchId, root, query, operation, params });
       } catch (error) {
         const request = pending.get(id);
         if (request) { pending.delete(id); clearTimeout(request.timer); request.reject(error); }
       }
       return result;
     },
+    async tool(operation, root, params, signal) {
+      signal?.throwIfAborted();
+      if (!['grep', 'glob'].includes(operation)) throw new Error('Invalid native search operation.');
+      const searchId = `tool-${++sequence}`;
+      const abort = () => service.cancel(searchId);
+      signal?.addEventListener('abort', abort, { once: true });
+      try {
+        const result = await service.search(searchId, root, 0, '', operation, params);
+        signal?.throwIfAborted();
+        return result.fallback ? undefined : { content: result.content, ...(result.isError ? { isError: true } : {}) };
+      } finally { signal?.removeEventListener('abort', abort); }
+    },
     cancel(searchId) {
+      if (worker) try { worker.postMessage({ cancelSearchId: searchId }); } catch { /* A stopped worker rejects pending requests separately. */ }
       for (const [id, request] of pending) if (request.searchId === searchId) {
         pending.delete(id); clearTimeout(request.timer); request.reject(cancelled());
       }
       if (!pending.size && worker) { clearTimeout(idle); idle = setTimeout(() => stop(cancelled()), 60000); idle.unref?.(); }
     },
+    invalidate(root) { if (worker) worker.postMessage({ invalidateRoot: root }); },
     async shutdown() { closed = true; stop(cancelled()); if (starting) await starting.catch(() => {}); },
   };
   function stop(error) {

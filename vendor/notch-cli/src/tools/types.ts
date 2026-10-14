@@ -28,6 +28,9 @@ export interface NotchTool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
 
 /** Shared context available to all tools during execution */
 export interface ToolContext {
+  /** Desktop's shared native index; undefined requests the ripgrep compatibility path. */
+  workspaceSearch?: (operation: 'grep' | 'glob', params: Record<string, unknown>, cwd: string, signal?: AbortSignal) => Promise<ToolResult | undefined>;
+  ripgrepPath?: string;
   /** Cancellation for the current turn, inherited by worker tools. */
   abortSignal?: AbortSignal;
   /** Absolute path to the project root */

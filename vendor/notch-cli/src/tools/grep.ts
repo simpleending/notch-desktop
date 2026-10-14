@@ -37,7 +37,12 @@ export const grepTool: NotchTool<typeof parameters> = {
 
     try {
       ctx.abortSignal?.throwIfAborted();
+      if (ctx.workspaceSearch) {
+        const result = await ctx.workspaceSearch('grep', params, ctx.cwd, ctx.abortSignal);
+        if (result !== undefined) return result;
+      }
       const rgArgs = [
+        '--no-require-git',
         '--no-heading',
         '--line-number',
         '--color=never',
@@ -49,7 +54,7 @@ export const grepTool: NotchTool<typeof parameters> = {
         searchPath,
       ];
 
-      const { stdout } = await execFileAsync('rg', rgArgs, {
+      const { stdout } = await execFileAsync(ctx.ripgrepPath || 'rg', rgArgs, {
         cwd: ctx.cwd,
         encoding: 'utf-8',
         timeout: 15_000,

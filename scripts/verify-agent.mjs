@@ -49,7 +49,7 @@ async function completeTurn(resultCount) {
     if(results.length>=resultCount) { assert.equal(results.at(-1).subtype,'success',JSON.stringify(results.at(-1))); return state; }
     const allow=page.getByRole('button',{name:'Allow once',exact:true});
     if(await allow.count() && await allow.first().isVisible()) {
-      const requests=state.approvals.filter(request=>!request.allowed);
+      const requests=(await debug()).approvals.filter(request=>!request.allowed);
       assert.ok(requests.length>0,'Visible approval must correspond to an actual tool callback.');
       const request=requests.at(-1);
       if(request.name==='Write' && request.input.file_path.endsWith('sum.mjs')) {

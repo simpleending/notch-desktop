@@ -28,6 +28,11 @@ export const globTool: NotchTool<typeof parameters> = {
       : ctx.cwd;
 
     try {
+      ctx.abortSignal?.throwIfAborted();
+      if (ctx.workspaceSearch) {
+        const result = await ctx.workspaceSearch('glob', params, ctx.cwd, ctx.abortSignal);
+        if (result !== undefined) return result;
+      }
       const matches = await globFn(params.pattern, {
         cwd: searchDir,
         ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**', '**/build/**'],

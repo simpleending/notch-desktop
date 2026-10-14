@@ -16,6 +16,7 @@
     "verify:setup": "node scripts/verify-setup.mjs",
     "verify:skin": "node scripts/verify-workbench-skin.mjs",
     "verify:settings": "node scripts/verify-settings.mjs",
+    "verify:search": "node scripts/verify-search.mjs",
     "verify:agent": "node scripts/verify-agent.mjs",
     "verify:compaction": "node scripts/verify-compaction.mjs"
   },

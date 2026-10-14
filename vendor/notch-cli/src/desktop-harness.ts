@@ -17,6 +17,8 @@ export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
 export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };
 export interface DesktopTurn {
+  workspaceSearch?: ToolContext['workspaceSearch'];
+  ripgrepPath?: string;
   cwd: string;
   sessionId: string;
   messages: ModelMessage[];
@@ -84,6 +86,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   const permissions = await loadPermissions(cwd);
   const allowed = definitionRules(turn.allowedTools, 'allow'), denied = definitionRules(turn.disallowedTools, 'deny');
   const ctx: ToolContext = {
+    workspaceSearch: turn.workspaceSearch, ripgrepPath: turn.ripgrepPath,
     cwd, abortSignal: turn.signal, accessMode: turn.accessMode,
     requireConfirm: false, confirm: async () => false, confirmTool: turn.approve,
     onlyTools: turn.tools?.map(desktopToolName),

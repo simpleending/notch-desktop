@@ -119,7 +119,14 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
           const model = host.resolveModelChoice(turn.model);
           const apiKey = model.startsWith('openrouter/') ? await host.modelManager?.key('openrouter') : undefined;
           if (model.startsWith('openrouter/') && !apiKey) throw new Error('Connect an OpenRouter API key in the model picker.');
-          return runTurn({ ...turn, model, apiKey, baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || 8192, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
+          return runTurn({ ...turn, model, apiKey, workspaceSearch: (operation, params, cwd, signal) => host.workspaceSearch.tool(operation, cwd, params, signal),
+            onLifecycle: async (event, payload) => {
+              if (event === 'pre-tool' && !['read', 'grep', 'glob'].includes(payload.tool)) host.workspaceSearch.invalidate(turn.cwd);
+              if (event === 'post-tool' && !['read', 'grep', 'glob'].includes(payload.tool)) host.workspaceSearch.invalidate(turn.cwd);
+              await turn.onLifecycle?.(event, payload);
+            },
+            ripgrepPath: process.resourcesPath ? path.join(process.resourcesPath, 'bin', 'notch-rg.exe') : undefined,
+            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || 8192, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
         },
       });
     },

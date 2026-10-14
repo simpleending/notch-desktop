@@ -2729,7 +2729,12 @@ var grepTool = {
     const searchPath = params.path ? path10.isAbsolute(params.path) ? params.path : path10.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
       ctx.abortSignal?.throwIfAborted();
+      if (ctx.workspaceSearch) {
+        const result = await ctx.workspaceSearch("grep", params, ctx.cwd, ctx.abortSignal);
+        if (result !== void 0) return result;
+      }
       const rgArgs = [
+        "--no-require-git",
         "--no-heading",
         "--line-number",
         "--color=never",
@@ -2740,7 +2745,7 @@ var grepTool = {
         params.pattern,
         searchPath
       ];
-      const { stdout } = await execFileAsync("rg", rgArgs, {
+      const { stdout } = await execFileAsync(ctx.ripgrepPath || "rg", rgArgs, {
         cwd: ctx.cwd,
         encoding: "utf-8",
         timeout: 15e3,
@@ -2830,6 +2835,11 @@ var globTool = {
   async execute(params, ctx) {
     const searchDir = params.path ? path11.isAbsolute(params.path) ? params.path : path11.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
+      ctx.abortSignal?.throwIfAborted();
+      if (ctx.workspaceSearch) {
+        const result = await ctx.workspaceSearch("glob", params, ctx.cwd, ctx.abortSignal);
+        if (result !== void 0) return result;
+      }
       const matches = await globFn(params.pattern, {
         cwd: searchDir,
         ignore: ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**"],
@@ -7424,6 +7434,8 @@ async function runDesktopTurn(turn) {
   const permissions = await loadPermissions(cwd);
   const allowed = definitionRules(turn.allowedTools, "allow"), denied = definitionRules(turn.disallowedTools, "deny");
   const ctx = {
+    workspaceSearch: turn.workspaceSearch,
+    ripgrepPath: turn.ripgrepPath,
     cwd,
     abortSignal: turn.signal,
     accessMode: turn.accessMode,

@@ -5,6 +5,7 @@ import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
+import assert from 'node:assert/strict';
 import { extractAll, createPackageWithOptions } from '@electron/asar';
 import { installSetupRenderer } from '../src/renderer-patch.mjs';
 import { verifyRendererBranding } from '../src/branding-verification.mjs';
@@ -17,7 +18,26 @@ if(!/^\d+\.\d+\.\d+-preview\.\d+$/.test(version))throw new Error('Use a preview 
 if(!process.env.npm_execpath)throw new Error('Run npm run package:windows.');
 const source=path.join(root,'release/Notch-prototype');await fs.access(path.join(source,'Notch.exe'));
 const staging=await fs.mkdtemp(path.join(root,'release/windows-preview-')), app=path.join(staging,'app'), unpacked=path.join(app,'build-app');
+const ripgrepVersion='15.2.0', ripgrepName=`ripgrep-${ripgrepVersion}-x86_64-pc-windows-msvc`;
+const ripgrepArchive=path.join(root,'release',`${ripgrepName}.zip`);
+let ripgrepBytes;
+try { ripgrepBytes=await fs.readFile(ripgrepArchive); }
+catch(error) {
+  if(error.code!=='ENOENT')throw error;
+  const response=await fetch(`https://github.com/BurntSushi/ripgrep/releases/download/${ripgrepVersion}/${ripgrepName}.zip`,{signal:AbortSignal.timeout(60000)});
+  if(!response.ok)throw new Error(`Cannot download official ripgrep: HTTP ${response.status}.`);
+  ripgrepBytes=Buffer.from(await response.arrayBuffer());
+}
+assert.equal(createHash('sha256').update(ripgrepBytes).digest('hex'),'71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5','Official ripgrep archive checksum mismatch; remove the cached release archive and retry.');
+await fs.writeFile(ripgrepArchive,ripgrepBytes);
+const ripgrepExtracted=path.join(staging,'ripgrep');
+await promisify(execFile)(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command','Expand-Archive -LiteralPath $env:NOTCH_RG_ARCHIVE -DestinationPath $env:NOTCH_RG_DESTINATION'],{windowsHide:true,env:{...process.env,NOTCH_RG_ARCHIVE:ripgrepArchive,NOTCH_RG_DESTINATION:ripgrepExtracted}});
+const ripgrepSource=path.join(ripgrepExtracted,ripgrepName);
+assert.equal(createHash('sha256').update(await fs.readFile(path.join(ripgrepSource,'rg.exe'))).digest('hex'),'14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680','Extracted ripgrep executable checksum mismatch.');
 await fs.cp(source,app,{recursive:true,filter:file=>!path.relative(source,file).split(path.sep).some(name=>name==='build-app' || name==='prototype-build.json' || name.startsWith('app-feedback-'))});
+await fs.mkdir(path.join(app,'resources/bin'),{recursive:true});
+await fs.copyFile(path.join(ripgrepSource,'rg.exe'),path.join(app,'resources/bin/notch-rg.exe'));
+assert.match((await promisify(execFile)(path.join(app,'resources/bin/notch-rg.exe'),['--version'],{windowsHide:true})).stdout,/^ripgrep 15\.2\.0[\s\S]*PCRE2 10\.45 is available/,'Packaged ripgrep must support the pinned PCRE2 engine.');
 extractAll(path.join(app,'resources/app.asar'),unpacked);
 const mainFile=path.join(unpacked,'out/main/index.js');
 await fs.writeFile(mainFile,patchDirectStartup(await fs.readFile(mainFile,'utf8')));
@@ -33,7 +53,9 @@ const extracted=path.join(staging,'build-app');
 if(!unpacked.startsWith(staging+path.sep) || !extracted.startsWith(staging+path.sep))throw new Error('Invalid packaging directory.');
 await fs.rename(unpacked,extracted);
 const notices=path.join(app,'resources/notices');await fs.mkdir(notices,{recursive:true});
-for(const [source,name] of [['LICENSE','notch-AGPL-3.0.txt'],['vendor/notch-cli/LICENSE','notch-cli-Apache-2.0.txt'],['docs/third-party-notices.md','THIRD-PARTY-NOTICES.md'],['docs/windows-preview.md','WINDOWS-PREVIEW.md']])await fs.copyFile(path.join(root,source),path.join(notices,name));
+for(const [source,name] of [['LICENSE','notch-AGPL-3.0.txt'],['vendor/notch-cli/LICENSE','notch-cli-Apache-2.0.txt'],['docs/third-party-notices.md','THIRD-PARTY-NOTICES.md'],['docs/windows-preview.md','WINDOWS-PREVIEW.md'],['assets/notices/fff-LICENSE.txt','fff-LICENSE.txt']])await fs.copyFile(path.join(root,source),path.join(notices,name));
+for(const name of ['COPYING','LICENSE-MIT','UNLICENSE'])await fs.copyFile(path.join(ripgrepSource,name),path.join(notices,`ripgrep-${name}.txt`));
+for(const name of ['ripgrep-PCRE2-LICENSE.txt','ripgrep-PCRE2-COPYING.txt'])await fs.copyFile(path.join(root,'assets/notices',name),path.join(notices,name));
 await fs.copyFile(path.join(root,'assets/notices/sharp-win32-x64-LICENSE.txt'),path.join(notices,'sharp-win32-x64-LICENSE.txt'));
 const buildManifest=path.join(app,'resources/build-manifest.json'), build=JSON.parse(await fs.readFile(buildManifest,'utf8'));
 build.productVersion=version;await fs.writeFile(buildManifest,JSON.stringify(build,null,2));
