@@ -49,7 +49,7 @@ export function createHubCatalog(directory,{fetcher=fetch,inspect=inspectHubMode
         if(!pending.has(key))pending.set(key,(async()=>{
           let address;
           if(page){const previous=cache.get(JSON.stringify([runner,query.toLowerCase(),page-1]));if(!previous?.next)throw new Error('Refresh the model search before loading more.');address=nextUrl(`<${previous.next}>; rel="next"`);}
-          else {const url=new URL(endpoint);for(const [name,value]of Object.entries({search:query || 'coder',filter:runner==='mlx'?'mlx':'gguf',sort:'createdAt',direction:'-1',limit:'40',full:'true'}))url.searchParams.set(name,value);address=url.href;}
+          else {const url=new URL(endpoint);for(const [name,value]of Object.entries({search:query,filter:runner==='mlx'?'mlx':'gguf',sort:'createdAt',direction:'-1',limit:'40',full:'true'}))url.searchParams.set(name,value);address=url.href;}
           const response=await fetcher(address,{headers:token?{Authorization:`Bearer ${token}`}:{},redirect:'error',signal:AbortSignal.timeout(15000)});
           if(!response.ok)throw new Error(`Hugging Face search failed (HTTP ${response.status}). Retry shortly.`);
           const body=await response.json();if(!Array.isArray(body)||body.length>40)throw new Error('Hugging Face returned an invalid model list.');

@@ -128,6 +128,19 @@ try {
   await capture(page,'hugging-face-dark');
   await page.getByRole('tab',{name:'OpenRouter',exact:true}).click();
   await page.getByLabel('OpenRouter API key',{exact:true}).waitFor();
+  await page.waitForFunction(()=>{
+    const list=document.querySelector('[aria-label="OpenRouter models"]');
+    return list?.getAttribute('aria-busy')==='false' && list.querySelectorAll('[role=option]').length>100;
+  },undefined,{timeout:60000});
+  checks.publicCloudModels=await page.locator('[aria-label="OpenRouter models"] [role=option]').count();
+  const cloudSearch=page.getByRole('searchbox',{name:'Search models'});
+  for(const query of ['gemini','claude','deepseek']){
+    await cloudSearch.fill(query);
+    assert.ok(await page.locator('[aria-label="OpenRouter models"] [role=option]').count()>0);
+    assert.equal(await page.locator('[aria-label="OpenRouter models"] [role=option]:not(:disabled)').count(),0);
+  }
+  await cloudSearch.fill('notch-no-such-model-fixture');assert.equal(await page.locator('[aria-label="OpenRouter models"] [role=option]').count(),0);await cloudSearch.fill('');
+  checks.cloudSearch=true;
   assert.equal(await page.getByLabel('OpenRouter API key',{exact:true}).getAttribute('type'),'password');
   assert.equal(await page.getByRole('button',{name:'Connect',exact:true}).isDisabled(),true);
   await page.getByRole('tab',{name:'Hugging Face',exact:true}).click();

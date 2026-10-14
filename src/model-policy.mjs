@@ -35,15 +35,16 @@ export function localContextProfile(bytes, hardware, metadata = {}, mounted = {}
 export function cloudModelRows(data, connected) {
   if (!Array.isArray(data)) throw new Error('OpenRouter returned an invalid model catalog.');
   return data.filter(row => row && typeof row.id === 'string' && /^[\w./:+-]{1,256}$/.test(row.id) &&
-    Array.isArray(row.supported_parameters) && row.supported_parameters.includes('tools') && Array.isArray(row.architecture?.output_modalities) && row.architecture.output_modalities.includes('text') &&
+    Array.isArray(row.architecture?.output_modalities) && row.architecture.output_modalities.includes('text') && (!Array.isArray(row.architecture.input_modalities) || row.architecture.input_modalities.includes('text')) &&
     Number.isSafeInteger(row.context_length) && row.context_length >= 4096)
     .sort((a,b) => (b.created || 0) - (a.created || 0) || a.id.localeCompare(b.id)).map(row => {
       const cap = Math.min(row.context_length, Number.isSafeInteger(row.top_provider?.context_length) && row.top_provider.context_length>=4096 ? row.top_provider.context_length : row.context_length);
       const choices = [...new Set([8192, 16384, 32768, 65536, 131072, 262144, cap].filter(n => n <= cap))].sort((a,b)=>a-b);
       const initial = Math.min(32768, cap);
       if (!choices.includes(initial)) choices.push(initial);
-      return { key: `openrouter/${row.id}`, displayName: typeof row.name==='string' && row.name ? row.name : row.id, description: 'OpenRouter · API key · cloud',
-        provider: 'openrouter', source: 'system', enabled: connected, isDefault: false, isNew: false, priceFactor: 1, tags: ['cloud'],
+      const tools=row.supported_parameters?.includes('tools')===true;
+      return { key: `openrouter/${row.id}`, displayName: typeof row.name==='string' && row.name ? row.name : row.id, description: !tools?'Chat model · coding tools not supported':!connected?'Connect your OpenRouter key to use':'OpenRouter · cloud',
+        provider: 'openrouter', source: 'system', enabled: connected && tools, tools, isDefault: false, isNew: false, priceFactor: 1, tags: ['cloud'],
         maxInputTokens: cap, maxOutputTokens: Math.min(Number.isSafeInteger(row.top_provider?.max_completion_tokens) && row.top_provider.max_completion_tokens>0 ? row.top_provider.max_completion_tokens : 4096, 8192),
         availableContextWindows: choices.sort((a,b)=>a-b), defaultContextWindow: initial, efforts: [], defaultEffort: null, supportsDisabled: true,
         created: row.created || 0, pricing: { input: Number(row.pricing?.prompt) * 1e6, output: Number(row.pricing?.completion) * 1e6 } };

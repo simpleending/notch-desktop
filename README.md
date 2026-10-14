@@ -15,6 +15,7 @@ The Windows download is an early preview. Check the release notes for current li
 ## Make yourself at home
 
 - **Bring your own model.** Choose an installed model or search Hugging Face by name, including Gemma and DeepSeek, with newest results first and more pages available. Public guided downloads need no account. Downloads use compatible Q4_K_M GGUF or MLX weights; memory fit and tool support are checked before use.
+- **Browse before connecting.** Search OpenRouter's chat and coding catalog without a key. Connect your own key to use models with coding tools; chat-only models are shown with their limitation.
 - **Stay in control.** Review file changes and commands before approving them, or choose the access level that suits your project.
 - **Pick up where you left off.** Reopen saved conversations and keep working as longer chats are summarized.
 - **Use the memory you have.** notch adjusts conversation size to your available memory. You can choose a limit yourself when you need more room.

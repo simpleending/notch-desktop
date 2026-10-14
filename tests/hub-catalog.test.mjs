@@ -85,9 +85,19 @@ test('preload migration is idempotent and forwards the remote search and page th
   const current=patchModelPreload('');assert.equal(patchModelPreload(current),current);
   const old=current.replace("hub:(runner,options)=>ipcRenderer.invoke('notch-models:hub',runner,options)","hub:runner=>ipcRenderer.invoke('notch-models:hub',runner)");
   assert.equal(patchModelPreload(old),current);assert.throws(()=>patchModelPreload('/* notch model settings bridge */'),/expected version/);
+  assert.equal(patchModelPreload(current.replace("\n  cloud:force=>ipcRenderer.invoke('notch-models:cloud',force),",'')),current);
   let bridge,request;
   vm.runInNewContext(current,{window:{location:{protocol:'notch-app:',search:''}},URLSearchParams,require:()=>({
     contextBridge:{exposeInMainWorld:(_name,value)=>{bridge=value;}},ipcRenderer:{invoke:(...args)=>{request=args;}},
   })});
   bridge.hub('ollama',{query:'gemm',page:1});assert.deepEqual(request,['notch-models:hub','ollama',{query:'gemm',page:1}]);
+  bridge.cloud(true);assert.deepEqual(request,['notch-models:cloud',true]);
+});
+
+test('default Hub browsing includes chat conversions instead of restricting names to coding families',async()=>{
+  const catalog=createHubCatalog(await directory(),{hardware:async()=>device,inspect,fetcher:async address=>{
+    const url=new URL(address);assert.equal(url.searchParams.get('search'),'');assert.equal(url.searchParams.get('filter'),'gguf');
+    return response([row('lab/gemma-chat'),row('lab/deepseek-code')]);
+  }});
+  assert.equal((await catalog.list()).models.length,2);
 });

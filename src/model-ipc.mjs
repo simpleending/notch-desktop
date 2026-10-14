@@ -15,6 +15,7 @@ export function registerModelIpc(ipcMain, host) {
     disconnect: async provider => { await manager.disconnect(provider); return state(false,true); },
     context: async (model,tokens) => { await manager.setContext(model,tokens,await host.listModels(true)); return state(false,true); },
     hub: (runner,options) => manager.hubCatalog(runner,options),
+    cloud: force => manager.cloudCatalog(force===true,true),
     install: (repo,runner) => manager.startInstall(repo,runner),
     cancel: () => manager.cancelInstall(),
     status: () => manager.status(),
@@ -35,6 +36,7 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
   disconnect:provider=>ipcRenderer.invoke('notch-models:disconnect',provider),
   context:(model,tokens)=>ipcRenderer.invoke('notch-models:context',model,tokens),
   hub:(runner,options)=>ipcRenderer.invoke('notch-models:hub',runner,options),
+  cloud:force=>ipcRenderer.invoke('notch-models:cloud',force),
   install:(repo,runner)=>ipcRenderer.invoke('notch-models:install',repo,runner),
   cancel:()=>ipcRenderer.invoke('notch-models:cancel'),
   status:()=>ipcRenderer.invoke('notch-models:status')
@@ -44,7 +46,11 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
 export function patchModelPreload(source) {
   if(!source.includes('/* notch model settings bridge */'))return source+modelPreload;
   const current="hub:(runner,options)=>ipcRenderer.invoke('notch-models:hub',runner,options)",previous="hub:runner=>ipcRenderer.invoke('notch-models:hub',runner)";
-  if(source.includes(current))return source;
-  if(source.split(previous).length!==2)throw new Error('The model search bridge differs from the expected version.');
-  return source.replace(previous,current);
+  if(!source.includes(current)){
+    if(source.split(previous).length!==2)throw new Error('The model search bridge differs from the expected version.');
+    source=source.replace(previous,current);
+  }
+  const cloud="cloud:force=>ipcRenderer.invoke('notch-models:cloud',force)";
+  if(!source.includes(cloud))source=source.replace(current,current+",\n  "+cloud);
+  return source;
 }

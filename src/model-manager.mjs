@@ -45,19 +45,19 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       return service.status();
     },
     async disconnect(provider) { await ready; if (!['openrouter','huggingface'].includes(provider)) throw new Error('Invalid provider.'); keys.delete(provider); await saveKeys(); return service.status(); },
-    async cloudCatalog(force = false) {
+    async cloudCatalog(force = false, browse = false) {
       await ready;
-      if (!keys.has('openrouter')) return [];
+      if (!keys.has('openrouter') && !browse) return [];
       if (force || !cached || Date.now()-cached.at > 6*3600000) {
         pending ??= (async () => {
-          const response = await fetcher('https://openrouter.ai/api/v1/models', { headers: { Authorization: `Bearer ${keys.get('openrouter')}` }, redirect: 'error', signal: AbortSignal.timeout(15000) });
+          const response = await fetcher('https://openrouter.ai/api/v1/models', { headers: keys.has('openrouter')?{ Authorization: `Bearer ${keys.get('openrouter')}` }:{}, redirect: 'error', signal: AbortSignal.timeout(15000) });
           if (!response.ok) throw new Error(`OpenRouter model refresh failed (HTTP ${response.status}).`);
           const body = await response.json(); cloudModelRows(body.data,true);
           cached = { at: Date.now(), data: body.data }; await atomic(catalogFile,cached);
         })().finally(()=>{pending=undefined;});
         try { await pending; } catch (error) { if (!cached) throw error; }
       }
-      return cloudModelRows(cached.data,true).map(row=>({ ...row, defaultContextWindow: service.context(row.key,row.availableContextWindows,row.defaultContextWindow) }));
+      return cloudModelRows(cached.data,keys.has('openrouter')).map(row=>({ ...row, defaultContextWindow: service.context(row.key,row.availableContextWindows,row.defaultContextWindow) }));
     },
     context(model, choices, fallback) { const value = preferences.get(model); return choices.includes(value) ? value : value ? choices.filter(n=>n<=value).at(-1) || fallback : fallback; },
     requestedContext(model) { return preferences.get(model); },

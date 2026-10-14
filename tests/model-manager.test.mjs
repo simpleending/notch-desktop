@@ -54,10 +54,23 @@ test('manual context survives memory pressure and Auto removes the override',asy
   assert.equal(manager.requestedContext('ollama/fixture'),undefined);
   const restored=createModelManager(directory);await restored.status();assert.equal(restored.context('ollama/fixture',[8192,65536],65536),65536);
 });
-test('cloud catalog filters tool support, orders by age and separates context from RAM',()=>{
+test('cloud catalog shows chat models while requiring tools for coding, orders by age and separates context from RAM',()=>{
   const rows=cloudModelRows([{...model,id:'old',created:1},model,{...model,id:'no-tools',supported_parameters:[]}],true);
-  assert.equal(rows[0].key,'openrouter/lab/new-model');assert.equal(rows.length,2);assert.equal(rows[0].defaultContextWindow,32768);
+  assert.equal(rows[0].key,'openrouter/lab/new-model');assert.equal(rows.length,3);assert.equal(rows[0].defaultContextWindow,32768);
+  assert.equal(rows.find(row=>row.key==='openrouter/no-tools').enabled,false);assert.match(rows.find(row=>row.key==='openrouter/no-tools').description,/Chat model/);
   assert.deepEqual(rows[0].pricing,{input:1,output:2});assert.equal(cloudModelRows([model],false)[0].enabled,false);
+});
+
+test('public OpenRouter browsing caches all text models without a key and never enables unauthenticated use',async()=>{
+  let fetches=0;
+  const manager=createModelManager(await mkdtemp(path.join(os.tmpdir(),'notch-public-cloud-')),{fetcher:async(url,options)=>{
+    assert.equal(url,'https://openrouter.ai/api/v1/models');assert.deepEqual(options.headers,{});assert.equal(options.redirect,'error');fetches++;
+    return {ok:true,json:async()=>({data:[model,{...model,id:'chat-only',supported_parameters:[]},{...model,id:'image-only',architecture:{output_modalities:['image']}}]})};
+  }});
+  const [a,b]=await Promise.all([manager.cloudCatalog(false,true),manager.cloudCatalog(false,true)]);
+  assert.deepEqual(a,b);assert.equal(a.length,2);assert.equal(fetches,1);assert.ok(a.every(row=>!row.enabled));
+  assert.equal(a.find(row=>row.key==='openrouter/chat-only').tools,false);
+  await manager.cloudCatalog(false,true);assert.equal(fetches,1);
 });
 test('refreshing a loaded model does not count its own allocation twice',()=>{
   const hardware={availableMemory:2*GiB,totalMemory:24*GiB,availableVram:2*GiB},metadata={capabilities:['tools']};
