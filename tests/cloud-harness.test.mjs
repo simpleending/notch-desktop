@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { runDesktopTurn, CheckpointManager } from '../vendor/notch-core/desktop-harness.js';
+import { runDesktopTurn, CheckpointManager, inspectHubModel } from '../vendor/notch-core/desktop-harness.js';
 test('OpenRouter uses the explicit key, correct endpoint, bounded output and provider usage',async()=>{
   const previous=globalThis.fetch, calls=[];
   globalThis.fetch=async (url,options)=>{
@@ -24,4 +24,31 @@ test('OpenRouter uses the explicit key, correct endpoint, bounded output and pro
     assert.equal(result.text,'CLOUD_ROUTE_VERIFIED');assert.equal(calls.length,1);assert.deepEqual(usage,{inputTokens:101,outputTokens:7,contextWindow:32768});
     assert.doesNotMatch(JSON.stringify(result.messages),/sk-or-/);
   } finally {globalThis.fetch=previous;}
+});
+test('MLX inspection uses the repository revision and nested text context configuration',async()=>{
+  const previous=globalThis.fetch, calls=[],revision='b'.repeat(40);
+  globalThis.fetch=async (url,options)=>{
+    calls.push(String(url));assert.equal(options.redirect,'error');assert.equal(options.headers.Authorization,'Bearer hf_fixture_only');
+    return Response.json(calls.length===1?{sha:revision,siblings:[{rfilename:'weights.safetensors',size:12345}]}:{max_position_embeddings:77,text_config:{max_position_embeddings:32768}});
+  };
+  try {
+    const row=await inspectHubModel('fixture/mlx-native','mlx',AbortSignal.timeout(5000),'hf_fixture_only',true);
+    assert.equal(row.contextLength,32768);assert.equal(calls[1],`https://huggingface.co/fixture/mlx-native/resolve/${revision}/config.json`);
+    globalThis.fetch=async()=>new Response('',{status:503});
+    await assert.rejects(inspectHubModel('fixture/mlx-native','mlx',AbortSignal.timeout(5000),undefined,true),/HTTP 503/);
+  } finally {globalThis.fetch=previous;}
+});
+test('Ollama request and agent budget use the native limit even with a larger environment override',async()=>{
+  const previous=globalThis.fetch, previousContext=process.env.NOTCH_OLLAMA_CONTEXT;process.env.NOTCH_OLLAMA_CONTEXT='32768';
+  globalThis.fetch=async(url,options)=>{
+    assert.equal(String(url),'http://127.0.0.1:11437/api/chat');
+    const body=JSON.parse(options.body);assert.equal(body.options.num_ctx,4096);
+    return new Response(JSON.stringify({message:{content:'NATIVE_CONTEXT_VERIFIED'},done:true,prompt_eval_count:100,eval_count:7}),{headers:{'Content-Type':'application/x-ndjson'}});
+  };
+  try {
+    const cwd=await mkdtemp(path.join(os.tmpdir(),'notch-native-context-'));let usage;
+    const result=await runDesktopTurn({cwd,sessionId:'native-context-test',messages:[{role:'user',content:'hello'}],model:'ollama/fixture',baseUrl:'http://127.0.0.1:11437',contextWindow:8192,nativeContextWindow:4096,
+      accessMode:'read-only',signal:AbortSignal.timeout(15000),checkpoints:new CheckpointManager(),tools:['Read'],approve:async()=>false,onUsage:value=>{usage=value;}});
+    assert.equal(result.text,'NATIVE_CONTEXT_VERIFIED');assert.equal(usage.contextWindow,4096);
+  } finally {globalThis.fetch=previous;if(previousContext===undefined)delete process.env.NOTCH_OLLAMA_CONTEXT;else process.env.NOTCH_OLLAMA_CONTEXT=previousContext;}
 });

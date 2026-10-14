@@ -2,18 +2,17 @@ import { randomUUID } from 'node:crypto';
 import { ollamaRoot } from './ollama-url.js';
 
 /** Native Ollama supports per-request context; the OpenAI shim uses daemon defaults. */
-export function ollamaContextLength(fallback?: number): number {
-  const value = Number(process.env.NOTCH_OLLAMA_CONTEXT || fallback || 32768);
-  if (!Number.isInteger(value) || value < 8192 || value > 262144) {
-    throw new Error('NOTCH_OLLAMA_CONTEXT must be an integer between 8192 and 262144.');
+export function ollamaContextLength(fallback?: number, nativeLimit?: number): number {
+  const value = Number(process.env.NOTCH_OLLAMA_CONTEXT || fallback || 8192);
+  if (!Number.isInteger(value) || value < 2048 || value > 262144) {
+    throw new Error('NOTCH_OLLAMA_CONTEXT must be an integer between 2048 and 262144.');
   }
-  return value;
+  return Number.isSafeInteger(nativeLimit) && nativeLimit! >= 2048 ? Math.min(value, nativeLimit!) : value;
 }
 
 export function ollamaBatchSize(fallback?: number): number | undefined {
   const raw = process.env.NOTCH_OLLAMA_BATCH;
-  if (!raw && fallback === undefined) return undefined;
-  const value = Number(raw || fallback);
+  const value = Number(raw || (fallback ?? 64));
   if (!Number.isInteger(value) || value < 1 || value > 2048) {
     throw new Error('NOTCH_OLLAMA_BATCH must be an integer between 1 and 2048.');
   }
@@ -34,7 +33,7 @@ interface Frame {
 }
 
 /** Adapt SDK messages to native /api/chat and NDJSON to SSE, preserving backpressure and cancellation. */
-export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; ollamaBatch?: number } = {}): typeof fetch {
+export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; nativeContextWindow?: number; ollamaBatch?: number } = {}): typeof fetch {
   return async (_input, init) => {
     const body = JSON.parse(String(init?.body));
     const names = new Map<string, string>();
@@ -66,7 +65,7 @@ export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; 
         ...(body.tools?.length ? { tools: body.tools } : {}),
         ...(body.response_format ? { format: body.response_format.json_schema?.schema || 'json' } : {}),
         ...(process.env.NOTCH_OLLAMA_THINK === '0' ? { think: false } : {}),
-        options: { num_ctx: ollamaContextLength(options.contextWindow), temperature: body.temperature ?? 0.2,
+        options: { num_ctx: ollamaContextLength(options.contextWindow, options.nativeContextWindow), temperature: body.temperature ?? 0.2,
           ...(ollamaBatchSize(options.ollamaBatch) === undefined ? {} : { num_batch: ollamaBatchSize(options.ollamaBatch) }),
           ...(body.max_tokens ? { num_predict: body.max_tokens } : {}),
           ...(body.stop ? { stop: body.stop } : {}) },

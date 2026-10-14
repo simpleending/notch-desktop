@@ -84,6 +84,7 @@ export interface HubModel {
   createdAt?: string;
   fetchedAt?: number;
   source?: 'live' | 'cache';
+  contextLength?: number;
 }
 async function fetchHubModel(repo: string, runner: LocalRunner, signal?: AbortSignal, token?: string): Promise<HubModel> {
   if (!/^[\w](?:[\w.-]*[\w])?\/[\w](?:[\w.-]*[\w])?$/.test(repo)) throw new Error('Use a Hugging Face repository id in owner/model form.');
@@ -92,7 +93,7 @@ async function fetchHubModel(repo: string, runner: LocalRunner, signal?: AbortSi
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
   });
   if (!response.ok) throw new Error(`Cannot inspect ${repo} (HTTP ${response.status}). Choose an accessible public model.`);
-  const body = await response.json() as { createdAt?: string; gated?: boolean | string; cardData?: { license?: string }; siblings?: { rfilename: string; size?: number; lfs?: { size: number } }[] };
+  const body = await response.json() as { sha?: string; createdAt?: string; gated?: boolean | string; cardData?: { license?: string }; siblings?: { rfilename: string; size?: number; lfs?: { size: number } }[] };
   if (body.gated) throw new Error(`${repo} is gated. The guided installer supports public models that need no account.`);
   const weights = body.siblings?.filter(file => runner === 'mlx'
     ? /\.safetensors$/i.test(file.rfilename)
@@ -101,13 +102,25 @@ async function fetchHubModel(repo: string, runner: LocalRunner, signal?: AbortSi
   if (!weights.length || !Number.isSafeInteger(bytes) || bytes <= 0 || weights.some(file => !Number.isSafeInteger(file.size ?? file.lfs?.size) || (file.size ?? file.lfs?.size ?? 0) <= 0)) {
     throw new Error(`${repo} has no verifiable ${runner === 'mlx' ? 'MLX safetensors' : 'Q4_K_M GGUF'} weights.`);
   }
-  return { repo, runner, model: runner === 'mlx' ? repo : `hf.co/${repo}:Q4_K_M`, bytes, license: body.cardData?.license,
+  let contextLength: number | undefined;
+  if (runner === 'mlx') {
+    const revision = typeof body.sha === 'string' && /^[a-f0-9]{40}$/.test(body.sha) ? body.sha : 'main';
+    const configResponse = await fetch(`https://huggingface.co/${repo}/resolve/${revision}/config.json`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {}, redirect: 'error',
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
+    });
+    if (!configResponse.ok) throw new Error(`Cannot verify ${repo}'s native context limit (HTTP ${configResponse.status}).`);
+    const config = await configResponse.json();
+    contextLength = config.text_config?.max_position_embeddings ?? config.max_position_embeddings ?? config.max_seq_len ?? config.seq_length;
+    if (!Number.isSafeInteger(contextLength) || contextLength! < 2048) throw new Error(`${repo} has no verifiable native context limit.`);
+  }
+  return { repo, runner, model: runner === 'mlx' ? repo : `hf.co/${repo}:Q4_K_M`, bytes, license: body.cardData?.license, ...(contextLength ? { contextLength } : {}),
     ...(typeof body.createdAt === 'string' && Number.isFinite(Date.parse(body.createdAt)) ? { createdAt: new Date(body.createdAt).toISOString() } : {}),
     fetchedAt: Date.now(), source: 'live',
     ...(runner === 'ollama' ? { ollamaBase: LOCAL_MODEL_CATALOG.find(row => row.gguf === repo)?.ollamaBase } : {}) };
 }
 
-export async function inspectHubModel(repo: string, runner: LocalRunner, signal?: AbortSignal, token?: string): Promise<HubModel> {
+export async function inspectHubModel(repo: string, runner: LocalRunner, signal?: AbortSignal, token?: string, refresh = false): Promise<HubModel> {
   signal?.throwIfAborted();
   if (!/^[\w](?:[\w.-]*[\w])?\/[\w](?:[\w.-]*[\w])?$/.test(repo)) throw new Error('Use a Hugging Face repository id in owner/model form.');
   const file = path.join(os.homedir(), '.notch', 'cache', 'hub-models', `${runner}-${repo.replace('/', '--')}.json`);
@@ -116,7 +129,7 @@ export async function inspectHubModel(repo: string, runner: LocalRunner, signal?
     const value = JSON.parse(await readFile(file, 'utf8')) as HubModel;
     if (value.repo === repo && value.runner === runner && value.model === (runner === 'mlx' ? repo : `hf.co/${repo}:Q4_K_M`)
       && Number.isSafeInteger(value.bytes) && value.bytes > 0 && Number.isFinite(value.fetchedAt) && value.fetchedAt! <= Date.now()) cached = value;
-    if (cached && Date.now() - cached.fetchedAt! < 6 * 60 * 60 * 1000) return { ...cached, source: 'cache' };
+    if (!refresh && cached && Date.now() - cached.fetchedAt! < 6 * 60 * 60 * 1000) return { ...cached, source: 'cache' };
   } catch { /* Cache is optional, including corrupt or stale files. */ }
   try {
     const value = await fetchHubModel(repo, runner, signal, token);
@@ -129,7 +142,7 @@ export async function inspectHubModel(repo: string, runner: LocalRunner, signal?
     return value;
   } catch (error) {
     signal?.throwIfAborted();
-    if (cached) return { ...cached, source: 'cache' };
+    if (!refresh && cached) return { ...cached, source: 'cache' };
     throw error;
   }
 }

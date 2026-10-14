@@ -100,19 +100,33 @@ async function fetchHubModel(repo, runner, signal, token) {
   if (!weights.length || !Number.isSafeInteger(bytes) || bytes <= 0 || weights.some((file) => !Number.isSafeInteger(file.size ?? file.lfs?.size) || (file.size ?? file.lfs?.size ?? 0) <= 0)) {
     throw new Error(`${repo} has no verifiable ${runner === "mlx" ? "MLX safetensors" : "Q4_K_M GGUF"} weights.`);
   }
+  let contextLength;
+  if (runner === "mlx") {
+    const revision = typeof body.sha === "string" && /^[a-f0-9]{40}$/.test(body.sha) ? body.sha : "main";
+    const configResponse = await fetch(`https://huggingface.co/${repo}/resolve/${revision}/config.json`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      redirect: "error",
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15e3)]) : AbortSignal.timeout(15e3)
+    });
+    if (!configResponse.ok) throw new Error(`Cannot verify ${repo}'s native context limit (HTTP ${configResponse.status}).`);
+    const config = await configResponse.json();
+    contextLength = config.text_config?.max_position_embeddings ?? config.max_position_embeddings ?? config.max_seq_len ?? config.seq_length;
+    if (!Number.isSafeInteger(contextLength) || contextLength < 2048) throw new Error(`${repo} has no verifiable native context limit.`);
+  }
   return {
     repo,
     runner,
     model: runner === "mlx" ? repo : `hf.co/${repo}:Q4_K_M`,
     bytes,
     license: body.cardData?.license,
+    ...contextLength ? { contextLength } : {},
     ...typeof body.createdAt === "string" && Number.isFinite(Date.parse(body.createdAt)) ? { createdAt: new Date(body.createdAt).toISOString() } : {},
     fetchedAt: Date.now(),
     source: "live",
     ...runner === "ollama" ? { ollamaBase: LOCAL_MODEL_CATALOG.find((row) => row.gguf === repo)?.ollamaBase } : {}
   };
 }
-async function inspectHubModel(repo, runner, signal, token) {
+async function inspectHubModel(repo, runner, signal, token, refresh = false) {
   signal?.throwIfAborted();
   if (!/^[\w](?:[\w.-]*[\w])?\/[\w](?:[\w.-]*[\w])?$/.test(repo)) throw new Error("Use a Hugging Face repository id in owner/model form.");
   const file = path.join(os.homedir(), ".notch", "cache", "hub-models", `${runner}-${repo.replace("/", "--")}.json`);
@@ -120,7 +134,7 @@ async function inspectHubModel(repo, runner, signal, token) {
   try {
     const value = JSON.parse(await readFile(file, "utf8"));
     if (value.repo === repo && value.runner === runner && value.model === (runner === "mlx" ? repo : `hf.co/${repo}:Q4_K_M`) && Number.isSafeInteger(value.bytes) && value.bytes > 0 && Number.isFinite(value.fetchedAt) && value.fetchedAt <= Date.now()) cached = value;
-    if (cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1e3) return { ...cached, source: "cache" };
+    if (!refresh && cached && Date.now() - cached.fetchedAt < 6 * 60 * 60 * 1e3) return { ...cached, source: "cache" };
   } catch {
   }
   try {
@@ -137,7 +151,7 @@ async function inspectHubModel(repo, runner, signal, token) {
     return value;
   } catch (error) {
     signal?.throwIfAborted();
-    if (cached) return { ...cached, source: "cache" };
+    if (!refresh && cached) return { ...cached, source: "cache" };
     throw error;
   }
 }

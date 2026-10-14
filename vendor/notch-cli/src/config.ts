@@ -120,7 +120,7 @@ export interface ModelSelection { provider?: string; model?: string; baseUrl?: s
 export function selectModel(current: ModelConfig, selection: ModelSelection): ModelConfig {
   const next = { ...current };
   if (selection.provider || selection.model) {
-    if (selection.model && selection.model !== current.model) delete next.sourceRepo;
+    if (selection.model && selection.model !== current.model) { delete next.sourceRepo; delete next.nativeContextWindow; }
     const oldProvider = current.byokProvider ?? (isByokRef(current.model) ? parseByokRef(current.model).provider : undefined);
     const provider = selection.provider === 'custom' ? '__custom__' : selection.provider;
     const newProvider = provider ?? (selection.model && isByokRef(selection.model) ? parseByokRef(selection.model).provider : undefined);
@@ -189,7 +189,8 @@ export async function loadConfig(overrides: Partial<NotchConfig> = {}, selection
         if (byok.baseUrl) config.models.chat.baseUrl = byok.baseUrl;
         if (typeof byok.sourceRepo === 'string') config.models.chat.sourceRepo = byok.sourceRepo;
         if (byok.contextWindow !== undefined) {
-          if (!Number.isInteger(byok.contextWindow) || byok.contextWindow < 8192 || byok.contextWindow > 262144) throw new Error('provider.contextWindow must be an integer between 8192 and 262144.');
+          const maximum = ['ollama', 'ollama-anthropic', 'mlx'].includes(byok.provider || '') ? 262144 : 16777216;
+          if (!Number.isInteger(byok.contextWindow) || byok.contextWindow < 2048 || byok.contextWindow > maximum) throw new Error(`provider.contextWindow must be an integer between 2048 and ${maximum}.`);
           config.models.chat.contextWindow = byok.contextWindow;
         }
         if (byok.ollamaBatch !== undefined) {

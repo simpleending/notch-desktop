@@ -345,6 +345,7 @@ export function isByokRef(model: string): boolean {
 
 /** Resolved BYOK model spec from a raw `<provider>:<model>` string. */
 export interface ByokSpec {
+  nativeContextWindow?: number;
   contextWindow?: number;
   ollamaBatch?: number;
   /** Provider id (must match a BUILTIN_BYOK_PROVIDERS entry). */

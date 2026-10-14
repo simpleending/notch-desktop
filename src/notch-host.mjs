@@ -71,12 +71,12 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
               efforts: [], defaultEffort: null, supportsDisabled: true });
           }
         }
-        if (host.modelManager) for (const row of await host.modelManager.mlxModels(hardware)) { unique.set(row.key,row); profiles.set(row.key,{contextWindow:row.defaultContextWindow,maxOutputTokens:row.maxOutputTokens}); }
+        if (host.modelManager) for (const row of await host.modelManager.mlxModels(hardware)) { unique.set(row.key,row); profiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
         models = [...unique.values()];
         defaultModel = models.find(row => row.isDefault && row.enabled)?.key || models.find(row => row.enabled)?.key;
         if (host.modelManager) {
           const cloud = await host.modelManager.cloudCatalog().catch(()=>[]);
-          for (const row of cloud) profiles.set(row.key, { contextWindow: row.defaultContextWindow, maxOutputTokens: row.maxOutputTokens });
+          for (const row of cloud) profiles.set(row.key, { contextWindow: row.defaultContextWindow, nativeContext:row.maxInputTokens, maxOutputTokens: row.maxOutputTokens });
           models.push(...cloud);
         }
         if (hardware.mlxSupported) defaultModel = models.find(row=>row.provider==='mlx' && row.enabled)?.key || defaultModel;
@@ -126,7 +126,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
               await turn.onLifecycle?.(event, payload);
             },
             ripgrepPath: process.resourcesPath ? path.join(process.resourcesPath, 'bin', 'notch-rg.exe') : undefined,
-            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || 8192, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
+            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || 8192, nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
         },
       });
     },

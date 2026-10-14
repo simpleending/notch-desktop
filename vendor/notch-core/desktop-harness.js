@@ -8,7 +8,7 @@ import {
   linuxGpuMemory,
   modelFit,
   parseNvidiaMemory
-} from "./chunk-XVFJ55YZ.js";
+} from "./chunk-VNTSJMDJ.js";
 import {
   listModels,
   ollamaChatUrl,
@@ -130,17 +130,16 @@ var HTML_ERROR = HTML_BASE(`
 
 // vendor/notch-cli/src/providers/ollama-transport.ts
 import { randomUUID } from "crypto";
-function ollamaContextLength(fallback) {
-  const value = Number(process.env.NOTCH_OLLAMA_CONTEXT || fallback || 32768);
-  if (!Number.isInteger(value) || value < 8192 || value > 262144) {
-    throw new Error("NOTCH_OLLAMA_CONTEXT must be an integer between 8192 and 262144.");
+function ollamaContextLength(fallback, nativeLimit) {
+  const value = Number(process.env.NOTCH_OLLAMA_CONTEXT || fallback || 8192);
+  if (!Number.isInteger(value) || value < 2048 || value > 262144) {
+    throw new Error("NOTCH_OLLAMA_CONTEXT must be an integer between 2048 and 262144.");
   }
-  return value;
+  return Number.isSafeInteger(nativeLimit) && nativeLimit >= 2048 ? Math.min(value, nativeLimit) : value;
 }
 function ollamaBatchSize(fallback) {
   const raw = process.env.NOTCH_OLLAMA_BATCH;
-  if (!raw && fallback === void 0) return void 0;
-  const value = Number(raw || fallback);
+  const value = Number(raw || (fallback ?? 64));
   if (!Number.isInteger(value) || value < 1 || value > 2048) {
     throw new Error("NOTCH_OLLAMA_BATCH must be an integer between 1 and 2048.");
   }
@@ -182,7 +181,7 @@ function ollamaFetch(baseUrl, options = {}) {
         ...body.response_format ? { format: body.response_format.json_schema?.schema || "json" } : {},
         ...process.env.NOTCH_OLLAMA_THINK === "0" ? { think: false } : {},
         options: {
-          num_ctx: ollamaContextLength(options.contextWindow),
+          num_ctx: ollamaContextLength(options.contextWindow, options.nativeContextWindow),
           temperature: body.temperature ?? 0.2,
           ...ollamaBatchSize(options.ollamaBatch) === void 0 ? {} : { num_batch: ollamaBatchSize(options.ollamaBatch) },
           ...body.max_tokens ? { num_predict: body.max_tokens } : {},
@@ -872,6 +871,7 @@ function resolveModel(config) {
       headers: { ...config.headers, ...config.byokHeaders },
       apiShape: config.byokApiShape,
       contextWindow: config.contextWindow,
+      nativeContextWindow: config.nativeContextWindow,
       ollamaBatch: config.ollamaBatch
     });
     firePiAiShadowProbe(config, resolved.model);
@@ -887,6 +887,7 @@ function resolveModel(config) {
       headers: { ...config.headers, ...config.byokHeaders },
       apiShape: config.byokApiShape,
       contextWindow: config.contextWindow,
+      nativeContextWindow: config.nativeContextWindow,
       ollamaBatch: config.ollamaBatch
     });
     firePiAiShadowProbe(config, resolved.model);
@@ -1654,7 +1655,10 @@ var DEFAULTS = {
 function selectModel(current, selection) {
   const next = { ...current };
   if (selection.provider || selection.model) {
-    if (selection.model && selection.model !== current.model) delete next.sourceRepo;
+    if (selection.model && selection.model !== current.model) {
+      delete next.sourceRepo;
+      delete next.nativeContextWindow;
+    }
     const oldProvider = current.byokProvider ?? (isByokRef(current.model) ? parseByokRef(current.model).provider : void 0);
     const provider = selection.provider === "custom" ? "__custom__" : selection.provider;
     const newProvider = provider ?? (selection.model && isByokRef(selection.model) ? parseByokRef(selection.model).provider : void 0);
@@ -1713,7 +1717,8 @@ async function loadConfig(overrides = {}, selection = {}) {
         if (byok.baseUrl) config.models.chat.baseUrl = byok.baseUrl;
         if (typeof byok.sourceRepo === "string") config.models.chat.sourceRepo = byok.sourceRepo;
         if (byok.contextWindow !== void 0) {
-          if (!Number.isInteger(byok.contextWindow) || byok.contextWindow < 8192 || byok.contextWindow > 262144) throw new Error("provider.contextWindow must be an integer between 8192 and 262144.");
+          const maximum = ["ollama", "ollama-anthropic", "mlx"].includes(byok.provider || "") ? 262144 : 16777216;
+          if (!Number.isInteger(byok.contextWindow) || byok.contextWindow < 2048 || byok.contextWindow > maximum) throw new Error(`provider.contextWindow must be an integer between 2048 and ${maximum}.`);
           config.models.chat.contextWindow = byok.contextWindow;
         }
         if (byok.ollamaBatch !== void 0) {
@@ -7414,6 +7419,7 @@ async function runDesktopTurn(turn) {
     ...turn.baseUrl ? { baseUrl: turn.baseUrl } : {},
     ...turn.apiKey ? { apiKey: turn.apiKey } : {},
     ...turn.contextWindow ? { contextWindow: turn.contextWindow } : {},
+    ...turn.nativeContextWindow ? { nativeContextWindow: turn.nativeContextWindow } : {},
     ...turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}
   };
   if (selection.model.startsWith("openrouter/")) {
@@ -7425,12 +7431,13 @@ async function runDesktopTurn(turn) {
   const provider = selection.byokProvider || (isByokRef(selection.model) ? parseByokRef(selection.model).provider : void 0);
   if (provider === "ollama" && selection.baseUrl?.replace(/\/v1\/?$/, "") === "http://127.0.0.1:11436") {
     const { managedOllama } = await import("./ollama-runtime-H64CY4CC.js");
-    await managedOllama("0.30.0", turn.signal);
+    await managedOllama("0.40.3", turn.signal);
   }
   if (provider === "mlx") {
-    const { startMlx } = await import("./local-runner-MBZGUBLB.js");
+    const { startMlx } = await import("./local-runner-O7HGXIPQ.js");
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
+  if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
   const permissions = await loadPermissions(cwd);
   const allowed = definitionRules(turn.allowedTools, "allow"), denied = definitionRules(turn.disallowedTools, "deny");
   const ctx = {

@@ -210,6 +210,7 @@ export function resolveModel(config: ModelConfig): LanguageModel {
       headers: { ...config.headers, ...config.byokHeaders },
       apiShape: config.byokApiShape,
       contextWindow: config.contextWindow,
+      nativeContextWindow: config.nativeContextWindow,
       ollamaBatch: config.ollamaBatch,
     });
     firePiAiShadowProbe(config, resolved.model);
@@ -227,6 +228,7 @@ export function resolveModel(config: ModelConfig): LanguageModel {
       headers: { ...config.headers, ...config.byokHeaders },
       apiShape: config.byokApiShape,
       contextWindow: config.contextWindow,
+      nativeContextWindow: config.nativeContextWindow,
       ollamaBatch: config.ollamaBatch,
     });
     firePiAiShadowProbe(config, resolved.model);

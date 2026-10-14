@@ -66,7 +66,7 @@ export function createHubCatalog(directory,{fetcher=fetch,inspect=inspectHubMode
     async selected(repo,runner,token) {
       if(!validRepo(repo)||!['ollama','mlx'].includes(runner))throw new Error('Choose a compatible Hugging Face repository.');
       const device=await hardware();if(runner==='mlx'&&!device.mlxSupported)throw new Error('MLX requires Apple Silicon.');
-      const row=await inspect(repo,runner,AbortSignal.timeout(15000),token);
+      const row=await inspect(repo,runner,AbortSignal.timeout(15000),token,true);
       if(row.repo!==repo || row.runner!==runner || !Number.isSafeInteger(row.bytes) || row.bytes<=0)throw new Error('Model weights could not be verified.');
       return {...row,...modelFit(row,device)};
     },

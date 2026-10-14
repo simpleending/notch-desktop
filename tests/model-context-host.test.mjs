@@ -14,7 +14,7 @@ test('local turns refresh memory before loading, retain manual preferences and r
   const refreshes=[],contexts=[];
   const host=createHost(directory,{hardware:async fresh=>{refreshes.push(fresh);return memory;},
     fetcher:async url=>({ok:true,json:async()=>url.endsWith('/api/tags')?{models:[{name:'fixture',size:3*GiB,digest:'fixture'}]}:url.endsWith('/api/ps')?{models:[]}:metadata}),
-    runTurn:async turn=>{contexts.push(turn.contextWindow);turn.onUsage({inputTokens:100,outputTokens:10,contextWindow:turn.contextWindow});return {messages:turn.messages,text:'OK',status:'completed'};}});
+    runTurn:async turn=>{assert.equal(turn.nativeContextWindow,262144);contexts.push(turn.contextWindow);turn.onUsage({inputTokens:100,outputTokens:10,contextWindow:turn.contextWindow});return {messages:turn.messages,text:'OK',status:'completed'};}});
   host.modelManager=createModelManager(directory);
   const key='ollama/fixture';
   try {

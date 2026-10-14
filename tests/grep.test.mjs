@@ -8,7 +8,7 @@ import { grepTool } from '../vendor/notch-cli/src/tools/grep.ts';
 async function fixture(t) {
   const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'notch grep 中文-'));
   assert.equal(path.dirname(cwd), path.resolve(os.tmpdir()));
-  t.after(() => fs.rm(cwd, { recursive: true, force: true }));
+  t.after(() => fs.rm(cwd, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }));
   await fs.mkdir(path.join(cwd, '.git'));
   await fs.writeFile(path.join(cwd, '.gitignore'), 'ignored.txt\n');
   await fs.writeFile(path.join(cwd, 'ignored.txt'), 'ignored_marker\n');

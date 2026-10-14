@@ -67,6 +67,7 @@ export interface ModelConfig {
   baseUrl?: string;
   /** Max context window in tokens (auto-set from model catalog) */
   contextWindow?: number;
+  nativeContextWindow?: number;
   /** Memory-sensitive native Ollama prompt batch size. */
   ollamaBatch?: number;
   sourceRepo?: string;

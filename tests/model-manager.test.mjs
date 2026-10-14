@@ -14,10 +14,12 @@ test('automatic local context respects model context, KV memory and tools',()=>{
   const hardware={availableMemory:14*GiB,totalMemory:24*GiB,availableVram:0};
   const metadata={capabilities:['tools'],model_info:{'general.architecture':'test','test.block_count':32,'test.attention.head_count_kv':4,'test.attention.key_length':128,'test.attention.value_length':128,'test.context_length':16384}};
   const profile=localContextProfile(3*GiB,hardware,metadata);
-  assert.equal(profile.contextWindow,8192);assert.deepEqual(profile.choices,[4096,8192,16384]);
+  assert.equal(profile.contextWindow,8192);assert.deepEqual(profile.choices,[2048,4096,8192,16384]);
   assert.equal(localContextProfile(16*GiB,hardware,metadata).fits,false);
   assert.equal(localContextProfile(3*GiB,hardware,{}).fits,false);
-  metadata.model_info['test.context_length']=4096;assert.deepEqual(localContextProfile(3*GiB,hardware,metadata).choices,[4096]);
+  metadata.model_info['test.context_length']=4096;assert.deepEqual(localContextProfile(3*GiB,hardware,metadata).choices,[2048,4096]);
+  metadata.model_info['test.context_length']=2048;assert.deepEqual(localContextProfile(3*GiB,hardware,metadata).choices,[2048]);
+  assert.equal(localContextProfile(3*GiB,hardware,{...metadata,capabilities:'tools'}).fits,false);
 });
 
 const localMetadata={capabilities:['tools'],model_info:{'general.architecture':'test','test.block_count':32,'test.attention.head_count_kv':4,'test.attention.key_length':128,'test.attention.value_length':128,'test.context_length':262144}};
@@ -131,4 +133,12 @@ test('a verified MLX installation appears after restart only on supported Apple 
   const restored=createModelManager(directory), hardware={mlxSupported:true,availableMemory:16*GiB,totalMemory:24*GiB,availableVram:0};
   const rows=await restored.mlxModels(hardware);assert.equal(rows[0].key,'mlx/owner/apple-model');assert.equal(rows[0].defaultContextWindow,8192);
   assert.deepEqual(await restored.mlxModels({...hardware,mlxSupported:false}),[]);
+});
+test('MLX native context metadata survives installation and constrains manual choices',async()=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'notch-model-mlx-native-'));
+  const manager=createModelManager(directory,{recommend:async()=>({models:[{repo:'owner/apple-model',fits:true,bytes:3*GiB,contextLength:4096}]}),install:async()=>{}});
+  await manager.startInstall('owner/apple-model','mlx');
+  while((await manager.status()).job.state==='running')await new Promise(resolve=>setImmediate(resolve));
+  const rows=await createModelManager(directory).mlxModels({mlxSupported:true,availableMemory:16*GiB,totalMemory:24*GiB,availableVram:0});
+  assert.equal(rows[0].maxInputTokens,4096);assert.equal(rows[0].defaultContextWindow,4096);assert.deepEqual(rows[0].availableContextWindows,[2048,4096]);
 });

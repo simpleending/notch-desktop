@@ -63,9 +63,11 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
     requestedContext(model) { return preferences.get(model); },
     async mlxModels(hardware) {
       await ready; if (!hardware.mlxSupported) return [];
-      return installedMlx.map(row=>{ const fit=localContextProfile(row.bytes,hardware,{capabilities:['tools'],model_info:{'general.architecture':'mlx','mlx.context_length':8192}});
+      // shortcut: older installs lack native metadata; keep their conservative 8K limit until reinstalled.
+      return installedMlx.map(row=>{ const nativeContext=Number.isSafeInteger(row.contextLength) && row.contextLength>=2048 ? row.contextLength : 8192;
+        const fit=localContextProfile(row.bytes,hardware,{capabilities:['tools'],model_info:{'general.architecture':'mlx','mlx.context_length':nativeContext}});
         return { key:`mlx/${row.repo}`,displayName:row.repo,provider:'mlx',bytes:row.bytes,description:fit.fits?'local MLX · estimated memory fit':fit.reason,
-          source:'system',enabled:fit.fits,isDefault:true,isNew:false,priceFactor:0,tags:['local'],maxInputTokens:8192,maxOutputTokens:2048,availableContextWindows:fit.choices,
+          source:'system',enabled:fit.fits,isDefault:true,isNew:false,priceFactor:0,tags:['local'],maxInputTokens:nativeContext,maxOutputTokens:2048,availableContextWindows:fit.choices,
           defaultContextWindow:service.context(`mlx/${row.repo}`,fit.choices,fit.contextWindow),recommendedContextWindow:fit.contextWindow,requestedContextWindow:service.requestedContext(`mlx/${row.repo}`),efforts:[],defaultEffort:null,supportsDisabled:true }; });
     },
     async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && row.enabled); if (!row || (tokens!=='auto' && !row.availableContextWindows.includes(tokens))) throw new Error('Choose a supported context limit for this model.'); if(tokens==='auto')preferences.delete(model);else preferences.set(model,tokens); await atomic(contextFile,Object.fromEntries(preferences)); },
@@ -78,7 +80,7 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       if (job?.public.state==='running') throw new Error('A model download is already running.');
       const controller = new AbortController(); job = { controller, public: { id: randomUUID(), repo, runner, state: 'running', message: 'Preparing download…' } }; const current = job;
       void install(repo,runner,{ cwd, signal: controller.signal, env: keys.has('huggingface') ? { HF_TOKEN: keys.get('huggingface') } : {}, onOutput: ({text})=>{ current.public.message = text.trim().slice(-500).replace(/\x1b\[[0-9;]*m/g,''); } })
-        .then(async()=>{if(runner==='mlx'){installedMlx=[...installedMlx.filter(item=>item.repo!==repo),{repo,bytes:row.bytes}];await atomic(mlxFile,installedMlx);}current.public.state='complete';current.public.message='Installed. Refresh Installed to select it.';})
+        .then(async()=>{if(runner==='mlx'){installedMlx=[...installedMlx.filter(item=>item.repo!==repo),{repo,bytes:row.bytes,...(Number.isSafeInteger(row.contextLength) && row.contextLength>=2048 ? {contextLength:row.contextLength} : {})}];await atomic(mlxFile,installedMlx);}current.public.state='complete';current.public.message='Installed. Refresh Installed to select it.';})
         .catch(error=>{current.public.state=controller.signal.aborted?'cancelled':'failed';current.public.message=controller.signal.aborted?'Download cancelled; cached files are retained.':String(error.message).replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);});
       return service.status();
     },

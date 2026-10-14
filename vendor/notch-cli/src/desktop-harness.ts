@@ -4,6 +4,7 @@ import type { ModelMessage } from 'ai';
 import { loadConfig, selectModel } from './config.js';
 import { resolveModel } from './providers/registry.js';
 import { isByokRef, parseByokRef } from './providers/byok.js';
+import { ollamaContextLength } from './providers/ollama-transport.js';
 import { runAgentLoop, buildSystemPrompt, type AgentConfig } from './agent/loop.js';
 import { CheckpointManager } from './agent/checkpoints.js';
 import { parsePatch } from './tools/apply-patch.js';
@@ -27,6 +28,7 @@ export interface DesktopTurn {
   maxOutputTokens?: number;
   baseUrl?: string;
   contextWindow?: number;
+  nativeContextWindow?: number;
   ollamaBatch?: number;
   tools?: string[];
   allowedTools?: string[];
@@ -68,6 +70,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     ...(turn.baseUrl ? { baseUrl: turn.baseUrl } : {}),
     ...(turn.apiKey ? { apiKey: turn.apiKey } : {}),
     ...(turn.contextWindow ? { contextWindow: turn.contextWindow } : {}),
+    ...(turn.nativeContextWindow ? { nativeContextWindow: turn.nativeContextWindow } : {}),
     ...(turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}),
   };
   if (selection.model.startsWith('openrouter/')) {
@@ -77,12 +80,13 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   const provider = selection.byokProvider || (isByokRef(selection.model) ? parseByokRef(selection.model).provider : undefined);
   if (provider === 'ollama' && selection.baseUrl?.replace(/\/v1\/?$/, '') === 'http://127.0.0.1:11436') {
     const { managedOllama } = await import('./providers/ollama-runtime.js');
-    await managedOllama('0.30.0', turn.signal);
+    await managedOllama('0.40.3', turn.signal);
   }
   if (provider === 'mlx') {
     const { startMlx } = await import('./providers/local-runner.js');
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
+  if (provider === 'ollama' || provider === 'ollama-anthropic') selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
   const permissions = await loadPermissions(cwd);
   const allowed = definitionRules(turn.allowedTools, 'allow'), denied = definitionRules(turn.disallowedTools, 'deny');
   const ctx: ToolContext = {
