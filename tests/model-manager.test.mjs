@@ -101,6 +101,14 @@ test('model download validates memory, supports cancellation and only forwards t
   await assert.rejects(manager.startInstall('owner/public-model','ollama'),/already/);
   await manager.cancelInstall();await new Promise(resolve=>setImmediate(resolve));assert.equal((await manager.status()).job.state,'cancelled');
 });
+
+test('concurrent install requests cannot start two downloads after metadata validation',async()=>{
+  let release;const barrier=new Promise(resolve=>{release=resolve;});let installs=0;
+  const manager=createModelManager(await mkdtemp(path.join(os.tmpdir(),'notch-model-race-')),{recommend:async()=>{await barrier;return {models:[{repo:'lab/new',fits:true}]};},install:async(_repo,_runner,{signal})=>{installs++;await new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('cancelled')),{once:true}));}});
+  const a=manager.startInstall('lab/new','ollama'),b=manager.startInstall('lab/new','ollama');release();
+  const results=await Promise.allSettled([a,b]);assert.equal(results.filter(result=>result.status==='fulfilled').length,1);assert.equal(installs,1);
+  assert.match(results.find(result=>result.status==='rejected').reason.message,/already/);await manager.cancelInstall();
+});
 test('a verified MLX installation appears after restart only on supported Apple hardware',async()=>{
   const directory=await mkdtemp(path.join(os.tmpdir(),'notch-model-mlx-'));
   const manager=createModelManager(directory,{recommend:async()=>({models:[{repo:'owner/apple-model',fits:true,bytes:3*GiB}]}),install:async (_repo,_runner,{cwd})=>{assert.ok(cwd.startsWith(directory));}});

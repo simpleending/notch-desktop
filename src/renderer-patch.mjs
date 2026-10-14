@@ -2,7 +2,7 @@ import { readFile, writeFile, readdir, cp, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { patchFunction, patchClassMethod } from './bundle-patch.mjs';
 import { patchWorkbenchRenderer, installWorkbenchAssets } from './workbench-patch.mjs';
-import { modelPreload } from './model-ipc.mjs';
+import { patchModelPreload } from './model-ipc.mjs';
 
 export function patchSetupRenderer(source) {
   if (source.includes('/* notch setup renderer */')) return source;
@@ -30,7 +30,8 @@ export function patchSetupDocument(html) {
 
 export async function installSetupRenderer(application, root) {
   const preloadFile = path.join(application,'out/preload/index.cjs'), preload = await readFile(preloadFile,'utf8');
-  if (!preload.includes('/* notch model settings bridge */')) await writeFile(preloadFile,preload+modelPreload);
+  const patchedPreload=patchModelPreload(preload);
+  if(patchedPreload!==preload)await writeFile(preloadFile,patchedPreload);
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
   const candidates = [];
   for (const name of await readdir(assets)) {

@@ -103,6 +103,28 @@ try {
   await page.getByLabel('Hugging Face token (optional)',{exact:true}).waitFor();
   await page.locator('[aria-label="Hugging Face models"] [role=option]').first().waitFor({timeout:25000});
   checks.hubModels=await page.locator('[aria-label="Hugging Face models"] [role=option]').allTextContents();
+  const hubList=page.locator('[aria-label="Hugging Face models"]'),hubSearch=page.getByRole('searchbox',{name:'Search models'});
+  await hubSearch.fill('gemm');
+  await page.waitForFunction(()=>{
+    const list=document.querySelector('[aria-label="Hugging Face models"]');
+    return list?.getAttribute('aria-busy')==='false' && list.querySelectorAll('[role=option]').length>3 && /gemma/i.test(list.innerText);
+  },undefined,{timeout:60000});
+  const firstHubCount=await hubList.getByRole('option').count();
+  checks.hubGemmaSearch=await hubList.getByRole('option').allTextContents();
+  await hubSearch.focus();await page.keyboard.press('ArrowDown');
+  assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('role')),'option');
+  await page.getByRole('button',{name:'Load more models',exact:true}).click();
+  await page.waitForFunction(count=>{
+    const list=document.querySelector('[aria-label="Hugging Face models"]');
+    return list?.getAttribute('aria-busy')==='false' && list.querySelectorAll('[role=option]').length>count;
+  },firstHubCount,{timeout:60000});
+  checks.hubPagination={first:firstHubCount,total:await hubList.getByRole('option').count()};
+  await hubSearch.fill('deepseek');await page.waitForTimeout(400);await hubSearch.fill('gemm');
+  await page.waitForFunction(()=>{
+    const list=document.querySelector('[aria-label="Hugging Face models"]');
+    return list?.getAttribute('aria-busy')==='false' && list.querySelectorAll('[role=option]').length>3 && [...list.querySelectorAll('strong')].every(row=>/gemm/i.test(row.innerText));
+  },undefined,{timeout:60000});
+  checks.hubStaleSearch=true;
   await capture(page,'hugging-face-dark');
   await page.getByRole('tab',{name:'OpenRouter',exact:true}).click();
   await page.getByLabel('OpenRouter API key',{exact:true}).waitFor();

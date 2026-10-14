@@ -4,22 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { cloudModelRows } from './model-policy.mjs';
 import { localContextProfile } from './model-policy.mjs';
 import { installLocalModel } from './cli-bridge.mjs';
-import { detectLocalHardware, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from '../vendor/notch-core/desktop-harness.js';
+import {createHubCatalog} from './hub-catalog.mjs';
 
-async function recommend({ runner, token }) {
-  const hardware = await detectLocalHardware();
-  runner ||= hardware.mlxSupported ? 'mlx' : 'ollama';
-  if (!['ollama','mlx'].includes(runner) || (runner === 'mlx' && !hardware.mlxSupported)) throw new Error('MLX requires an Apple Silicon Mac running macOS 14 or newer.');
-  const results = await Promise.allSettled(LOCAL_MODEL_CATALOG.map(row=>inspectHubModel(runner==='mlx'?row.mlx:row.gguf,runner,undefined,token)));
-  const models = results.filter(result=>result.status==='fulfilled').map(result=>({ ...result.value, ...modelFit(result.value,hardware) })).sort((a,b)=>Date.parse(b.createdAt || 0)-Date.parse(a.createdAt || 0));
-  if (!models.length) throw new Error('Hugging Face is unavailable. Retry when connected.');
-  return { hardware, runner, models };
-}
-
-export function createModelManager(directory, { safeStorage, fetcher = fetch, recommend: recommendModels = recommend, install = installLocalModel } = {}) {
+export function createModelManager(directory, { safeStorage, fetcher = fetch, recommend: recommendModels, install = installLocalModel } = {}) {
   const keys = new Map(), preferences = new Map();
   const keyFile = path.join(directory, 'provider-keys.encrypted.json'), contextFile = path.join(directory, 'model-context.json'), catalogFile = path.join(directory, 'openrouter-models.json');
   const mlxFile = path.join(directory,'mlx-models.json');
+  const hub=createHubCatalog(directory,{fetcher});
   let cached, pending, job, keyLoadError, installedMlx = [];
   let persistent = false;
   const secure = () => persistent;
@@ -78,12 +69,13 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
           defaultContextWindow:service.context(`mlx/${row.repo}`,fit.choices,fit.contextWindow),recommendedContextWindow:fit.contextWindow,requestedContextWindow:service.requestedContext(`mlx/${row.repo}`),efforts:[],defaultEffort:null,supportsDisabled:true }; });
     },
     async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && row.enabled); if (!row || (tokens!=='auto' && !row.availableContextWindows.includes(tokens))) throw new Error('Choose a supported context limit for this model.'); if(tokens==='auto')preferences.delete(model);else preferences.set(model,tokens); await atomic(contextFile,Object.fromEntries(preferences)); },
-    async hubCatalog(runner) { await ready; if (runner !== undefined && !['ollama','mlx'].includes(runner)) throw new Error('Choose Ollama or MLX.'); return recommendModels({ runner, token: keys.get('huggingface') }); },
+    async hubCatalog(runner, options={}) { await ready; if (runner !== undefined && !['ollama','mlx'].includes(runner)) throw new Error('Choose Ollama or MLX.'); if(!options || typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(key=>!['query','page','force'].includes(key)))throw new Error('Invalid model search.'); return (recommendModels || (args=>hub.list(args)))({ ...options,runner,token:keys.get('huggingface') }); },
     async startInstall(repo, runner) {
       await ready; if (job?.public.state==='running') throw new Error('A model download is already running.');
-      const catalog = await service.hubCatalog(runner), row = catalog.models.find(row=>row.repo===repo && row.fits);
-      if (!row) throw new Error('Choose a recommended model that fits current memory.');
+      const row=recommendModels?(await service.hubCatalog(runner)).models.find(row=>row.repo===repo && row.fits):await hub.selected(repo,runner,keys.get('huggingface'));
+      if (!row?.fits) throw new Error('Choose a compatible model that fits current memory.');
       const cwd = path.join(directory,'model-installs'); await fs.mkdir(cwd,{recursive:true});
+      if (job?.public.state==='running') throw new Error('A model download is already running.');
       const controller = new AbortController(); job = { controller, public: { id: randomUUID(), repo, runner, state: 'running', message: 'Preparing download…' } }; const current = job;
       void install(repo,runner,{ cwd, signal: controller.signal, env: keys.has('huggingface') ? { HF_TOKEN: keys.get('huggingface') } : {}, onOutput: ({text})=>{ current.public.message = text.trim().slice(-500).replace(/\x1b\[[0-9;]*m/g,''); } })
         .then(async()=>{if(runner==='mlx'){installedMlx=[...installedMlx.filter(item=>item.repo!==repo),{repo,bytes:row.bytes}];await atomic(mlxFile,installedMlx);}current.public.state='complete';current.public.message='Installed. Refresh Installed to select it.';})
