@@ -68,15 +68,16 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       }
       return cloudModelRows(cached.data,true).map(row=>({ ...row, defaultContextWindow: service.context(row.key,row.availableContextWindows,row.defaultContextWindow) }));
     },
-    context(model, choices, fallback) { const value = preferences.get(model); return choices.includes(value) ? value : fallback; },
+    context(model, choices, fallback) { const value = preferences.get(model); return choices.includes(value) ? value : value ? choices.filter(n=>n<=value).at(-1) || fallback : fallback; },
+    requestedContext(model) { return preferences.get(model); },
     async mlxModels(hardware) {
       await ready; if (!hardware.mlxSupported) return [];
       return installedMlx.map(row=>{ const fit=localContextProfile(row.bytes,hardware,{capabilities:['tools'],model_info:{'general.architecture':'mlx','mlx.context_length':8192}});
         return { key:`mlx/${row.repo}`,displayName:row.repo,provider:'mlx',bytes:row.bytes,description:fit.fits?'local MLX · estimated memory fit':fit.reason,
           source:'system',enabled:fit.fits,isDefault:true,isNew:false,priceFactor:0,tags:['local'],maxInputTokens:8192,maxOutputTokens:2048,availableContextWindows:fit.choices,
-          defaultContextWindow:service.context(`mlx/${row.repo}`,fit.choices,fit.contextWindow),efforts:[],defaultEffort:null,supportsDisabled:true }; });
+          defaultContextWindow:service.context(`mlx/${row.repo}`,fit.choices,fit.contextWindow),recommendedContextWindow:fit.contextWindow,requestedContextWindow:service.requestedContext(`mlx/${row.repo}`),efforts:[],defaultEffort:null,supportsDisabled:true }; });
     },
-    async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && row.enabled); if (!row || !row.availableContextWindows.includes(tokens)) throw new Error('Choose a supported context limit for this model.'); preferences.set(model,tokens); await atomic(contextFile,Object.fromEntries(preferences)); },
+    async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && row.enabled); if (!row || (tokens!=='auto' && !row.availableContextWindows.includes(tokens))) throw new Error('Choose a supported context limit for this model.'); if(tokens==='auto')preferences.delete(model);else preferences.set(model,tokens); await atomic(contextFile,Object.fromEntries(preferences)); },
     async hubCatalog(runner) { await ready; if (runner !== undefined && !['ollama','mlx'].includes(runner)) throw new Error('Choose Ollama or MLX.'); return recommendModels({ runner, token: keys.get('huggingface') }); },
     async startInstall(repo, runner) {
       await ready; if (job?.public.state==='running') throw new Error('A model download is already running.');

@@ -55,7 +55,9 @@ try {
     const model = document.querySelector('button[aria-label="Model"]');
     return model && !/loading/i.test(model.innerText);
   });
-  await page.getByRole('button',{name:'Model',exact:true}).getByText('8K',{exact:true}).waitFor();checks.startupContext=true;
+  const initialModels=await page.evaluate(()=>window.notchModels.state());
+  const initialModel=initialModels.models.find(row=>row.key===initialModels.defaultModel);
+  await page.getByRole('button',{name:'Model',exact:true}).getByText(`${initialModel.defaultContextWindow/1024}K`,{exact:true}).waitFor();checks.startupContext=true;
   checks.darkColors = await page.evaluate(() => ({ main: getComputedStyle(document.querySelector('[data-layout-region=b]')).backgroundColor,
     text: getComputedStyle(document.querySelector('.notch-welcome h1')).color }));
   assert.equal(checks.darkColors.main, 'rgb(24, 24, 27)');
@@ -75,11 +77,23 @@ try {
   checks.modelArrowNavigation=true;
   const initialContext=await page.getByRole('combobox',{name:'Context limit'}).inputValue();
   const contextChoices=await page.getByRole('combobox',{name:'Context limit'}).locator('option').evaluateAll(options=>options.map(option=>option.value));
-  assert.equal(initialContext,'8192');assert.ok(contextChoices.includes('16384'));
+  assert.equal(initialContext,'auto');assert.ok(contextChoices.includes('16384'));checks.automaticContext=true;
   await page.getByRole('combobox',{name:'Context limit'}).selectOption('16384');
   await page.waitForFunction(()=>document.querySelector('select[aria-label="Context limit"]')?.value==='16384');
   await page.getByRole('combobox',{name:'Context limit'}).selectOption('8192');
+  await page.waitForFunction(()=>document.querySelector('select[aria-label="Context limit"]')?.value==='8192');
+  await page.getByRole('combobox',{name:'Context limit'}).selectOption('auto');
+  await page.waitForFunction(()=>document.querySelector('select[aria-label="Context limit"]')?.value==='auto');
   checks.modelContextChoices=contextChoices;
+  // Exercise the extended menu without allocating a 256K cache on this QA device.
+  await app.evaluate(()=>{const host=globalThis.__notchHost;globalThis.__notchRealListModels=host.listModels;host.listModels=async(...args)=>(await globalThis.__notchRealListModels(...args)).map(row=>row.provider==='ollama'?{...row,availableContextWindows:[...new Set([...row.availableContextWindows,131072,262144])].sort((a,b)=>a-b)}:row);});
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  const extendedContext=page.getByRole('checkbox',{name:'Show extended context (256K)',exact:true});
+  await extendedContext.waitFor();assert.equal(await page.getByRole('combobox',{name:'Context limit'}).locator('option[value="262144"]').count(),0);
+  await extendedContext.check();assert.equal(await page.getByRole('combobox',{name:'Context limit'}).locator('option[value="262144"]').count(),1);
+  await extendedContext.uncheck();assert.equal(await page.getByRole('combobox',{name:'Context limit'}).locator('option[value="262144"]').count(),0);
+  await app.evaluate(()=>{globalThis.__notchHost.listModels=globalThis.__notchRealListModels;delete globalThis.__notchRealListModels;});
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();checks.extendedContext='256K visibility checked with a simulated larger-memory catalog; no 256K model load';
   await page.getByRole('tab',{name:'Hugging Face',exact:true}).click();
   await page.getByLabel('Hugging Face token (optional)',{exact:true}).waitFor();
   assert.equal(await page.getByLabel('Hugging Face token (optional)',{exact:true}).getAttribute('type'),'password');

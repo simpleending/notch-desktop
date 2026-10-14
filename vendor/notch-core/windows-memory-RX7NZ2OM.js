@@ -46,14 +46,14 @@ $installed = (Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Ca
 @{installedMemory=$installed;dedicatedMemory=[NotchGpuMemory]::LargestDedicatedMemory();dedicatedUsage=$used} | ConvertTo-Json -Compress
 `;
 var cache;
-async function windowsMemory() {
-  if (cache && Date.now() - cache.at < 5e3) return cache.value;
+async function windowsMemory(refresh = false) {
+  if (!refresh && cache && Date.now() - cache.at < 5e3) return cache.value;
   const executable = path.join(process.env.WINDIR || "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
   const { stdout } = await exec(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(query, "utf16le").toString("base64")], { timeout: 1e4, windowsHide: true });
   const data = JSON.parse(stdout.trim());
   const valid = (value2) => typeof value2 === "number" && Number.isSafeInteger(value2) && value2 >= 0;
   if (!valid(data.installedMemory) || !valid(data.dedicatedMemory) || !valid(data.dedicatedUsage)) throw new Error("Windows GPU memory telemetry is unavailable.");
-  const value = { installedMemory: data.installedMemory, availableVram: Math.max(0, data.dedicatedMemory - data.dedicatedUsage) };
+  const value = { installedMemory: data.installedMemory, totalVram: data.dedicatedMemory, availableVram: Math.max(0, data.dedicatedMemory - data.dedicatedUsage) };
   cache = { at: Date.now(), value };
   return value;
 }

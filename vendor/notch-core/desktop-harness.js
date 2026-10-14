@@ -5,8 +5,10 @@ import {
   LOCAL_MODEL_CATALOG,
   detectLocalHardware,
   inspectHubModel,
-  modelFit
-} from "./chunk-OGMCKULH.js";
+  linuxGpuMemory,
+  modelFit,
+  parseNvidiaMemory
+} from "./chunk-XVFJ55YZ.js";
 import {
   listModels,
   ollamaChatUrl,
@@ -7403,7 +7405,7 @@ async function runDesktopTurn(turn) {
     await managedOllama("0.30.0", turn.signal);
   }
   if (provider === "mlx") {
-    const { startMlx } = await import("./local-runner-XMASBH2Q.js");
+    const { startMlx } = await import("./local-runner-MBZGUBLB.js");
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   const permissions = await loadPermissions(cwd);
@@ -7470,7 +7472,9 @@ export {
   estimateTokens,
   fullCompact,
   inspectHubModel,
+  linuxGpuMemory,
   modelFit,
+  parseNvidiaMemory,
   runDesktopTurn,
   safeTailStart
 };

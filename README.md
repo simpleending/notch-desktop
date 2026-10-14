@@ -30,7 +30,7 @@ Once you have a development build:
 3. Open the model picker. Select an installed local model, browse Hugging Face to download one, or add your OpenRouter key and select a cloud model.
 4. Start with a small request, such as “Explain how this project works.” Review any requested file changes or commands before approving them.
 
-Local models need enough memory for both the model and its conversation. notch suggests context limits based on your available memory and the model's limits. Local context starts at 8K when memory allows, or 4K on tighter limits; you can choose another supported limit. These estimates help with selection but cannot guarantee a model will fit.
+Local models need enough memory for both the model and its conversation. Auto context rechecks free RAM/VRAM before each turn and chooses up to 128K using the model's limits and estimated KV-cache size. It prefers a context that fits on the GPU; Apple Silicon uses its unified memory. Smaller limits, including 8K or a 4K fallback, remain available. You can select a manual limit, or enable extended context to reveal 256K when the model and memory support it. A manual preference survives temporary memory pressure: notch reduces the active limit when necessary and restores the preference when it fits again. These estimates cannot guarantee a model will fit.
 
 Want to use notch from your terminal today? The [notch CLI](https://www.npmjs.com/package/@freesyntax/notch-cli) is available separately and requires Node.js 22.19 or newer:
 

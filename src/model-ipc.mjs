@@ -13,7 +13,7 @@ export function registerModelIpc(ipcMain, host) {
     state: refresh => state(refresh === true),
     connect: async (provider,key) => { await manager.connect(provider,key); return state(false,true); },
     disconnect: async provider => { await manager.disconnect(provider); return state(false,true); },
-    context: async (model,tokens) => { await manager.setContext(model,tokens,await host.listModels()); return state(false,true); },
+    context: async (model,tokens) => { await manager.setContext(model,tokens,await host.listModels(true)); return state(false,true); },
     hub: runner => manager.hubCatalog(runner),
     install: (repo,runner) => manager.startInstall(repo,runner),
     cancel: () => manager.cancelInstall(),

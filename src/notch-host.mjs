@@ -3,7 +3,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { NotchQuery } from './notch-query.mjs';
 import { createWorkspaceSearch } from './workspace-search.mjs';
-import { detectLocalHardware } from '../vendor/notch-core/desktop-harness.js';
+import { detectLocalHardware, runDesktopTurn } from '../vendor/notch-core/desktop-harness.js';
 import { localContextProfile } from './model-policy.mjs';
 
 const localIdentity = Object.freeze({ status: 'signed-in', mode: 'local', user: { id: 'local-notch', name: 'Local workspace', nickname: 'Local workspace', email: null }, error: null, loginUrl: null });
@@ -11,7 +11,7 @@ function sessionFile(directory, id) {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new Error('Invalid Notch session ID.');
   return path.join(directory, `${id}.json`);
 }
-export function createHost(dataDirectory) {
+export function createHost(dataDirectory, { hardware: detectHardware = detectLocalHardware, fetcher = fetch, runTurn = runDesktopTurn } = {}) {
   const sessions = path.join(dataDirectory, 'notch-sessions');
   let models = [], fetchedAt = 0, pending, defaultModel;
   const endpoints = new Map();
@@ -31,7 +31,8 @@ export function createHost(dataDirectory) {
       if (!force && Date.now() - fetchedAt < 30000) {
         for (const row of models) {
           const key = row.key==='auto' ? defaultModel : row.key;
-          row.defaultContextWindow=host.modelManager?.context(key,row.availableContextWindows,row.defaultContextWindow) || row.defaultContextWindow;
+          row.defaultContextWindow=host.modelManager?.context(key,row.availableContextWindows,row.recommendedContextWindow || row.defaultContextWindow) || row.defaultContextWindow;
+          row.requestedContextWindow=host.modelManager?.requestedContext(key);
           if (profiles.has(key)) profiles.get(key).contextWindow=row.defaultContextWindow;
         }
         return models;
@@ -40,13 +41,13 @@ export function createHost(dataDirectory) {
       pending = (async () => {
         const results = await Promise.allSettled(['http://127.0.0.1:11436', 'http://127.0.0.1:11434'].map(async root => {
           const [response,running] = await Promise.all([
-            fetch(`${root}/api/tags`, { signal: AbortSignal.timeout(1500) }),
-            fetch(`${root}/api/ps`, { signal: AbortSignal.timeout(1500) }).then(response=>response.ok?response.json():{models:[]}).catch(()=>({models:[]})),
+            fetcher(`${root}/api/tags`, { signal: AbortSignal.timeout(1500) }),
+            fetcher(`${root}/api/ps`, { signal: AbortSignal.timeout(1500) }).then(response=>response.ok?response.json():{models:[]}).catch(()=>({models:[]})),
           ]);
           if (!response.ok) throw new Error(`Ollama unavailable (${response.status}).`);
           const data = await response.json(); return { root, rows: data.models || [], mounted: Array.isArray(running.models)?running.models:[] };
         }));
-        const unique = new Map(), hardware = await detectLocalHardware(); endpoints.clear(); profiles.clear();
+        const unique = new Map(), hardware = await detectHardware(force); endpoints.clear(); profiles.clear();
         for (const result of results) {
           if (result.status !== 'fulfilled') continue;
           for (const row of result.value.rows) {
@@ -55,7 +56,7 @@ export function createHost(dataDirectory) {
             if (unique.has(key)) continue;
             const size = typeof row.size === 'number' && row.size > 0 ? row.size : Infinity;
             let metadata = {};
-            try { const response = await fetch(`${result.value.root}/api/show`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: row.name }), signal: AbortSignal.timeout(3000) }); if (response.ok) metadata = await response.json(); } catch { /* Unverified models remain visible but cannot run tools. */ }
+            try { const response = await fetcher(`${result.value.root}/api/show`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: row.name }), signal: AbortSignal.timeout(3000) }); if (response.ok) metadata = await response.json(); } catch { /* Unverified models remain visible but cannot run tools. */ }
             const mounted = result.value.mounted.find(model=>model.name===row.name && (!row.digest || model.digest===row.digest));
             const fit = localContextProfile(size,hardware,metadata,mounted);
             const contextWindow = host.modelManager?.context(key,fit.choices,fit.contextWindow) || fit.contextWindow;
@@ -66,6 +67,7 @@ export function createHost(dataDirectory) {
               description: fit.fits ? 'local Ollama · estimated memory fit' : fit.reason, provider: 'ollama', bytes: size, source: 'system', enabled: fit.fits,
               isDefault: row.name.startsWith('notch-hf-'), isNew: false, priceFactor: 0, tags: ['local'],
               maxInputTokens: fit.nativeContext, maxOutputTokens: 4096, availableContextWindows: fit.choices, defaultContextWindow: contextWindow,
+              recommendedContextWindow:fit.contextWindow, requestedContextWindow:host.modelManager?.requestedContext(key),
               efforts: [], defaultEffort: null, supportsDisabled: true });
           }
         }
@@ -112,11 +114,12 @@ export function createHost(dataDirectory) {
       const model = host.resolveModelChoice(request.model);
       return new NotchQuery(host, { ...request, model, cwd: request.cwd || process.cwd() }, {
         runTurn: async turn => {
-          const { runDesktopTurn } = await import('../vendor/notch-core/desktop-harness.js');
+          // Memory may have changed since the picker opened; size again before loading.
+          if (!turn.model?.startsWith('openrouter/')) await host.listModels(true);
           const model = host.resolveModelChoice(turn.model);
           const apiKey = model.startsWith('openrouter/') ? await host.modelManager?.key('openrouter') : undefined;
           if (model.startsWith('openrouter/') && !apiKey) throw new Error('Connect an OpenRouter API key in the model picker.');
-          return runDesktopTurn({ ...turn, model, apiKey, baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || 8192, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
+          return runTurn({ ...turn, model, apiKey, baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || 8192, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
         },
       });
     },

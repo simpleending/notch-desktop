@@ -12,7 +12,7 @@ import { checkAccess, type AccessMode } from './permissions/access.js';
 import type { ToolContext } from './tools/types.js';
 
 export { CheckpointManager };
-export { detectLocalHardware, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
+export { detectLocalHardware, parseNvidiaMemory, linuxGpuMemory, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
 export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
 export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };

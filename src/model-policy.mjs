@@ -11,13 +11,22 @@ export function localContextProfile(bytes, hardware, metadata = {}, mounted = {}
   const known = Number.isFinite(kvBytesPerToken) && kvBytesPerToken > 0;
   // A running copy already occupies memory; count only that same model's reclaimable allocation.
   const resident = Number.isSafeInteger(mounted.size) && mounted.size>0 ? mounted.size : 0;
-  const residentVram = Number.isSafeInteger(mounted.size_vram) && mounted.size_vram>=0 ? Math.min(resident,mounted.size_vram) : 0;
+  const residentVram = !hardware.appleSilicon && Number.isSafeInteger(mounted.size_vram) && mounted.size_vram>=0 ? Math.min(resident,mounted.size_vram) : 0;
   const ram = Math.min(hardware.totalMemory,hardware.availableMemory+resident-residentVram);
-  const budget = Math.max(0, Math.min(ram - GiB, hardware.totalMemory * .75)) + Math.max(0, hardware.availableVram + residentVram - GiB);
+  const ramBudget = Math.max(0, Math.min(ram - GiB, hardware.totalMemory * .75));
+  const vram = Math.min(hardware.totalVram ?? Infinity, hardware.availableVram + residentVram);
+  const vramBudget = hardware.appleSilicon ? 0 : Math.max(0, vram - GiB);
+  const budget = ramBudget + vramBudget;
   const weights = bytes * 1.2 + 1.5 * GiB;
   const cap = Number.isSafeInteger(native) && native >= 2048 ? native : 8192;
-  const choices = [4096, 8192, 16384, 32768, 65536].filter(context => context <= cap && weights + (known ? kvBytesPerToken * context : GiB * context / 8192) <= budget);
-  return { choices, contextWindow: choices.includes(8192) ? 8192 : choices[0] || Math.min(4096, cap),
+  const required = context => weights + (known ? kvBytesPerToken * context : GiB * context / 8192);
+  const choices = [4096, 8192, 16384, 32768, 65536, 131072, 262144].filter(context => context <= cap && required(context) <= budget);
+  // Prefer a GPU-resident context; larger RAM/offload choices stay available manually.
+  const gpu = hardware.totalVram > 0 || vramBudget > 0;
+  const preferredBudget = hardware.appleSilicon || !gpu ? ramBudget : vramBudget;
+  const automaticCap = known && (gpu || hardware.appleSilicon) ? 131072 : 8192;
+  const automatic = choices.filter(context => context <= automaticCap && required(context) <= preferredBudget).at(-1);
+  return { choices, contextWindow: automatic || (choices.includes(8192) ? 8192 : choices[0] || Math.min(4096, cap)),
     fits: choices.length > 0 && metadata.capabilities?.includes('tools') === true,
     reason: !metadata.capabilities?.includes('tools') ? 'tool support not confirmed' : choices.length ? 'estimated memory fit' : 'exceeds current available memory',
     kvBytesPerToken: known ? kvBytesPerToken : null, bytes, nativeContext: cap };

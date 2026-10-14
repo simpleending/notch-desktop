@@ -1,6 +1,6 @@
 import {
   detectLocalHardware
-} from "./chunk-OGMCKULH.js";
+} from "./chunk-XVFJ55YZ.js";
 import {
   detectDaemon,
   ollamaRoot,

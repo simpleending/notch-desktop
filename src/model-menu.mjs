@@ -12,6 +12,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const [search,setSearch] = React.useState(''), [key,setKey] = React.useState(''), [busy,setBusy] = React.useState(false);
     const [error,setError] = React.useState(''), [confirm,setConfirm] = React.useState(null), [optional,setOptional] = React.useState(()=>{try{return localStorage.getItem('notch.models.hideHfToken')!=='1';}catch{return true;}});
     const [hubLoading,setHubLoading] = React.useState(false);
+    const [extended,setExtended] = React.useState(()=>{try{return localStorage.getItem('notch.models.extendedContext')==='1';}catch{return false;}});
     const [runner,setRunner] = React.useState(''), list = React.useRef(null), request = React.useRef(0), interactedOutside = React.useRef(false), id = React.useId();
     const changeOpen = value => { setInnerOpen(value); props.onOpenChange?.(value); if (!value) { setKey(''); setConfirm(null); request.current++; } };
     const act = async fn => { setBusy(true); setError(''); try { await fn(); } catch (error) { setError(error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/,'')); } finally { setBusy(false); } };
@@ -38,6 +39,8 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     },[open,state?.job?.state]);
     const all = state?.models || [], current = all.find(row=>row.key===props.value) || ((!props.value || props.value==='auto') ? all.find(row=>row.key===state?.defaultModel) : undefined);
     const native = props.options?.find(row=>row.value===props.value);
+    const local = current && current.provider!=='openrouter';
+    const contextChoices = current?.availableContextWindows.filter(tokens=>!local || tokens<=131072 || extended || current.requestedContextWindow===tokens) || [];
     const label = current?.displayName || native?.label || (props.loading?'Loading models…':props.fallbackLabel || 'Choose model');
     const provider = tab==='cloud'?'openrouter':'huggingface', connected = state?.[provider];
     const inputId = `${id}-key`;
@@ -82,8 +85,12 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
           confirm?h('div',{className:'notch-model-confirm'},h('p',null,`Download ${confirm.repo} (${formatSize(confirm.bytes)})? Model license: ${confirm.license || 'see model card'}.`),
             h('button',{type:'button',disabled:busy,onClick:()=>void act(async()=>{const status=await api.install(confirm.repo,hub.runner);setState(previous=>({...previous,...status}));setConfirm(null);})},'Download model'),h('button',{type:'button',onClick:()=>setConfirm(null)},'Cancel')):null,
           state?.job && tab==='hub'?h('div',{className:'notch-model-job',role:'status'},h('span',null,state.job.message),state.job.state==='running'?h('button',{type:'button',onClick:()=>void act(async()=>{const status=await api.cancel();setState(previous=>({...previous,...status}));})},'Cancel download'):null):null,
-          tab!=='hub' && current && (tab==='cloud')===(current.provider==='openrouter')?h('label',{className:'notch-model-context'},h('span',null,'Context limit',h('small',null,'Applies to the next request. History compacts automatically.')),h('select',{'aria-label':'Context limit',value:current.defaultContextWindow,disabled:busy || props.disabled,onChange:event=>void act(async()=>{const data=await api.context(current.key,Number(event.target.value));setState(data);})},...current.availableContextWindows.map(tokens=>h('option',{key:tokens,value:tokens},formatContext(tokens))))):null,
-          h('div',{className:'notch-model-footer'},h('span',null,state?.hardware?`${formatSize(state.hardware.availableMemory)} RAM available`:''),h('button',{type:'button',disabled:busy,onClick:()=>void act(async()=>{await reload(true);if(tab==='hub')setHub(await api.hub(runner || undefined));})},'Refresh')),
+          tab!=='hub' && current && (tab==='cloud')===(current.provider==='openrouter')?h(React.Fragment,null,
+            h('label',{className:'notch-model-context'},h('span',null,'Context limit',h('small',null,local?'Auto rechecks memory before each turn.':'Applies to the next request. History compacts automatically.')),h('select',{'aria-label':'Context limit',value:local && !current.requestedContextWindow?'auto':current.defaultContextWindow,disabled:busy || props.disabled,onChange:event=>void act(async()=>{const data=await api.context(current.key,event.target.value==='auto'?'auto':Number(event.target.value));setState(data);})},
+              local?h('option',{value:'auto'},`Auto · ${formatContext(current.recommendedContextWindow || current.defaultContextWindow)}`):null,...contextChoices.map(tokens=>h('option',{key:tokens,value:tokens},formatContext(tokens))))),
+            local && current.availableContextWindows.includes(262144)?h('label',{className:'notch-model-note'},h('input',{type:'checkbox',checked:extended,onChange:event=>{setExtended(event.target.checked);try{localStorage.setItem('notch.models.extendedContext',event.target.checked?'1':'0');}catch{}}}),' Show extended context (256K)'):null,
+            local && current.requestedContextWindow && current.requestedContextWindow!==current.defaultContextWindow?h('p',{className:'notch-model-note'},`${formatContext(current.requestedContextWindow)} requested; reduced to ${formatContext(current.defaultContextWindow)} for current memory.`):null):null,
+          h('div',{className:'notch-model-footer'},h('span',null,state?.hardware?`${formatSize(state.hardware.availableMemory)} ${state.hardware.appleSilicon?'unified memory':'RAM'} free${state.hardware.totalVram>0?` · ${formatSize(state.hardware.availableVram)} / ${formatSize(state.hardware.totalVram)} VRAM free`:''}`:''),h('button',{type:'button',disabled:busy,onClick:()=>void act(async()=>{await reload(true);if(tab==='hub')setHub(await api.hub(runner || undefined));})},'Refresh')),
           error?h('p',{role:'alert',className:'notch-model-error'},error):null)));
   };
 }

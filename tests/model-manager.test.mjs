@@ -1,15 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createModelManager } from '../src/model-manager.mjs';
 import { cloudModelRows, localContextProfile, isPrimaryModelSender } from '../src/model-policy.mjs';
+import { parseNvidiaMemory, linuxGpuMemory } from '../vendor/notch-core/desktop-harness.js';
 const GiB=2**30;
 const model = { id:'lab/new-model',name:'New model',created:10,context_length:131072,architecture:{output_modalities:['text']},supported_parameters:['tools'],pricing:{prompt:'0.000001',completion:'0.000002'},top_provider:{max_completion_tokens:4096} };
 const encrypted = { async isAsyncEncryptionAvailable(){return true;},getSelectedStorageBackend(){return 'gnome_libsecret';},async encryptStringAsync(value){return Buffer.from([...value].reverse().join(''));},async decryptStringAsync(value){return { result:[...value.toString()].reverse().join('') };} };
 
-test('local context defaults to 8K and respects model context, KV memory and tools',()=>{
+test('automatic local context respects model context, KV memory and tools',()=>{
   const hardware={availableMemory:14*GiB,totalMemory:24*GiB,availableVram:0};
   const metadata={capabilities:['tools'],model_info:{'general.architecture':'test','test.block_count':32,'test.attention.head_count_kv':4,'test.attention.key_length':128,'test.attention.value_length':128,'test.context_length':16384}};
   const profile=localContextProfile(3*GiB,hardware,metadata);
@@ -17,6 +18,41 @@ test('local context defaults to 8K and respects model context, KV memory and too
   assert.equal(localContextProfile(16*GiB,hardware,metadata).fits,false);
   assert.equal(localContextProfile(3*GiB,hardware,{}).fits,false);
   metadata.model_info['test.context_length']=4096;assert.deepEqual(localContextProfile(3*GiB,hardware,metadata).choices,[4096]);
+});
+
+const localMetadata={capabilities:['tools'],model_info:{'general.architecture':'test','test.block_count':32,'test.attention.head_count_kv':4,'test.attention.key_length':128,'test.attention.value_length':128,'test.context_length':262144}};
+test('Auto scales with free VRAM through 128K, while 256K stays a manual choice',()=>{
+  const hardware={availableMemory:14*GiB,totalMemory:24*GiB,totalVram:24*GiB};
+  for(const [free,context] of [[8,16384],[12,65536],[24,131072]])assert.equal(localContextProfile(3*GiB,{...hardware,availableVram:free*GiB},localMetadata).contextWindow,context);
+  assert.ok(localContextProfile(3*GiB,{...hardware,availableVram:24*GiB},localMetadata).choices.includes(262144));
+  assert.equal(localContextProfile(3*GiB,{...hardware,availableVram:0},localMetadata).contextWindow,8192);
+  assert.equal(localContextProfile(3*GiB,{...hardware,totalVram:0,availableVram:0},localMetadata).contextWindow,8192);
+  const unified={appleSilicon:true,availableMemory:24*GiB,totalMemory:32*GiB,availableVram:0,totalVram:0};
+  assert.equal(localContextProfile(3*GiB,unified,localMetadata).contextWindow,131072);
+  assert.equal(localContextProfile(3*GiB,{...unified,availableMemory:8*GiB},localMetadata,{size:12*GiB,size_vram:12*GiB}).contextWindow,131072);
+  assert.equal(localContextProfile(3*GiB,unified,{capabilities:['tools'],model_info:{'general.architecture':'test','test.context_length':262144}}).contextWindow,8192);
+});
+
+test('GPU telemetry uses one valid adapter instead of summing VRAM or mixing capacities',async()=>{
+  assert.deepEqual(parseNvidiaMemory('8192, 6000\n24576, 2000\nN/A, N/A'),{totalVram:8192*2**20,availableVram:6000*2**20});
+  assert.deepEqual(parseNvidiaMemory('8192, 0'),{totalVram:8*GiB,availableVram:0});
+  assert.throws(()=>parseNvidiaMemory('8192, 99999\nN/A, N/A'),/unavailable/);
+  const root=await mkdtemp(path.join(os.tmpdir(),'notch-amd-memory-'));
+  for(const [card,total,used] of [['card0',8*GiB,2*GiB],['card1',24*GiB,22*GiB],['card2','bad',0],['card0-DP-1',99*GiB,0]]){
+    const device=path.join(root,card,'device');await mkdir(device,{recursive:true});await writeFile(path.join(device,'mem_info_vram_total'),String(total));await writeFile(path.join(device,'mem_info_vram_used'),String(used));
+  }
+  assert.deepEqual(await linuxGpuMemory(root),{totalVram:8*GiB,availableVram:6*GiB});
+});
+
+test('manual context survives memory pressure and Auto removes the override',async()=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'notch-auto-context-')),manager=createModelManager(directory);
+  await manager.setContext('ollama/fixture',262144,[{key:'ollama/fixture',enabled:true,availableContextWindows:[8192,262144]}]);
+  assert.equal(manager.context('ollama/fixture',[8192,16384],8192),16384);
+  assert.equal(manager.requestedContext('ollama/fixture'),262144);
+  assert.equal(manager.context('ollama/fixture',[8192,262144],8192),262144);
+  await manager.setContext('ollama/fixture','auto',[{key:'ollama/fixture',enabled:true,availableContextWindows:[8192]}]);
+  assert.equal(manager.requestedContext('ollama/fixture'),undefined);
+  const restored=createModelManager(directory);await restored.status();assert.equal(restored.context('ollama/fixture',[8192,65536],65536),65536);
 });
 test('cloud catalog filters tool support, orders by age and separates context from RAM',()=>{
   const rows=cloudModelRows([{...model,id:'old',created:1},model,{...model,id:'no-tools',supported_parameters:[]}],true);

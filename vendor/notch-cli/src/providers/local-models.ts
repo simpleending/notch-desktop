@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFile, writeFile, mkdir, rename, unlink } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename, unlink, readdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
 const exec = promisify(execFile);
@@ -11,13 +11,34 @@ export type LocalRunner = 'ollama' | 'mlx';
 export interface LocalHardware {
   platform: string; arch: string; appleSilicon: boolean; mlxSupported: boolean;
   totalMemory: number; availableMemory: number; availableVram: number;
+  totalVram?: number;
   installedMemory?: number;
 }
 export function supportsMlx(platform: string, appleSilicon: boolean, darwinMajor: number): boolean {
   return platform === 'darwin' && appleSilicon && darwinMajor >= 23;
 }
 
-export async function detectLocalHardware(): Promise<LocalHardware> {
+export function parseNvidiaMemory(stdout: string): { totalVram: number; availableVram: number } {
+  const rows = stdout.trim().split(/\r?\n/).map(row => row.split(',').map(Number))
+    .filter((row): row is [number, number] => row.length === 2 && row.every(n => Number.isSafeInteger(n) && n >= 0) && row[0]! > 0 && row[1]! <= row[0]!);
+  const selected = rows.sort((a,b) => b[1] - a[1])[0];
+  if (!selected) throw new Error('GPU memory telemetry is unavailable.');
+  return { totalVram: selected[0] * 2 ** 20, availableVram: selected[1] * 2 ** 20 };
+}
+
+export async function linuxGpuMemory(root = '/sys/class/drm'): Promise<{ totalVram: number; availableVram: number }> {
+  let selected = { totalVram: 0, availableVram: 0 };
+  for (const card of (await readdir(root)).filter(name => /^card\d+$/.test(name))) {
+    try {
+      const device = path.join(root,card,'device');
+      const [total,used] = (await Promise.all(['mem_info_vram_total','mem_info_vram_used'].map(name => readFile(path.join(device,name),'utf8')))).map(Number);
+      if (Number.isSafeInteger(total) && total! > 0 && Number.isSafeInteger(used) && used! >= 0 && used! <= total! && total! - used! > selected.availableVram) selected = { totalVram: total!, availableVram: total! - used! };
+    } catch { /* Ignore adapters without verified dedicated VRAM telemetry. */ }
+  }
+  return selected;
+}
+
+export async function detectLocalHardware(refresh = false): Promise<LocalHardware> {
   const platform = os.platform();
   const arch = os.arch();
   let appleSilicon = platform === 'darwin' && arch === 'arm64';
@@ -25,14 +46,14 @@ export async function detectLocalHardware(): Promise<LocalHardware> {
     try { appleSilicon = (await exec('/usr/sbin/sysctl', ['-n', 'hw.optional.arm64'], { timeout: 2000 })).stdout.trim() === '1'; } catch { /* Intel or unavailable. */ }
   }
   let availableVram = 0;
+  let totalVram = 0;
   let installedMemory = os.totalmem();
   if (!appleSilicon) {
     const candidates = ['nvidia-smi', ...(platform === 'win32' ? [path.join(process.env.WINDIR || 'C:/Windows', 'System32/nvidia-smi.exe')] : [])];
     for (const executable of candidates) {
       try {
-        const { stdout } = await exec(executable, ['--query-gpu=memory.free', '--format=csv,noheader,nounits'], { timeout: 2500, windowsHide: true });
-        const rows = stdout.trim().split(/\r?\n/).map(Number).filter(value => Number.isFinite(value) && value > 0);
-        availableVram = Math.max(0, ...rows) * 2 ** 20;
+        const { stdout } = await exec(executable, ['--query-gpu=memory.total,memory.free', '--format=csv,noheader,nounits'], { timeout: 2500, windowsHide: true });
+        ({ availableVram, totalVram } = parseNvidiaMemory(stdout));
         break;
       } catch { /* GPU telemetry is optional; unknown memory is not assumed available. */ }
     }
@@ -40,12 +61,15 @@ export async function detectLocalHardware(): Promise<LocalHardware> {
   if (platform === 'win32' && availableVram === 0) {
     try {
       const { windowsMemory } = await import('./windows-memory.js');
-      const result = await windowsMemory();
-      installedMemory = result.installedMemory; availableVram = result.availableVram;
+      const result = await windowsMemory(refresh);
+      installedMemory = result.installedMemory; availableVram = result.availableVram; totalVram = result.totalVram;
     } catch { /* Keep the conservative RAM-only estimate if native telemetry is unavailable. */ }
   }
+  if (platform === 'linux' && totalVram === 0) {
+    try { ({ availableVram, totalVram } = await linuxGpuMemory()); } catch { /* Retain RAM-only sizing. */ }
+  }
   return { platform, arch, appleSilicon, mlxSupported: supportsMlx(platform, appleSilicon, Number(os.release().split('.')[0])),
-    totalMemory: os.totalmem(), installedMemory, availableMemory: Math.min(os.freemem(), process.availableMemory()), availableVram };
+    totalMemory: os.totalmem(), installedMemory, availableMemory: Math.min(os.freemem(), process.availableMemory()), availableVram, totalVram };
 }
 
 export const LOCAL_MODEL_CATALOG = [

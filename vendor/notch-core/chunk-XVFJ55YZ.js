@@ -3,14 +3,32 @@ import os from "os";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { readFile, writeFile, mkdir, rename, unlink } from "fs/promises";
+import { readFile, writeFile, mkdir, rename, unlink, readdir } from "fs/promises";
 import { randomUUID } from "crypto";
 var exec = promisify(execFile);
 var GiB = 2 ** 30;
 function supportsMlx(platform, appleSilicon, darwinMajor) {
   return platform === "darwin" && appleSilicon && darwinMajor >= 23;
 }
-async function detectLocalHardware() {
+function parseNvidiaMemory(stdout) {
+  const rows = stdout.trim().split(/\r?\n/).map((row) => row.split(",").map(Number)).filter((row) => row.length === 2 && row.every((n) => Number.isSafeInteger(n) && n >= 0) && row[0] > 0 && row[1] <= row[0]);
+  const selected = rows.sort((a, b) => b[1] - a[1])[0];
+  if (!selected) throw new Error("GPU memory telemetry is unavailable.");
+  return { totalVram: selected[0] * 2 ** 20, availableVram: selected[1] * 2 ** 20 };
+}
+async function linuxGpuMemory(root = "/sys/class/drm") {
+  let selected = { totalVram: 0, availableVram: 0 };
+  for (const card of (await readdir(root)).filter((name) => /^card\d+$/.test(name))) {
+    try {
+      const device = path.join(root, card, "device");
+      const [total, used] = (await Promise.all(["mem_info_vram_total", "mem_info_vram_used"].map((name) => readFile(path.join(device, name), "utf8")))).map(Number);
+      if (Number.isSafeInteger(total) && total > 0 && Number.isSafeInteger(used) && used >= 0 && used <= total && total - used > selected.availableVram) selected = { totalVram: total, availableVram: total - used };
+    } catch {
+    }
+  }
+  return selected;
+}
+async function detectLocalHardware(refresh = false) {
   const platform = os.platform();
   const arch = os.arch();
   let appleSilicon = platform === "darwin" && arch === "arm64";
@@ -21,14 +39,14 @@ async function detectLocalHardware() {
     }
   }
   let availableVram = 0;
+  let totalVram = 0;
   let installedMemory = os.totalmem();
   if (!appleSilicon) {
     const candidates = ["nvidia-smi", ...platform === "win32" ? [path.join(process.env.WINDIR || "C:/Windows", "System32/nvidia-smi.exe")] : []];
     for (const executable of candidates) {
       try {
-        const { stdout } = await exec(executable, ["--query-gpu=memory.free", "--format=csv,noheader,nounits"], { timeout: 2500, windowsHide: true });
-        const rows = stdout.trim().split(/\r?\n/).map(Number).filter((value) => Number.isFinite(value) && value > 0);
-        availableVram = Math.max(0, ...rows) * 2 ** 20;
+        const { stdout } = await exec(executable, ["--query-gpu=memory.total,memory.free", "--format=csv,noheader,nounits"], { timeout: 2500, windowsHide: true });
+        ({ availableVram, totalVram } = parseNvidiaMemory(stdout));
         break;
       } catch {
       }
@@ -36,10 +54,17 @@ async function detectLocalHardware() {
   }
   if (platform === "win32" && availableVram === 0) {
     try {
-      const { windowsMemory } = await import("./windows-memory-JB77LYUI.js");
-      const result = await windowsMemory();
+      const { windowsMemory } = await import("./windows-memory-RX7NZ2OM.js");
+      const result = await windowsMemory(refresh);
       installedMemory = result.installedMemory;
       availableVram = result.availableVram;
+      totalVram = result.totalVram;
+    } catch {
+    }
+  }
+  if (platform === "linux" && totalVram === 0) {
+    try {
+      ({ availableVram, totalVram } = await linuxGpuMemory());
     } catch {
     }
   }
@@ -51,7 +76,8 @@ async function detectLocalHardware() {
     totalMemory: os.totalmem(),
     installedMemory,
     availableMemory: Math.min(os.freemem(), process.availableMemory()),
-    availableVram
+    availableVram,
+    totalVram
   };
 }
 var LOCAL_MODEL_CATALOG = [
@@ -124,6 +150,8 @@ function modelFit(model, hardware) {
 }
 
 export {
+  parseNvidiaMemory,
+  linuxGpuMemory,
   detectLocalHardware,
   LOCAL_MODEL_CATALOG,
   inspectHubModel,

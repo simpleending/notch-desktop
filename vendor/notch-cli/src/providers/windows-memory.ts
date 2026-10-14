@@ -47,14 +47,14 @@ $installed = (Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Ca
 @{installedMemory=$installed;dedicatedMemory=[NotchGpuMemory]::LargestDedicatedMemory();dedicatedUsage=$used} | ConvertTo-Json -Compress
 `;
 
-let cache: { at: number; value: { installedMemory: number; availableVram: number } } | undefined;
-export async function windowsMemory(): Promise<{ installedMemory: number; availableVram: number }> {
-  if (cache && Date.now() - cache.at < 5000) return cache.value;
+let cache: { at: number; value: { installedMemory: number; availableVram: number; totalVram: number } } | undefined;
+export async function windowsMemory(refresh = false): Promise<{ installedMemory: number; availableVram: number; totalVram: number }> {
+  if (!refresh && cache && Date.now() - cache.at < 5000) return cache.value;
   const executable = path.join(process.env.WINDIR || 'C:/Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
   const { stdout } = await exec(executable, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(query, 'utf16le').toString('base64')], { timeout: 10000, windowsHide: true });
   const data = JSON.parse(stdout.trim()) as { installedMemory?: number; dedicatedMemory?: number; dedicatedUsage?: number };
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
   if (!valid(data.installedMemory) || !valid(data.dedicatedMemory) || !valid(data.dedicatedUsage)) throw new Error('Windows GPU memory telemetry is unavailable.');
-  const value = { installedMemory: data.installedMemory, availableVram: Math.max(0, data.dedicatedMemory - data.dedicatedUsage) };
+  const value = { installedMemory: data.installedMemory, totalVram: data.dedicatedMemory, availableVram: Math.max(0, data.dedicatedMemory - data.dedicatedUsage) };
   cache = { at: Date.now(), value }; return value;
 }

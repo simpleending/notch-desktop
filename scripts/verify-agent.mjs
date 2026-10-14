@@ -97,6 +97,10 @@ try {
   checks.contextUsage=await page.evaluate(id=>window.notchDesktop.getChatSessionContextUsage(id),sessionId);
   assert.ok(checks.contextUsage?.totalTokens>0,'Native context usage must contain provider counts.');
   assert.ok(checks.contextUsage.totalTokens<checks.contextUsage.maxTokens);
+  const mounted=(await (await fetch('http://127.0.0.1:11436/api/ps',{signal:AbortSignal.timeout(5000)})).json()).models.find(model=>model.name==='notch-hf-abd14067e8d7:latest');
+  assert.ok(mounted,'The real inference model must be mounted.');
+  assert.equal(mounted.context_length,checks.contextUsage.maxTokens,'The runtime allocation must match the reported context.');
+  checks.allocatedContext=mounted.context_length;checks.gpuAllocation={bytes:mounted.size,bytesVram:mounted.size_vram};
   await page.screenshot({path:reportFile.replace(/\.json$/,'-completed.png')});
   await app.close();app=null;
   await launch();await page.waitForLoadState('domcontentloaded');
@@ -134,7 +138,8 @@ try {
   await assert.rejects(fs.access(path.join(workspacePath,'cancelled.txt')));checks.cancelledApprovalWithoutWriting=true;
   // Synthetic old turns exercise real compaction without making dozens of inference calls.
   await app.evaluate(async (_electron,id)=>{const query=globalThis.__notchQueries.get(id);if(!query)throw new Error('Missing compaction fixture session');await query.ready;
-    for(let i=0;i<20;i++)query.state.messages.push({role:'user',content:`Completed context fixture ${i}.`},{role:'assistant',content:'Completed file review. Tests passed. No outstanding changes. '.repeat(40)});
+    const count=Math.ceil((query.state.contextUsage?.maxTokens || 8192)/512);
+    for(let i=0;i<count;i++)query.state.messages.push({role:'user',content:`Completed context fixture ${i}.`},{role:'assistant',content:'Completed file review. Tests passed. No outstanding changes. '.repeat(40)});
     await globalThis.__notchHost.saveSession(id,query.state);
   },sessionId);
   await continuation.fill('Reply exactly COMPACTION_UI_VERIFIED. Do not use tools or change files.');await continuation.press('Enter');
