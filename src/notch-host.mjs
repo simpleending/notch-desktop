@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { NotchQuery } from './notch-query.mjs';
+import { createWorkspaceSearch } from './workspace-search.mjs';
 import { detectLocalHardware, modelFit } from '../vendor/notch-core/desktop-harness.js';
 
 const localIdentity = Object.freeze({ status: 'signed-in', mode: 'local', user: { id: 'local-notch', name: 'Local workspace', nickname: 'Local workspace', email: null }, error: null, loginUrl: null });
@@ -15,6 +16,7 @@ export function createHost(dataDirectory) {
   const endpoints = new Map();
   const profiles = new Map();
   const host = {
+    workspaceSearch: createWorkspaceSearch(),
     identity: localIdentity,
     getCachedModels: () => models,
     async listModels(force = false) {

@@ -9,6 +9,7 @@ const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
 globalThis.__notchProfileOverride = requestedProfile ? { directory: app.getPath('userData'), existed: existsSync(path.join(app.getPath('userData'), 'main.sqlite')) } : null;
 globalThis.__notchHost = createHost(app.getPath('userData'));
+app.on('will-quit', () => { void globalThis.__notchHost.workspaceSearch.shutdown(); });
 const databasePath = path.join(app.getPath('userData'), 'main.sqlite');
 if (existsSync(databasePath)) { const database = new DatabaseSync(databasePath); try { migrateBrandDatabase(database); } finally { database.close(); } }
 app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest({ urls: ['*://disabled.notch.invalid/*'] }, (_details, callback) => callback({ cancel: true })));

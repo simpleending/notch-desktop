@@ -61,7 +61,7 @@ for (const name of ['application-icons', 'bundled-resources', 'dynamic-text', 'e
 await rebrandTree(application);
 await installSetupRenderer(application, root);
 for (const name of ['extensions','dynamic-text','bundled-resources','application-icons']) await rebrandTree(path.join(resources, name));
-await createPackageWithOptions(application, path.join(resources, 'app.asar'), { unpack: '**/*.{node,dll,exe,so,dylib}' });
+await createPackageWithOptions(application, path.join(resources, 'app.asar'), { unpack: '**/*.{node,dll,exe,so,dylib}', unpackDir: '**/{@ff-labs,ffi-rs,@yuuang}' });
 await writeFile(path.join(output, 'prototype-build.json'), JSON.stringify({ version: '0.1.0', baseline: inspection.archiveSha256, methodPatches: patched.changes, missingUpstreamFiles: inspection.missingUnpacked,
   limitations: ['Development prototype; full branding and compatibility migration remain in progress.', 'Not yet a signed production release or verified performance-parity build.'] }, null, 2));
 console.log(JSON.stringify({ output, executable: path.join(output, 'Notch.exe'), patchedMethods: patched.changes.length }));

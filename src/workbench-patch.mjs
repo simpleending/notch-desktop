@@ -67,6 +67,8 @@ export function patchWorkbenchRenderer(source) {
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
   for (const name of ['workbench-skin.mjs', 'workbench-skin.css']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  await cp(path.join(root, 'assets/fonts'), path.join(assets, 'fonts'), { recursive: true });
+  await cp(path.join(root, 'assets/notices'), path.join(assets, 'notices'), { recursive: true });
   await cp(path.join(root, 'assets/notch-symbol.png'), path.join(assets, 'notch-symbol.png'));
   const htmlFile = path.join(renderer, 'index.html'), html = await readFile(htmlFile, 'utf8');
   if (!html.includes('href="./assets/workbench-skin.css"')) await writeFile(htmlFile, html.replace('</head>', '<link rel="stylesheet" href="./assets/workbench-skin.css">\n</head>'));

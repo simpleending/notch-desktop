@@ -31,6 +31,8 @@ await rebrand(path.join(application, 'out'));
 await cp('src', path.join(application, 'notch/src'), { recursive: true });
 await writeFile(path.join(application, 'notch-bootstrap.mjs'), "await import('./notch/src/app-bootstrap.mjs');\n");
 await cp('vendor/notch-core', path.join(application, 'notch/vendor/notch-core'), { recursive: true });
+await cp(path.join(root, 'node_modules'), path.join(application, 'notch/node_modules'), { recursive: true,
+  filter: source => !/[/\\](?:electron|@electron|typescript|tsup|esbuild|@esbuild)(?:[/\\]|$)/.test(source) });
 await rebrandTree(application);
 await installSetupRenderer(application, root);
 const productFile = path.join(output, 'resources/product.json');
@@ -40,6 +42,6 @@ await writeFile(path.join(output, 'resources/build-manifest.json'), rebrandWorkb
 for (const name of ['extensions','dynamic-text','bundled-resources','application-icons']) {
   await rebrandTree(path.join(output, 'resources', name));
 }
-await createPackageWithOptions(application, path.join(output, 'resources/app.asar'), { unpack: '**/*.{node,dll,exe,so,dylib}' });
+await createPackageWithOptions(application, path.join(output, 'resources/app.asar'), { unpack: '**/*.{node,dll,exe,so,dylib}', unpackDir: '**/{@ff-labs,ffi-rs,@yuuang}' });
 await writeFile(path.join(output, 'prototype-build.json'), JSON.stringify({ ...marker, methodPatches: patched.changes }, null, 2));
 console.log(JSON.stringify({ output, patchedMethods: patched.changes.length }));

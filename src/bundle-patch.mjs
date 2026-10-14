@@ -53,6 +53,9 @@ export function patchFunction(source, name, replacement) {
 }
 export function patchWorkbench(source) {
   const changes = [
+    ['moe', 'searchSessionFiles', 'const {target,rootPath}=this.requireSessionRoot(e.sessionId,e.rootId);if(target.host.kind!=="local")return Promise.resolve(null);return globalThis.__notchHost.workspaceSearch.search(t,rootPath,e.generation,e.query).catch(error=>{if(error.message==="WORKSPACE_FILE_SEARCH_CANCELLED")throw error;return this.nativeSearchService?this.nativeSearchService.search(t,rootPath,e.generation,e.query):Promise.reject(error);});'],
+    ['moe', 'cancelFileSearch', 'globalThis.__notchHost.workspaceSearch.cancel(t);this.nativeSearchService?.cancel(t);'],
+    ['moe', 'shutdownFileSearch', 'return Promise.all([globalThis.__notchHost.workspaceSearch.shutdown(),this.nativeSearchService?.shutdown()]);'],
     ['gae', 'initializeState', 'this.cache=null;this.setState(globalThis.__notchHost.identity);'],
     ['gae', 'createAccountIdentity', 'return "notch:local";'],
     ['gae', 'getAccessToken', 'return null;'],
