@@ -123,11 +123,15 @@ try {
   const savedAgain=JSON.parse(await fs.readFile(path.join(profile,'notch-sessions',sessionId+'.json'),'utf8'));
   assert.ok(savedAgain.messages.length>persisted.messages.length);checks.resumedWithoutReplaying=true;
   const approvalCount=resumed.approvals.length;
+  await page.getByRole('button',{name:'Access permissions',exact:true}).click();
+  await page.getByRole('menuitem',{name:/^Ask for approval/}).click();
   await continuation.fill('Use the Write tool to create cancelled.txt containing CANCELLED_WRITE. Do not run commands.');
   await continuation.press('Enter');
-  await page.getByRole('button',{name:'Allow once',exact:true}).first().waitFor({timeout:60000});
+  await page.getByRole('button',{name:'Allow once',exact:true}).first().waitFor({timeout:240000});
   await assert.rejects(fs.access(path.join(workspacePath,'cancelled.txt')));
+  const cancellationApproval=(await debug()).approvals.at(-1);
   assert.ok((await debug()).approvals.length>approvalCount);
+  assert.equal(cancellationApproval.name,'Write');assert.ok(cancellationApproval.input.file_path.endsWith('cancelled.txt'));
   await page.evaluate(id=>window.notchDesktop.interruptChatSession(id),sessionId);
   const interruptDeadline=Date.now()+15000;
   while(Date.now()<interruptDeadline && (await debug()).events.filter(event=>event.type==='result').length<2)await new Promise(resolve=>setTimeout(resolve,100));

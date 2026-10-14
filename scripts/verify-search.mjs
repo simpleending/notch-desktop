@@ -56,15 +56,17 @@ try {
       const target = typeof url === 'string' ? url : url.url || String(url);
       if (!target.endsWith('/v1/chat/completions') && !target.endsWith('/api/chat')) return previous(url, options);
       const body = JSON.parse(options.body), user = body.messages.filter(message => message.role === 'user').at(-1);
-      const compatibility = JSON.stringify(user?.content).includes('CHECK_COMPATIBILITY');
+      const prompt=JSON.stringify(user?.content);
+      const mode=prompt.includes('CHECK_IGNORE_REFRESH')?'ignored':prompt.includes('CHECK_FRESH_REFRESH')?'fresh':prompt.includes('CHECK_COMPATIBILITY')?'compat':'native';
+      const pattern=mode==='compat'?'foo  bar':mode==='native'?'NATIVE_MARKER':'FRESH_MARKER';
+      const expected=mode==='ignored'?'(no matches)':pattern;
+      const grepId=`${mode}-grep`;
       const toolMessages = body.messages.filter(message => message.role === 'tool');
       trace.providerTools = toolMessages;
-      const completed = toolMessages.some(message => message.tool_call_id === (compatibility ? 'compat' : 'native-grep') ||
-        (message.tool_name === 'grep' && String(message.content).includes(compatibility ? 'foo  bar' : 'NATIVE_MARKER')));
-      const calls = compatibility ? [{ index: 0, id: 'compat', type: 'function', function: { name: 'grep', arguments: JSON.stringify({ pattern: 'foo  bar' }) } }] : [
-        { index: 0, id: 'native-grep', type: 'function', function: { name: 'grep', arguments: JSON.stringify({ pattern: 'NATIVE_MARKER' }) } },
-        { index: 1, id: 'native-glob', type: 'function', function: { name: 'glob', arguments: JSON.stringify({ pattern: '**/*.ts' }) } },
-      ];
+      const completed = toolMessages.some(message => message.tool_call_id === grepId ||
+        (message.tool_name === 'grep' && String(message.content).includes(expected)));
+      const calls=[{index:0,id:grepId,type:'function',function:{name:'grep',arguments:JSON.stringify({pattern})}}];
+      if(mode==='native')calls.push({index:1,id:'native-glob',type:'function',function:{name:'glob',arguments:JSON.stringify({pattern:'**/*.ts'})}});
       if (target.endsWith('/api/chat')) {
         const frame = { model: body.model, message: { role: 'assistant', content: completed ? 'PACKAGE_SEARCH_VERIFIED' : '',
           ...(completed ? {} : { tool_calls: calls.map(call => ({ id: call.id, function: { name: call.function.name, arguments: JSON.parse(call.function.arguments) } })) }) },
@@ -103,18 +105,17 @@ try {
   assert.ok(second.providerTools.some(message => String(message.content).includes('foo  bar')));
   checks.compatibilityThroughComposer = true;
   await fs.appendFile(path.join(workspace, 'f0.ts'), 'FRESH_MARKER\n');
-  await app.evaluate(async (_electron, root) => {
-    const service = globalThis.__notchHost.workspaceSearch;
-    service.invalidate(root);
-    const fresh = await service.tool('grep', root, { pattern: 'FRESH_MARKER', context: 0, max_results: 50 });
-    if (!fresh?.content.includes('f0.ts:2:FRESH_MARKER')) throw new Error('Packaged index did not see the edit.');
-  }, workspace);
+  await app.evaluate((_electron,root)=>globalThis.__notchHost.workspaceSearch.invalidate(root),workspace);
+  await continuation.fill('CHECK_FRESH_REFRESH: find FRESH_MARKER after the edit.');await continuation.press('Enter');
+  const fresh=await waitResult(3);
+  assert.ok(fresh.providerTools.some(message=>String(message.content).includes('f0.ts:2:FRESH_MARKER')));
   await fs.writeFile(path.join(workspace, '.gitignore'), 'ignored.ts\nf0.ts\n');
+  await app.evaluate((_electron,root)=>globalThis.__notchHost.workspaceSearch.invalidate(root),workspace);
+  await continuation.fill('CHECK_IGNORE_REFRESH: find FRESH_MARKER after the ignore edit.');await continuation.press('Enter');
+  const ignored=await waitResult(4);
+  assert.ok(ignored.providerTools.some(message=>String(message.content).includes('(no matches)')));
   checks.refreshAndCancellation = await app.evaluate(async (_electron, root) => {
     const service = globalThis.__notchHost.workspaceSearch;
-    service.invalidate(root);
-    const ignored = await service.tool('grep', root, { pattern: 'FRESH_MARKER', context: 0, max_results: 50 });
-    if (ignored?.content !== '(no matches)') throw new Error('Packaged index did not refresh ignores.');
     const controller = new AbortController(), pending = service.tool('grep', root, { pattern: 'NATIVE_MARKER', context: 0, max_results: 50 }, controller.signal);
     controller.abort();
     try { await pending; throw new Error('Cancellation returned a result.'); } catch (error) { if (!/CANCELLED|abort/i.test(error.message)) throw error; }
