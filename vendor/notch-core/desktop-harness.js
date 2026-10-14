@@ -1849,7 +1849,7 @@ function toolResultValue(part) {
 import { isStepCount as isStepCount2, asSchema } from "ai";
 import { ToolLoopAgent } from "ai";
 import { promises as fs16 } from "fs";
-import { execSync as execSync2 } from "child_process";
+import { execSync } from "child_process";
 
 // vendor/notch-cli/src/tools/index.ts
 import { tool as tool2 } from "ai";
@@ -2708,16 +2708,18 @@ Proceed?`
 };
 
 // vendor/notch-cli/src/tools/grep.ts
-import { execSync } from "child_process";
+import { execFile } from "child_process";
 import fs9 from "fs/promises";
 import path10 from "path";
+import { promisify } from "util";
 import { z as z7 } from "zod";
+var execFileAsync = promisify(execFile);
 var parameters7 = z7.object({
   pattern: z7.string().describe("Regex pattern to search for"),
   path: z7.string().optional().describe("File or directory to search (defaults to project root)"),
   glob: z7.string().optional().describe('Glob filter, e.g. "*.ts" or "**/*.tsx"'),
-  context: z7.number().optional().default(0).describe("Lines of context around each match"),
-  max_results: z7.number().optional().default(50).describe("Maximum number of matches to return")
+  context: z7.number().int().nonnegative().optional().default(0).describe("Lines of context around each match"),
+  max_results: z7.number().int().positive().optional().default(50).describe("Maximum number of matches to return")
 });
 var grepTool = {
   name: "grep",
@@ -2726,34 +2728,44 @@ var grepTool = {
   async execute(params, ctx) {
     const searchPath = params.path ? path10.isAbsolute(params.path) ? params.path : path10.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
+      ctx.abortSignal?.throwIfAborted();
       const rgArgs = [
-        "rg",
         "--no-heading",
         "--line-number",
         "--color=never",
         `--max-count=${params.max_results}`,
-        params.context ? `-C ${params.context}` : "",
-        params.glob ? `--glob "${params.glob}"` : "",
+        ...params.context ? ["-C", String(params.context)] : [],
+        ...params.glob ? ["--glob", params.glob] : [],
         "--",
-        JSON.stringify(params.pattern),
+        params.pattern,
         searchPath
-      ].filter(Boolean).join(" ");
-      const output = execSync(rgArgs, {
+      ];
+      const { stdout } = await execFileAsync("rg", rgArgs, {
         cwd: ctx.cwd,
         encoding: "utf-8",
         timeout: 15e3,
-        maxBuffer: 5 * 1024 * 1024
+        maxBuffer: 5 * 1024 * 1024,
+        windowsHide: true,
+        signal: ctx.abortSignal
       });
-      return { content: output || "(no matches)" };
-    } catch {
+      return { content: stdout || "(no matches)" };
+    } catch (err) {
+      if (ctx.abortSignal?.aborted) return { content: "Search cancelled.", isError: true };
+      if (err.code === 1) return { content: "(no matches)" };
+      if (err.code !== "ENOENT") {
+        return { content: `Search error: ${err.stderr?.trim() || err.message}`, isError: true };
+      }
     }
     try {
-      const regex = new RegExp(params.pattern, "g");
+      ctx.abortSignal?.throwIfAborted();
+      const regex = new RegExp(params.pattern);
       const results = [];
       async function searchDir(dir) {
+        ctx.abortSignal?.throwIfAborted();
         if (results.length >= (params.max_results ?? 50)) return;
         const entries = await fs9.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
+          ctx.abortSignal?.throwIfAborted();
           if (results.length >= (params.max_results ?? 50)) return;
           if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
           const full = path10.join(dir, entry.name);
@@ -2766,16 +2778,17 @@ var grepTool = {
             }
             try {
               const content = await fs9.readFile(full, "utf-8");
+              ctx.abortSignal?.throwIfAborted();
               const lines = content.split("\n");
               for (let i = 0; i < lines.length; i++) {
                 if (regex.test(lines[i])) {
                   const rel = path10.relative(ctx.cwd, full);
                   results.push(`${rel}:${i + 1}:${lines[i]}`);
-                  regex.lastIndex = 0;
                   if (results.length >= (params.max_results ?? 50)) return;
                 }
               }
-            } catch {
+            } catch (error) {
+              if (ctx.abortSignal?.aborted) throw error;
             }
           }
         }
@@ -2783,12 +2796,12 @@ var grepTool = {
       const stat = await fs9.stat(searchPath);
       if (stat.isFile()) {
         const content = await fs9.readFile(searchPath, "utf-8");
+        ctx.abortSignal?.throwIfAborted();
         const lines = content.split("\n");
         const rel = path10.relative(ctx.cwd, searchPath);
         for (let i = 0; i < lines.length; i++) {
           if (regex.test(lines[i])) {
             results.push(`${rel}:${i + 1}:${lines[i]}`);
-            regex.lastIndex = 0;
             if (results.length >= (params.max_results ?? 50)) break;
           }
         }
@@ -7201,7 +7214,7 @@ async function buildSystemPrompt(projectRoot, _modelId, toolContext) {
         } catch {
         }
         try {
-          const branch = execSync2("git rev-parse --abbrev-ref HEAD", {
+          const branch = execSync("git rev-parse --abbrev-ref HEAD", {
             cwd: projectRoot,
             stdio: ["ignore", "pipe", "ignore"],
             timeout: 1500
