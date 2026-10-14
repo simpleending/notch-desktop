@@ -1,31 +1,13 @@
 /**
- * Notch CLI — 5-Layer Context Compression
- *
- * Graduated context-reduction pipeline (cheap → expensive). Modeled on the
- * Claude Code design described in arXiv:2604.14228 §5 (five-layer compaction).
- *
- * Layer 1 — Budget Reduction: Per-tool-result size caps. Oversized results
- *           are stashed to an ArtifactStore and replaced with a preview +
- *           opaque reference, so the original is recoverable on resume.
- * Layer 2 — Snip: Age-based removal of older message spans once history
- *           grows past a cardinality threshold. Cheap, temporal.
- * Layer 3 — MicroCompact: Local text-block trimming (oversized assistant
- *           messages). Zero API cost.
- * Layer 4 — Context Collapse: Non-destructive read-time projection — swaps
- *           in a deterministic summary for a middle span while stashing the
- *           originals, so resume can reconstruct the full transcript.
- * Layer 5 — AutoCompact: Model-based semantic summarization. Reserves a
- *           13K-token buffer, up to 20K-token summaries. Circuit-breaker
- *           after 3 consecutive failures.
- * Nuclear — FullCompact: compresses ENTIRE conversation to a single summary
- *           + the last few messages. Only triggered when AutoCompact can't
- *           free enough space.
- *
+ * Context reduction under pressure: bound old tool results, summarize older
+ * turns, then fall back if still over budget. Keep original/current requests
+ * and complete tool chains. The desktop archives the raw transcript first.
  * Copyright 2026 Driftrail. Apache-2.0.
  */
 
 import type { ModelMessage, LanguageModel } from 'ai';
 import { generateText } from 'ai';
+import { contextBudget, estimateTextTokens } from './context-budget.js';
 import { createHash } from 'node:crypto';
 import { toolOutput, toolResultValue } from '../messages.js';
 
@@ -38,19 +20,7 @@ import { toolOutput, toolResultValue } from '../messages.js';
  * Uses ~4 chars per token as a conservative heuristic.
  */
 export function estimateTokens(messages: ModelMessage[]): number {
-  let chars = 0;
-  for (const msg of messages) {
-    if (typeof msg.content === 'string') {
-      chars += msg.content.length;
-    } else if (Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if ('text' in part) chars += part.text.length;
-        else if ('output' in part) chars += JSON.stringify(toolResultValue(part)).length;
-        else if ('input' in part) chars += JSON.stringify(part.input).length;
-      }
-    }
-  }
-  return Math.ceil(chars / 4);
+  return estimateTextTokens(messages.map(message => JSON.stringify(message)).join("\n"));
 }
 
 // ---------------------------------------------------------------------------
@@ -410,13 +380,13 @@ export async function restoreCollapsedSpan(
 // ---------------------------------------------------------------------------
 
 /** Reserve buffer — never fill the context window past this margin */
-const RESERVE_BUFFER_TOKENS = 13_000;
+const compressionThreshold = (window: number) => contextBudget(window).compactAt;
 /** Maximum summary length */
-const MAX_SUMMARY_TOKENS = 20_000;
+
 /** Circuit breaker: stop trying model summarization after this many failures */
 const MAX_COMPRESSION_FAILURES = 3;
 
-let compressionFailures = 0;
+const compressionFailures = new WeakMap<object, number>();
 
 /**
  * Tier 2: Model-based summarization of older conversation turns.
@@ -428,32 +398,35 @@ export async function autoCompactSummarize(
     model: LanguageModel;
     contextWindow: number;
     keepRecent?: number;
+    signal?: AbortSignal;
+    historyBudget?: number;
   },
 ): Promise<{ messages: ModelMessage[]; compressed: boolean }> {
-  const threshold = opts.contextWindow - RESERVE_BUFFER_TOKENS;
+  const threshold = opts.historyBudget ? Math.floor(opts.historyBudget * .8) : compressionThreshold(opts.contextWindow);
   const currentTokens = estimateTokens(messages);
 
-  if (currentTokens < threshold * 0.75 || messages.length < 6) {
+  if (currentTokens < threshold || messages.length < 6) {
     return { messages, compressed: false };
   }
 
   // Circuit breaker — fall through to deterministic if model keeps failing
-  if (compressionFailures >= MAX_COMPRESSION_FAILURES) {
+  if ((compressionFailures.get(opts.model as object) ?? 0) >= MAX_COMPRESSION_FAILURES) {
     return deterministicCompress(messages, opts.keepRecent ?? 4);
   }
 
   const keepRecent = opts.keepRecent ?? 4;
   const keepStart = 1;
 
+  const cut = safeTailStart(messages, keepRecent);
   const head = messages.slice(0, keepStart);
-  const middle = messages.slice(keepStart, -keepRecent);
-  const tail = messages.slice(-keepRecent);
+  const middle = messages.slice(keepStart, cut);
+  const tail = messages.slice(cut);
 
   if (middle.length === 0) {
     return { messages, compressed: false };
   }
 
-  const middleText = summarizeMessages(middle);
+  const middleText = boundedSummaryInput(middle, opts.contextWindow);
 
   let summaryText: string;
   try {
@@ -465,12 +438,16 @@ export async function autoCompactSummarize(
         'errors encountered, and the current task state. Be concise but thorough. ' +
         'Output only the summary, no preamble.',
       messages: [{ role: 'user', content: middleText }],
-      maxOutputTokens: Math.min(1024, Math.floor(MAX_SUMMARY_TOKENS / 4)),
+      maxOutputTokens: Math.min(1024, contextBudget(opts.contextWindow).output),
+      abortSignal: opts.signal,
+      maxRetries: 0,
     });
-    summaryText = result.text;
-    compressionFailures = 0; // Reset on success
+    summaryText = result.text.trim();
+    if (!summaryText) throw new Error("Empty compaction summary");
+    compressionFailures.delete(opts.model as object);
   } catch {
-    compressionFailures++;
+    opts.signal?.throwIfAborted();
+    compressionFailures.set(opts.model as object, (compressionFailures.get(opts.model as object) ?? 0) + 1);
     // Fall back to deterministic
     return deterministicCompress(messages, keepRecent);
   }
@@ -479,26 +456,31 @@ export async function autoCompactSummarize(
 }
 
 // ---------------------------------------------------------------------------
-// Tier 3 — FullCompact (nuclear: compress everything)
+// Tier 3 — FullCompact (retain task boundaries)
 // ---------------------------------------------------------------------------
 
 /**
  * Tier 3: Full conversation compression.
  * Used when AutoCompact can't free enough space.
- * Compresses EVERYTHING to a single summary + last 2 messages.
+ * Preserves the original request and the complete current user turn.
  */
 export async function fullCompact(
   messages: ModelMessage[],
   model: LanguageModel,
+  contextWindow = 131072,
+  signal?: AbortSignal,
 ): Promise<{ messages: ModelMessage[]; compressed: boolean }> {
   if (messages.length < 4) {
     return { messages, compressed: false };
   }
 
-  const allButLast2 = messages.slice(0, -2);
-  const last2 = messages.slice(-2);
+  const cut = safeTailStart(messages, 2);
+  if (!cut) return { messages, compressed: false };
+  const head = messages.slice(0, 1);
+  const allButLast2 = messages.slice(1, cut);
+  const last2 = messages.slice(cut);
 
-  const middleText = summarizeMessages(allButLast2);
+  const middleText = boundedSummaryInput(allButLast2, contextWindow);
 
   let summaryText: string;
   try {
@@ -509,14 +491,17 @@ export async function fullCompact(
         'the original task, all files created/modified, key decisions, ' +
         'current state, and any unresolved issues. Max 500 words.',
       messages: [{ role: 'user', content: middleText }],
-      maxOutputTokens: 2048,
+      maxOutputTokens: Math.min(2048, contextBudget(contextWindow).output),
+      abortSignal: signal,
+      maxRetries: 0,
     });
     summaryText = result.text;
   } catch {
+    signal?.throwIfAborted();
     summaryText = buildDeterministicSummary(allButLast2);
   }
 
-  return buildCompressedHistory([], summaryText, last2);
+  return buildCompressedHistory(head, summaryText, last2);
 }
 
 // ---------------------------------------------------------------------------
@@ -527,9 +512,10 @@ function deterministicCompress(
   messages: ModelMessage[],
   keepRecent: number,
 ): { messages: ModelMessage[]; compressed: boolean } {
+  const cut = safeTailStart(messages, keepRecent);
   const head = messages.slice(0, 1);
-  const middle = messages.slice(1, -keepRecent);
-  const tail = messages.slice(-keepRecent);
+  const middle = messages.slice(1, cut);
+  const tail = messages.slice(cut);
 
   if (middle.length === 0) return { messages, compressed: false };
 
@@ -545,10 +531,12 @@ function buildDeterministicSummary(messages: ModelMessage[]): string {
 
   for (const msg of messages) {
     if (msg.role === 'user' && typeof msg.content === 'string') {
-      userRequests.push(msg.content.slice(0, 100));
+      userRequests.push(msg.content.slice(0, 1000));
     }
+    if (msg.role === 'assistant' && typeof msg.content === 'string') userRequests.push(`Assistant state: ${msg.content.slice(0, 1000)}`);
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
+        if ('text' in part) userRequests.push(`${msg.role}: ${part.text.slice(0, 1000)}`);
         if ('toolName' in part) {
           const p = part as unknown as Record<string, unknown>;
           toolsUsed.add(String(p.toolName));
@@ -597,6 +585,22 @@ function summarizeMessages(messages: ModelMessage[]): string {
   return lines.join('\n');
 }
 
+/** Preserve the current user turn and its complete tool-call/result chain. */
+export function safeTailStart(messages: ModelMessage[], keepRecent: number): number {
+  let cut = Math.max(0, messages.length - keepRecent);
+  while (cut > 0 && messages[cut]?.role !== 'user') cut--;
+  let lastUser = messages.length - 1;
+  while (lastUser >= 0 && messages[lastUser]!.role !== 'user') lastUser--;
+  return lastUser < 0 ? 0 : Math.min(cut, lastUser);
+}
+function boundedSummaryInput(messages: ModelMessage[], window: number): string {
+  const text = summarizeMessages(messages), limit = Math.max(256, contextBudget(window).history - 512);
+  const tokens = estimateTextTokens(text);
+  if (tokens <= limit) return text;
+  const half = Math.floor(text.length * limit / tokens * .45);
+  return text.slice(0, half) + '\n[Older transcript abbreviated]\n' + text.slice(-half);
+}
+
 function buildCompressedHistory(
   head: ModelMessage[],
   summaryText: string,
@@ -606,11 +610,8 @@ function buildCompressedHistory(
   const summaryContent = `[Previous conversation context]\n${summaryText}\n[End of context]`;
 
   if (tail.length > 0 && tail[0]!.role === 'user') {
-    const firstContent = typeof tail[0]!.content === 'string' ? tail[0]!.content : '';
-    compressed.push({
-      role: 'user',
-      content: `${summaryContent}\n\n---\n\n${firstContent}`,
-    });
+    const firstContent = tail[0]!.content;
+    compressed.push({ role: 'user', content: typeof firstContent === 'string' ? `${summaryContent}\n\n---\n\n${firstContent}` : [{ type: 'text', text: summaryContent }, ...firstContent] });
     compressed.push(...tail.slice(1));
   } else {
     compressed.push({ role: 'user', content: summaryContent });
@@ -636,127 +637,35 @@ export interface AutoCompressStats {
   fullCompacted: boolean;
 }
 
-/**
- * Auto-compress if needed. Call this before each agent round.
- *
- * 5-Layer pipeline (cheap → expensive). Each layer runs only if we're
- * still above the soft-threshold after the previous one:
- *
- *   1. Budget Reduction — per-tool-result caps with artifact stash (free)
- *   2. Snip            — age-based removal once middle span grows large (free)
- *   3. MicroCompact    — oversized assistant text block trimming (free)
- *   4. Context Collapse — deterministic summary projection, non-destructive (free)
- *   5. AutoCompact     — model-based semantic summarization (one LLM call)
- *   Nuclear: FullCompact — compress ENTIRE conversation (one LLM call)
- *
- * Each step is safe to re-run; all are idempotent given the same input.
- */
+/** Reduce history only when it approaches the available token allowance. */
 export async function autoCompress(
-  messages: ModelMessage[],
-  model: LanguageModel,
-  contextWindow: number,
-  onCompress?: () => void,
+  messages: ModelMessage[], model: LanguageModel, contextWindow: number,
+  onCompress?: () => void, signal?: AbortSignal, historyBudget?: number,
 ): Promise<ModelMessage[]> {
-  const threshold = (contextWindow - RESERVE_BUFFER_TOKENS) * 0.75;
-
-  // Layer 1: Budget Reduction (always — it's idempotent).
-  let result = budgetReduce(messages).messages;
-
-  // Layer 2: Snip (always — gated by its own middle-count trigger).
-  result = snip(result).messages;
-
-  // Layer 3: MicroCompact (always).
-  result = microCompact(result);
-
-  let tokens = estimateTokens(result);
-  if (tokens < threshold) return result;
-
-  // Layer 4: Context Collapse (cheap — still no model call).
-  const collapsed = contextCollapse(result);
-  if (collapsed.collapsed) {
-    onCompress?.();
-    result = collapsed.messages;
-    tokens = estimateTokens(result);
-  }
-
-  if (tokens < threshold) return result;
-
-  // Layer 5: AutoCompact (model-based).
-  const auto = await autoCompactSummarize(result, { model, contextWindow });
-  if (auto.compressed) {
-    onCompress?.();
-    result = auto.messages;
-    tokens = estimateTokens(result);
-  }
-
-  if (tokens < threshold) return result;
-
-  // Nuclear: FullCompact.
-  const full = await fullCompact(result, model);
-  if (full.compressed) {
-    onCompress?.();
-    result = full.messages;
-  }
-
-  return result;
+  const result = await autoCompressWithStats(messages, model, contextWindow, signal, historyBudget);
+  if (result.messages !== messages) onCompress?.();
+  return result.messages;
 }
 
-/**
- * Instrumented variant of autoCompress. Returns the result messages plus
- * a stats object describing which layers fired. Useful for telemetry and
- * tests; the plain autoCompress() wraps this and discards the stats.
- */
+/** Trim only under context pressure, then summarize once; use the full fallback only if still over budget. */
 export async function autoCompressWithStats(
-  messages: ModelMessage[],
-  model: LanguageModel,
-  contextWindow: number,
+  messages: ModelMessage[], model: LanguageModel, contextWindow: number,
+  signal?: AbortSignal, historyBudget = contextBudget(contextWindow).history,
 ): Promise<{ messages: ModelMessage[]; stats: AutoCompressStats }> {
-  const stats: AutoCompressStats = {
-    budgetStashed: 0,
-    snipped: 0,
-    collapsed: false,
-    autoCompacted: false,
-    fullCompacted: false,
-  };
-  const threshold = (contextWindow - RESERVE_BUFFER_TOKENS) * 0.75;
-
+  const stats: AutoCompressStats = { budgetStashed: 0, snipped: 0, collapsed: false, autoCompacted: false, fullCompacted: false };
+  const threshold = Math.floor(historyBudget * .8);
+  if (estimateTokens(messages) < threshold) return { messages, stats };
   const br = budgetReduce(messages);
-  let result = br.messages;
+  let result = microCompact(br.messages);
   stats.budgetStashed = br.stashed;
-
-  const sn = snip(result);
-  result = sn.messages;
-  stats.snipped = sn.snipped;
-
-  result = microCompact(result);
-
-  let tokens = estimateTokens(result);
-  if (tokens >= threshold) {
-    const collapsed = contextCollapse(result);
-    if (collapsed.collapsed) {
-      result = collapsed.messages;
-      stats.collapsed = true;
-      tokens = estimateTokens(result);
-    }
+  if (estimateTokens(result) >= threshold) {
+    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget });
+    result = auto.messages; stats.autoCompacted = auto.compressed;
   }
-
-  if (tokens >= threshold) {
-    const auto = await autoCompactSummarize(result, { model, contextWindow });
-    if (auto.compressed) {
-      result = auto.messages;
-      stats.autoCompacted = true;
-      tokens = estimateTokens(result);
-    }
+  if (estimateTokens(result) > historyBudget) {
+    const full = await fullCompact(result, model, contextWindow, signal);
+    result = full.messages; stats.fullCompacted = full.compressed;
   }
-
-  if (tokens >= threshold) {
-    const full = await fullCompact(result, model);
-    if (full.compressed) {
-      result = full.messages;
-      stats.fullCompacted = true;
-    }
-  }
-
   return { messages: result, stats };
 }
 

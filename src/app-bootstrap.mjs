@@ -1,9 +1,11 @@
-import { app, session } from 'electron';
+import { app, session, ipcMain, safeStorage } from 'electron';
 import path from 'node:path';
 import { writeFileSync, existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { migrateBrandDatabase } from './brand-migration.mjs';
 import { createHost } from './notch-host.mjs';
+import { createModelManager } from './model-manager.mjs';
+import { registerModelIpc } from './model-ipc.mjs';
 app.setName('notch');
 const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
@@ -13,6 +15,10 @@ app.on('will-quit', () => { void globalThis.__notchHost.workspaceSearch.shutdown
 const databasePath = path.join(app.getPath('userData'), 'main.sqlite');
 if (existsSync(databasePath)) { const database = new DatabaseSync(databasePath); try { migrateBrandDatabase(database); } finally { database.close(); } }
 app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest({ urls: ['*://disabled.notch.invalid/*'] }, (_details, callback) => callback({ cancel: true })));
+app.whenReady().then(() => {
+  globalThis.__notchHost.modelManager = createModelManager(app.getPath('userData'), { safeStorage });
+  registerModelIpc(ipcMain,globalThis.__notchHost);
+});
 globalThis.__notchHost.listModels().catch(() => {});
 try { await import('../../out/main/index.js'); }
 catch (error) {

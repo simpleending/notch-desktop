@@ -5,10 +5,11 @@ const require = createRequire(import.meta.url);
 export const cliEntry = path.join(path.dirname(require.resolve('@freesyntax/notch-cli/package.json')), 'dist/index.js');
 
 /** Run the published harness without shell interpolation or renderer access to Node. */
-export function runCli(args, { cwd = process.cwd(), signal, onOutput, executable = process.execPath, entry = cliEntry } = {}) {
+export function runCli(args, { cwd = process.cwd(), signal, onOutput, executable = process.execPath, entry = cliEntry, env = {} } = {}) {
+  if (Object.keys(env).some(key => key !== 'HF_TOKEN') || (env.HF_TOKEN && !/^hf_[\w]{8,256}$/.test(env.HF_TOKEN))) throw new Error('Invalid model download environment.');
   return new Promise((resolve, reject) => {
     const child = spawn(executable, [entry, ...args], { cwd, signal, windowsHide: true,
-      env: { ...process.env, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'] });
+      env: { ...Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key/i.test(key))), ...env, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', failure;
     const fail = error => { failure ??= error; };
     child.once('error', fail);

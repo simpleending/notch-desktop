@@ -61,9 +61,10 @@ export interface HubModel {
   fetchedAt?: number;
   source?: 'live' | 'cache';
 }
-async function fetchHubModel(repo: string, runner: LocalRunner, signal?: AbortSignal): Promise<HubModel> {
+async function fetchHubModel(repo: string, runner: LocalRunner, signal?: AbortSignal, token?: string): Promise<HubModel> {
   if (!/^[\w](?:[\w.-]*[\w])?\/[\w](?:[\w.-]*[\w])?$/.test(repo)) throw new Error('Use a Hugging Face repository id in owner/model form.');
   const response = await fetch(`https://huggingface.co/api/models/${repo}?blobs=true`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {}, redirect: 'error',
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15000)]) : AbortSignal.timeout(15000),
   });
   if (!response.ok) throw new Error(`Cannot inspect ${repo} (HTTP ${response.status}). Choose an accessible public model.`);
@@ -82,7 +83,7 @@ async function fetchHubModel(repo: string, runner: LocalRunner, signal?: AbortSi
     ...(runner === 'ollama' ? { ollamaBase: LOCAL_MODEL_CATALOG.find(row => row.gguf === repo)?.ollamaBase } : {}) };
 }
 
-export async function inspectHubModel(repo: string, runner: LocalRunner, signal?: AbortSignal): Promise<HubModel> {
+export async function inspectHubModel(repo: string, runner: LocalRunner, signal?: AbortSignal, token?: string): Promise<HubModel> {
   signal?.throwIfAborted();
   if (!/^[\w](?:[\w.-]*[\w])?\/[\w](?:[\w.-]*[\w])?$/.test(repo)) throw new Error('Use a Hugging Face repository id in owner/model form.');
   const file = path.join(os.homedir(), '.notch', 'cache', 'hub-models', `${runner}-${repo.replace('/', '--')}.json`);
@@ -94,7 +95,7 @@ export async function inspectHubModel(repo: string, runner: LocalRunner, signal?
     if (cached && Date.now() - cached.fetchedAt! < 6 * 60 * 60 * 1000) return { ...cached, source: 'cache' };
   } catch { /* Cache is optional, including corrupt or stale files. */ }
   try {
-    const value = await fetchHubModel(repo, runner, signal);
+    const value = await fetchHubModel(repo, runner, signal, token);
     const temporary = `${file}.${randomUUID()}.tmp`;
     try {
       await mkdir(path.dirname(file), { recursive: true });

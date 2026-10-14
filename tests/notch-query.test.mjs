@@ -50,3 +50,49 @@ test('failure records completed actions for continuation and does not replay the
   assert.equal(calls, 1); assert.equal(events.at(-1).is_error, true);
   assert.match(f.saved.at(-1).messages.at(-1).content, /Do not replay/);
 });
+
+test('native state follows running, approval and idle while context counts use the latest request', async () => {
+  const f = fixture();
+  const query = new NotchQuery(f.host,{cwd:process.cwd(),model:'ollama/fixture',prompt:'Write',canUseTool:async()=>({behavior:'allow'})},{runTurn:async turn=>{
+    turn.onUsage({inputTokens:100,outputTokens:10,contextWindow:8192});
+    await turn.approve('write',{path:'file',content:'x'},'','exact-call');
+    turn.onUsage({inputTokens:150,outputTokens:20,contextWindow:8192});
+    turn.onUsage({inputTokens:NaN,outputTokens:20,contextWindow:8192});
+    return {messages:turn.messages};
+  }});
+  const events=[];for await(const event of query)events.push(event);
+  assert.deepEqual(events.filter(event=>event.subtype==='session_state_changed').map(event=>event.state),['idle','running','requires_action','running','idle']);
+  const usage=await query.getContextUsage();assert.equal(usage.totalTokens,170);assert.equal(usage.percentage,170/8192);
+  assert.equal(f.saved.at(-1).contextUsage.totalTokens,170);
+  usage.totalTokens=0;assert.equal((await query.getContextUsage()).totalTokens,170);
+  await assert.rejects(query.setModel('unknown/model'),/available/);
+  await query.setModel('ollama/fixture');assert.equal(await query.getContextUsage(),null);
+});
+
+test('model selection cannot change a turn that starts while the catalog is loading', async () => {
+  const f=fixture();let send,finishCatalog,startCatalog,started;
+  const input=new Promise(resolve=>{send=resolve;});
+  const catalogStarted=new Promise(resolve=>{startCatalog=resolve;});
+  const turnStarted=new Promise(resolve=>{started=resolve;});
+  f.host.listModels=()=>{startCatalog();return new Promise(resolve=>{finishCatalog=resolve;});};
+  async function* prompts(){yield {message:{content:await input}};}
+  const query=new NotchQuery(f.host,{cwd:process.cwd(),model:'ollama/fixture',prompt:prompts()},{runTurn:async turn=>{
+    started();await new Promise((_,reject)=>turn.signal.addEventListener('abort',()=>reject(turn.signal.reason),{once:true}));
+  }});
+  await query.ready;assert.equal(await query.getContextUsage(),null);
+  const changing=query.setModel('ollama/new');await catalogStarted;
+  send('Begin a task');await turnStarted;
+  finishCatalog([{key:'ollama/new',enabled:true}]);
+  await assert.rejects(changing,/Finish or interrupt/);assert.equal(query.model,'ollama/fixture');
+  await query.close();
+});
+test('native compaction progress closes on success and failure without fabricated token counts',async()=>{
+  for(const fail of [false,true]){
+    const f=fixture();const query=new NotchQuery(f.host,{cwd:process.cwd(),prompt:'continue'},{runTurn:async turn=>{
+      await turn.onLifecycle('pre-compact',{});if(fail)throw new Error('summary cancelled');await turn.onLifecycle('post-compact',{});return {messages:turn.messages};
+    }});
+    const events=[];for await(const event of query)events.push(event);
+    assert.deepEqual(events.filter(event=>event.subtype==='status').map(event=>event.status),['compacting',null]);
+    assert.equal(events.some(event=>event.subtype==='compact_boundary'),false);
+  }
+});

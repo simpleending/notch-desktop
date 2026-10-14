@@ -9,8 +9,7 @@ import {
   listModels,
   pullModel,
   showModel
-} from "./chunk-WPRAVALI.js";
-import "./chunk-RKXQ4ULC.js";
+} from "./chunk-JALSGEWB.js";
 export {
   OLLAMA_CLOUD_BASE_URL,
   OLLAMA_LOCAL_BASE_URL,

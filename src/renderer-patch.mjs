@@ -2,6 +2,7 @@ import { readFile, writeFile, readdir, cp, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { patchFunction, patchClassMethod } from './bundle-patch.mjs';
 import { patchWorkbenchRenderer, installWorkbenchAssets } from './workbench-patch.mjs';
+import { modelPreload } from './model-ipc.mjs';
 
 export function patchSetupRenderer(source) {
   if (source.includes('/* notch setup renderer */')) return source;
@@ -20,7 +21,7 @@ export function patchSetupRenderer(source) {
 
 export function patchSetupDocument(html) {
   if (html.includes('<!-- notch quiet startup -->')) return html;
-  const style = '<style>html,body,#root{width:100%;height:100%;margin:0}#notch-boot-splash{position:fixed;inset:0;z-index:2147483647;display:grid;place-content:center;gap:24px;background:#101418;color:#aeb9c2;text-align:center;font:12px/1.5 system-ui,sans-serif;-webkit-app-region:drag}#notch-boot-splash img{width:168px;height:50px;margin:auto}#notch-boot-splash .light{display:none}#notch-boot-splash[data-hidden="true"]{pointer-events:none;opacity:0}@media(prefers-color-scheme:light){#notch-boot-splash{background:#f5f4f0;color:#52616b}#notch-boot-splash .dark{display:none}#notch-boot-splash .light{display:block}}</style>';
+  const style = '<style>html,body,#root{width:100%;height:100%;margin:0}#notch-boot-splash{position:fixed;inset:0;z-index:2147483647;display:grid;place-content:center;gap:24px;background:#141416;color:#aeb9c2;text-align:center;font:12px/1.5 system-ui,sans-serif;-webkit-app-region:drag}#notch-boot-splash img{width:168px;height:50px;margin:auto}#notch-boot-splash .light{display:none}#notch-boot-splash[data-hidden="true"]{pointer-events:none;opacity:0}@media(prefers-color-scheme:light){#notch-boot-splash{background:#f5f4f6;color:#655b6c}#notch-boot-splash .dark{display:none}#notch-boot-splash .light{display:block}}</style>';
   const splash = '<!-- notch quiet startup --><div id="notch-boot-splash" role="status" aria-label="Opening notch"><img class="dark" src="./assets/notch-wordmark-dark.svg" alt="notch"><img class="light" src="./assets/notch-wordmark-light.svg" alt="notch"><span>Opening your workspace…</span></div>';
   const oldSplash = /<div id="notch-boot-splash"[\s\S]*?(?=\s*<div id="root")/;
   if (!oldSplash.test(html) || !/<style>[\s\S]*?<\/style>/.test(html)) throw new Error('Upstream startup document differs from the baseline.');
@@ -28,6 +29,8 @@ export function patchSetupDocument(html) {
 }
 
 export async function installSetupRenderer(application, root) {
+  const preloadFile = path.join(application,'out/preload/index.cjs'), preload = await readFile(preloadFile,'utf8');
+  if (!preload.includes('/* notch model settings bridge */')) await writeFile(preloadFile,preload+modelPreload);
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
   const candidates = [];
   for (const name of await readdir(assets)) {

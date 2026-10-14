@@ -38,6 +38,7 @@ function SettingsView(){const N2=p1?void 0:w2==="developer"?"general":w2;const H
 function NewChatHomeContent(){return jsxRuntimeExports.jsxs("div",{"data-new-chat-b1-content":!0,children:[jsxRuntimeExports.jsx(PartnerPlanGreetingMark,{}),jsxRuntimeExports.jsx("h1",{children:"Beyond Coding"}),jsxRuntimeExports.jsx("div",{className:"mt-7 w-full max-w-[924px]",children:jsxRuntimeExports.jsx(NewChatWelcomeDashboard,{attentionEnabled:t1,attentionCount:n1,activity:r1,loadCreditsHeatmap:i1,onActivityPlaygroundEvent:s1,gameEntryDismissRequestId:h2})}),jsxRuntimeExports.jsx(ChatComposer,{onSubmit:J1,onStop:W1,placeholder:i2("newChat.placeholder")})]});}
 function Frame(){return flag?jsxRuntimeExports.jsxs("div",{"data-layout-window-titlebar":!0,className:"titlebar",children:[jsxRuntimeExports.jsx("div",{style:{WebkitAppRegion:"no-drag"},children:K2}),jsxRuntimeExports.jsx("div",{"aria-hidden":!0,"data-layout-window-titlebar-drag-region":!0,style:{WebkitAppRegion:"drag"}})]}):jsxRuntimeExports.jsx("div",{className:"absolute left-4"});}
 const illustration={dangerouslySetInnerHTML:{__html:workspaceFilesEmptyIllustrationRaw}};
+function ChatComposerModelMenu(props){return oldModelMenu(props);}
 const NotchSetup=createNotchSetup(reactExports);`;
 test('reskin removes inherited art while preserving composer actions and native window controls', () => {
   const source = patchWorkbenchRenderer(fixture);

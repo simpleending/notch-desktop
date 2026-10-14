@@ -1,13 +1,11 @@
 import {
   detectLocalHardware
-} from "./chunk-MRHUTJQG.js";
+} from "./chunk-OGMCKULH.js";
 import {
   detectDaemon,
+  ollamaRoot,
   showModel
-} from "./chunk-WPRAVALI.js";
-import {
-  ollamaRoot
-} from "./chunk-RKXQ4ULC.js";
+} from "./chunk-JALSGEWB.js";
 
 // vendor/notch-cli/src/providers/local-runner.ts
 import os from "os";

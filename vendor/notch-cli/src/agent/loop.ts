@@ -1,5 +1,5 @@
 import { toolOutput } from '../messages.js';
-import { isStepCount } from 'ai';
+import { isStepCount, asSchema } from 'ai';
 /**
  * Notch CLI — Agent Loop
  *
@@ -14,7 +14,8 @@ import { ToolLoopAgent, type ModelMessage, type LanguageModel, type ToolModelMes
 import { promises as fs } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { buildToolMap, type ToolContext } from '../tools/index.js';
-import { autoCompress } from './compression.js';
+import { autoCompress, estimateTokens } from './compression.js';
+import { contextBudget, estimateTextTokens } from './context-budget.js';
 import { loadProjectInstructions } from '../context/project-instructions.js';
 import { formatMemoriesForPrompt } from '../memory/index.js';
 import { listBuiltinAgents } from './builtins/index.js';
@@ -47,6 +48,8 @@ export interface AgentConfig {
   maxIterations?: number;
   /** Context window size for compression decisions */
   contextWindow?: number;
+  maxOutputTokens?: number;
+  onCompact?: (messages: ModelMessage[]) => Promise<void>;
   /** Correction pipeline config — auto-detected from model ID if omitted */
   correction?: CorrectionConfig;
   /** Model ID string for auto-detecting correction preset */
@@ -63,6 +66,8 @@ export interface AgentConfig {
   onMicrocompact?: (cleared: number, savedChars: number) => void;
   /** Callback when the correction pipeline fires */
   onCorrection?: (attempt: number, success: boolean) => void;
+  /** Counts from the latest provider request, rather than cumulative turn usage. */
+  onUsage?: (usage: { inputTokens: number; outputTokens: number; contextWindow: number }) => void;
 }
 
 export interface AgentResponse {
@@ -160,15 +165,25 @@ export async function runAgentLoop(
       ].join('\n')
     : '';
 
-  // Pre-loop compression check
-  await config.toolContext.runHook?.('pre-compact', { messageCount: history.length });
-  history = await autoCompress(history, config.model, contextWindow, () => {
-    wasCompressed = true;
-    config.onCompress?.();
-  });
-  if (wasCompressed) {
+  const schemaText = JSON.stringify(await Promise.all(Object.entries(tools).map(async ([name, value]) => ({ name, description: value.description, schema: await asSchema(value.inputSchema).jsonSchema }))));
+  const overhead = estimateTextTokens(`${config.systemPrompt}${templateFormatHint}${schemaText}`) + 256;
+  const budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+  let tokenRatio = 1;
+  const compact = async () => {
+    const estimated = estimateTokens(history);
+    if (estimated * tokenRatio < budget.compactAt) return;
+    await config.onCompact?.(history);
+    await config.toolContext.runHook?.('pre-compact', { messageCount: history.length });
+    history = await autoCompress(history, config.model, contextWindow, () => {
+      wasCompressed = true;
+      config.onCompress?.();
+    }, config.toolContext.abortSignal, Math.floor(budget.history / tokenRatio));
+    if (estimateTokens(history) * tokenRatio > budget.history) throw new Error('The current request or tool results exceed the selected context. Increase context or split the request; the transcript has been saved.');
     await config.toolContext.runHook?.('post-compact', { messageCount: history.length });
-  }
+  };
+
+  // Pre-loop compression check
+  await compact();
 
   // Intent gate: cheap classification pass before the main loop.
   // When the gate says YES but the model produces no tool calls,
@@ -196,6 +211,7 @@ export async function runAgentLoop(
       history = mc.messages;
       config.onMicrocompact?.(mc.cleared, mc.savedChars);
     }
+    await compact();
 
     // --- Stream (retry is handled by outer withRetry in index.ts) ---
     let fullText = '';
@@ -210,6 +226,7 @@ export async function runAgentLoop(
       stopWhen: isStepCount(1),
       repairToolCall: feedback.repair,
       maxRetries: 0,
+      maxOutputTokens: budget.output,
     });
     const result = await agent.stream({ messages: history, abortSignal: config.toolContext.abortSignal });
 
@@ -261,6 +278,11 @@ export async function runAgentLoop(
     if (streamUsage) {
       totalPromptTokens += streamUsage.promptTokens ?? 0;
       totalCompletionTokens += streamUsage.completionTokens ?? 0;
+      if (Number.isSafeInteger(streamUsage.promptTokens) && Number.isSafeInteger(streamUsage.completionTokens)
+          && streamUsage.promptTokens! >= 0 && streamUsage.completionTokens! >= 0) {
+        tokenRatio = Math.max(1, Math.min(4, (streamUsage.promptTokens! - overhead) / Math.max(1, estimateTokens(history))));
+        config.onUsage?.({ inputTokens: streamUsage.promptTokens!, outputTokens: streamUsage.completionTokens!, contextWindow });
+      }
 
       // Phase 1 shadow probe — records real token counts + pi-ai cost
       // estimate for later comparison against Stripe metering. No-op unless
@@ -419,18 +441,6 @@ export async function runAgentLoop(
         recentErrors.length = 0;
       }
 
-      // Mid-loop compression check for long tool chains
-      if (iterations % 5 === 0) {
-        const prevLen = history.length;
-        await config.toolContext.runHook?.('pre-compact', { messageCount: prevLen });
-        history = await autoCompress(history, config.model, contextWindow, () => {
-          wasCompressed = true;
-          config.onCompress?.();
-        });
-        if (history.length < prevLen) {
-          await config.toolContext.runHook?.('post-compact', { messageCount: history.length });
-        }
-      }
 
       continue;
     }

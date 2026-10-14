@@ -1,38 +1,617 @@
 import {
-  findByokProvider,
-  isByokRef,
-  listByokProviders,
-  loadCredentials,
-  loadSyncedByokKeys,
-  parseByokRef,
-  resolveByokModel
-} from "./chunk-7EDXVMAA.js";
-import {
   Rollout
 } from "./chunk-S5MWOFHZ.js";
 import {
+  LOCAL_MODEL_CATALOG,
   detectLocalHardware,
+  inspectHubModel,
   modelFit
-} from "./chunk-MRHUTJQG.js";
+} from "./chunk-OGMCKULH.js";
 import {
   listModels,
-  showModel
-} from "./chunk-WPRAVALI.js";
-import {
   ollamaChatUrl,
-  ollamaRoot
-} from "./chunk-RKXQ4ULC.js";
+  ollamaRoot,
+  showModel
+} from "./chunk-JALSGEWB.js";
 
 // vendor/notch-cli/src/desktop-harness.ts
-import path19 from "path";
-import fs17 from "fs/promises";
+import path20 from "path";
+import fs18 from "fs/promises";
 
 // vendor/notch-cli/src/config.ts
-import fs3 from "fs/promises";
-import path3 from "path";
+import fs4 from "fs/promises";
+import path4 from "path";
 
 // vendor/notch-cli/src/providers/registry.ts
+import { createOpenAI as createOpenAI2 } from "@ai-sdk/openai";
+
+// vendor/notch-cli/src/providers/byok.ts
 import { createOpenAI } from "@ai-sdk/openai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+
+// vendor/notch-cli/src/auth.ts
+import http from "http";
+import { exec } from "child_process";
+import os from "os";
+import path from "path";
+import fs from "fs/promises";
+import { readFileSync } from "fs";
+var AUTH_TIMEOUT_MS = 5 * 60 * 1e3;
+function getConfigDir() {
+  if (process.platform === "win32") {
+    return path.join(process.env["APPDATA"] ?? os.homedir(), "notch");
+  }
+  const xdg = process.env["XDG_CONFIG_HOME"];
+  return path.join(xdg ?? path.join(os.homedir(), ".config"), "notch");
+}
+function getCredentialsPath() {
+  return path.join(getConfigDir(), "credentials.json");
+}
+async function loadCredentials() {
+  try {
+    const raw = await fs.readFile(getCredentialsPath(), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.token === "string" && typeof parsed.email === "string") {
+      return parsed;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+function getByokSyncPath() {
+  return path.join(getConfigDir(), "byok-sync.json");
+}
+async function loadSyncedByokKeys() {
+  try {
+    const raw = await fs.readFile(getByokSyncPath(), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && parsed.keys) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
+}
+var syncedKeysCache;
+function loadSyncedByokKeysSync() {
+  if (syncedKeysCache !== void 0) return syncedKeysCache;
+  try {
+    const raw = readFileSync(getByokSyncPath(), "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && parsed.keys) {
+      syncedKeysCache = parsed;
+    } else {
+      syncedKeysCache = null;
+    }
+  } catch {
+    syncedKeysCache = null;
+  }
+  return syncedKeysCache;
+}
+var HTML_BASE = (body) => `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notch CLI</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@200;400&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'IBM Plex Mono', monospace;
+      background: #000;
+      color: #cfcfcf;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+    .card { text-align: center; }
+    .brand { color: #CE2127; font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; }
+    h1 { font-weight: 200; font-size: 22px; margin: 14px 0 10px; letter-spacing: 0.05em; }
+    p { font-size: 11px; color: #555; letter-spacing: 0.1em; line-height: 1.8; }
+  </style>
+</head>
+<body><div class="card">${body}</div></body>
+</html>`;
+var HTML_SUCCESS = HTML_BASE(`
+  <div class="brand">notch_</div>
+  <h1>CLI authorized</h1>
+  <p>You can close this tab and return to your terminal.</p>
+`);
+var HTML_ERROR = HTML_BASE(`
+  <div class="brand">notch_</div>
+  <h1>Authorization failed</h1>
+  <p style="color:#CE2127">Run <code>notch login</code> again to retry.</p>
+`);
+
+// vendor/notch-cli/src/providers/ollama-transport.ts
+import { randomUUID } from "crypto";
+function ollamaContextLength(fallback) {
+  const value = Number(process.env.NOTCH_OLLAMA_CONTEXT || fallback || 32768);
+  if (!Number.isInteger(value) || value < 8192 || value > 262144) {
+    throw new Error("NOTCH_OLLAMA_CONTEXT must be an integer between 8192 and 262144.");
+  }
+  return value;
+}
+function ollamaBatchSize(fallback) {
+  const raw = process.env.NOTCH_OLLAMA_BATCH;
+  if (!raw && fallback === void 0) return void 0;
+  const value = Number(raw || fallback);
+  if (!Number.isInteger(value) || value < 1 || value > 2048) {
+    throw new Error("NOTCH_OLLAMA_BATCH must be an integer between 1 and 2048.");
+  }
+  return value;
+}
+function ollamaFetch(baseUrl, options = {}) {
+  return async (_input, init) => {
+    const body = JSON.parse(String(init?.body));
+    const names = /* @__PURE__ */ new Map();
+    const messages = body.messages.map((message) => {
+      for (const call of message.tool_calls ?? []) if (call.id) names.set(call.id, call.function.name);
+      const images = [];
+      const content = Array.isArray(message.content) ? message.content.map((part) => {
+        if (part.type === "image_url") {
+          const match = /^data:image\/[^;]+;base64,(.+)$/.exec(part.image_url?.url || "");
+          if (!match) throw new Error("Ollama images must be local files or base64 data URLs.");
+          images.push(match[1]);
+        }
+        return part.text || "";
+      }).join("\n") : message.content || "";
+      return {
+        role: message.role,
+        content,
+        ...images.length ? { images } : {},
+        ...message.tool_call_id ? { tool_name: names.get(message.tool_call_id) } : {},
+        ...message.tool_calls ? { tool_calls: message.tool_calls.map((call) => ({ function: {
+          name: call.function.name,
+          arguments: typeof call.function.arguments === "string" ? JSON.parse(call.function.arguments) : call.function.arguments
+        } })) } : {}
+      };
+    });
+    const response = await fetch(`${ollamaRoot(baseUrl)}/api/chat`, {
+      ...init,
+      body: JSON.stringify({
+        model: body.model,
+        messages,
+        stream: body.stream === true,
+        ...body.tools?.length ? { tools: body.tools } : {},
+        ...body.response_format ? { format: body.response_format.json_schema?.schema || "json" } : {},
+        ...process.env.NOTCH_OLLAMA_THINK === "0" ? { think: false } : {},
+        options: {
+          num_ctx: ollamaContextLength(options.contextWindow),
+          temperature: body.temperature ?? 0.2,
+          ...ollamaBatchSize(options.ollamaBatch) === void 0 ? {} : { num_batch: ollamaBatchSize(options.ollamaBatch) },
+          ...body.max_tokens ? { num_predict: body.max_tokens } : {},
+          ...body.stop ? { stop: body.stop } : {}
+        }
+      })
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      return Response.json({ error: { message: `Ollama HTTP ${response.status}: ${detail.slice(0, 600)}`, type: "ollama_error" } }, { status: response.status });
+    }
+    let toolIndex = 0;
+    let sawTools = false;
+    const convert = (frame) => {
+      if (frame.error) throw new Error(`Ollama: ${frame.error}`);
+      const calls = frame.message?.tool_calls?.map((call) => ({
+        index: toolIndex++,
+        id: call.id || `call_${randomUUID()}`,
+        type: "function",
+        function: { name: call.function.name, arguments: typeof call.function.arguments === "string" ? call.function.arguments : JSON.stringify(call.function.arguments) }
+      }));
+      if (calls?.length) sawTools = true;
+      return {
+        choices: [{ index: 0, [body.stream ? "delta" : "message"]: {
+          role: "assistant",
+          content: frame.message?.content || "",
+          ...calls?.length ? { tool_calls: calls } : {}
+        }, finish_reason: frame.done ? sawTools ? "tool_calls" : frame.done_reason === "length" ? "length" : "stop" : null }],
+        ...frame.done ? { usage: { prompt_tokens: frame.prompt_eval_count || 0, completion_tokens: frame.eval_count || 0 } } : {}
+      };
+    };
+    if (!body.stream) return Response.json(convert(await response.json()));
+    if (!response.body) throw new Error("Ollama returned an empty response stream.");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    let buffer = "";
+    let finished = false;
+    const stream = new ReadableStream({
+      async pull(controller) {
+        try {
+          let emitted = false;
+          while (!emitted) {
+            const { value, done } = await reader.read();
+            buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = done ? "" : lines.pop();
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              const frame = JSON.parse(line);
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(convert(frame))}
+
+`));
+              emitted = true;
+              if (frame.done) finished = true;
+            }
+            if (done || finished) {
+              if (!finished) throw new Error("Ollama stream ended before completion.");
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+              controller.close();
+              await reader.cancel();
+              return;
+            }
+          }
+        } catch (error) {
+          controller.error(error);
+          await reader.cancel().catch(() => {
+          });
+        }
+      },
+      async cancel(reason) {
+        await reader.cancel(reason);
+      }
+    });
+    return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+  };
+}
+
+// vendor/notch-cli/src/providers/byok.ts
+var BUILTIN_BYOK_PROVIDERS = [
+  {
+    id: "openai",
+    label: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    apiKeyEnv: "OPENAI_API_KEY",
+    apiKeyUrl: "https://platform.openai.com/api-keys",
+    defaultModel: "gpt-6.1-sol",
+    models: [
+      "gpt-6.1-sol",
+      "gpt-6-astra",
+      "gpt-6-luna",
+      "gpt-5",
+      "gpt-5-mini",
+      "gpt-5-nano",
+      "gpt-5-chat-latest",
+      "gpt-4.1",
+      "gpt-4.1-mini",
+      "gpt-4o",
+      "gpt-4o-mini",
+      "o3",
+      "o4-mini"
+    ],
+    compatibility: "strict"
+  },
+  {
+    id: "anthropic",
+    label: "Anthropic (Claude)",
+    // Use the native Messages API for tool calling.
+    baseUrl: "https://api.anthropic.com/v1",
+    apiKeyEnv: "ANTHROPIC_API_KEY",
+    apiKeyUrl: "https://console.anthropic.com/settings/keys",
+    defaultModel: "claude-sonnet-5-5",
+    models: [
+      "claude-sonnet-5-5",
+      "claude-opus-5-5",
+      "claude-haiku-5-5",
+      "claude-opus-4-7",
+      "claude-sonnet-4-6",
+      "claude-haiku-4-5"
+    ],
+    compatibility: "compatible",
+    apiShape: "anthropic",
+    // anthropic-version is optional on the OpenAI compat layer, but we
+    // pin it so behaviour is deterministic across CLI releases.
+    headers: {
+      "anthropic-version": "2023-06-01"
+    }
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    apiKeyEnv: "OPENROUTER_API_KEY",
+    apiKeyUrl: "https://openrouter.ai/settings/keys",
+    defaultModel: "anthropic/claude-sonnet-4.6",
+    // OpenRouter exposes hundreds of models — leave undefined and let
+    // users discover via openrouter.ai/models.
+    compatibility: "strict",
+    headers: {
+      "HTTP-Referer": "https://freesyntax.dev",
+      "X-OpenRouter-Title": "Notch CLI"
+    }
+  },
+  {
+    id: "google",
+    label: "Google Gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    apiKeyEnv: "GEMINI_API_KEY",
+    apiKeyUrl: "https://aistudio.google.com/apikey",
+    defaultModel: "gemini-3.5-flash",
+    models: [
+      "gemini-3.5-flash",
+      "gemini-2.5-pro",
+      "gemini-2.5-flash"
+    ],
+    compatibility: "compatible"
+  },
+  {
+    id: "deepseek",
+    label: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    apiKeyEnv: "DEEPSEEK_API_KEY",
+    apiKeyUrl: "https://platform.deepseek.com/api_keys",
+    defaultModel: "deepseek-v4-flash",
+    models: [
+      "deepseek-v4-flash",
+      "deepseek-v4-pro",
+      "deepseek-chat",
+      "deepseek-reasoner"
+    ],
+    compatibility: "strict"
+  },
+  {
+    id: "together",
+    label: "Together AI",
+    baseUrl: "https://api.together.xyz/v1",
+    apiKeyEnv: "TOGETHER_API_KEY",
+    apiKeyUrl: "https://api.together.ai/settings/api-keys",
+    defaultModel: "meta-llama/Llama-4-70B-Instruct",
+    models: [
+      "meta-llama/Llama-4-70B-Instruct",
+      "meta-llama/Llama-4-8B-Instruct",
+      "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+      "Qwen/Qwen2.5-72B-Instruct-Turbo",
+      "Qwen/QwQ-32B-Preview",
+      "deepseek-ai/DeepSeek-V3",
+      "mistralai/Mixtral-8x22B-Instruct-v0.1"
+    ],
+    compatibility: "strict"
+  },
+  {
+    id: "fireworks",
+    label: "Fireworks AI",
+    baseUrl: "https://api.fireworks.ai/inference/v1",
+    apiKeyEnv: "FIREWORKS_API_KEY",
+    apiKeyUrl: "https://fireworks.ai/account/api-keys",
+    defaultModel: "accounts/fireworks/models/llama-v4-70b-instruct",
+    models: [
+      "accounts/fireworks/models/llama-v4-70b-instruct",
+      "accounts/fireworks/models/llama-v3p3-70b-instruct",
+      "accounts/fireworks/models/qwen2p5-72b-instruct",
+      "accounts/fireworks/models/deepseek-v3",
+      "accounts/fireworks/models/mixtral-8x22b-instruct"
+    ],
+    compatibility: "strict"
+  },
+  {
+    id: "groq",
+    label: "Groq",
+    baseUrl: "https://api.groq.com/openai/v1",
+    apiKeyEnv: "GROQ_API_KEY",
+    apiKeyUrl: "https://console.groq.com/keys",
+    defaultModel: "llama-4-70b-8192",
+    models: [
+      "llama-4-70b-8192",
+      "llama-3.3-70b-versatile",
+      "llama-3.1-8b-instant",
+      "mixtral-8x7b-32768",
+      "gemma2-9b-it",
+      "qwen-qwq-32b"
+    ],
+    compatibility: "strict"
+  },
+  {
+    id: "ollama",
+    label: "Ollama (local)",
+    baseUrl: "http://localhost:11434/v1",
+    apiKeyEnv: "OLLAMA_API_KEY",
+    defaultModel: "llama3.2:latest",
+    // Ollama ignores the api key but openai-compat clients require a
+    // non-empty string. Default to the literal "ollama" per their docs.
+    fallbackApiKey: "ollama",
+    compatibility: "compatible",
+    apiShape: "openai"
+  },
+  {
+    // Same daemon, native Anthropic Messages API shape.
+    id: "ollama-anthropic",
+    label: "Ollama (local, Anthropic-compat)",
+    baseUrl: "http://localhost:11434/v1",
+    apiKeyEnv: "OLLAMA_API_KEY",
+    defaultModel: "qwen3-coder:30b",
+    fallbackApiKey: "ollama",
+    apiShape: "anthropic"
+  },
+  {
+    // Ollama Cloud: same endpoint surface as local, hosted on ollama.com.
+    // Requires OLLAMA_API_KEY from https://ollama.com/settings/keys.
+    id: "ollama-cloud",
+    label: "Ollama Cloud",
+    baseUrl: "https://ollama.com/v1",
+    apiKeyEnv: "OLLAMA_API_KEY",
+    apiKeyUrl: "https://ollama.com/settings/keys",
+    defaultModel: "gpt-oss:120b",
+    models: [
+      "gpt-oss:120b",
+      "gpt-oss:20b",
+      "kimi-k2.5:cloud",
+      "glm-5:cloud",
+      "qwen3.5:cloud",
+      "deepseek-v3.1:671b",
+      "minimax-m2.7:cloud"
+    ],
+    compatibility: "compatible",
+    apiShape: "openai"
+  },
+  {
+    id: "lmstudio",
+    label: "LM Studio (local)",
+    baseUrl: "http://localhost:1234/v1",
+    apiKeyEnv: "",
+    defaultModel: "local-model",
+    fallbackApiKey: "lm-studio",
+    compatibility: "compatible"
+  },
+  {
+    id: "vllm",
+    label: "vLLM (local)",
+    baseUrl: "http://localhost:8000/v1",
+    apiKeyEnv: "",
+    defaultModel: "local-vllm",
+    fallbackApiKey: "EMPTY",
+    compatibility: "strict"
+  },
+  {
+    id: "mlx",
+    label: "MLX (Apple Silicon)",
+    baseUrl: "http://127.0.0.1:11435/v1",
+    apiKeyEnv: "",
+    defaultModel: "mlx-community/Qwen3.5-4B-4bit",
+    fallbackApiKey: "not-needed"
+  },
+  {
+    id: "__custom__",
+    label: "Custom (user-supplied)",
+    // User MUST supply --base-url. These defaults are placeholders that
+    // will fail fast if the user forgets the flag.
+    baseUrl: "",
+    apiKeyEnv: "",
+    defaultModel: "",
+    compatibility: "compatible"
+  }
+];
+var BYOK_BY_ID = Object.fromEntries(
+  BUILTIN_BYOK_PROVIDERS.map((p) => [p.id, p])
+);
+function findByokProvider(id) {
+  return BYOK_BY_ID[id];
+}
+function listByokProviders() {
+  return BUILTIN_BYOK_PROVIDERS.filter((p) => p.id !== "__custom__");
+}
+function normalizeProviderId(id) {
+  return id === "custom" ? "__custom__" : id;
+}
+function providerExists(id) {
+  return Boolean(BYOK_BY_ID[normalizeProviderId(id)]);
+}
+function isByokRef(model) {
+  const slash = model.indexOf("/");
+  if (slash > 0 && providerExists(model.slice(0, slash))) return true;
+  const colon = model.indexOf(":");
+  if (colon > 0 && providerExists(model.slice(0, colon))) return true;
+  return false;
+}
+function parseByokRef(ref) {
+  const slash = ref.indexOf("/");
+  const colon = ref.indexOf(":");
+  if (slash > 0 && (colon < 0 || slash < colon) && providerExists(ref.slice(0, slash))) {
+    const rawProvider = ref.slice(0, slash);
+    const model = ref.slice(slash + 1);
+    return { provider: normalizeProviderId(rawProvider), model };
+  }
+  if (colon > 0 && providerExists(ref.slice(0, colon))) {
+    const rawProvider = ref.slice(0, colon);
+    const model = ref.slice(colon + 1);
+    return { provider: normalizeProviderId(rawProvider), model };
+  }
+  throw new Error(
+    `Provider model ref "${ref}" must be "<provider>/<model>" or "<provider>:<model>".`
+  );
+}
+var ByokMissingApiKeyError = class extends Error {
+  constructor(provider) {
+    super(
+      provider.apiKeyEnv ? `Missing API key for ${provider.label}. Set ${provider.apiKeyEnv} or pass --api-key.` : `Missing API key for ${provider.label}. Pass --api-key.`
+    );
+    this.provider = provider;
+    this.name = "ByokMissingApiKeyError";
+  }
+  provider;
+};
+var ByokMissingBaseUrlError = class extends Error {
+  constructor() {
+    super(
+      "Custom provider requires --base-url (and usually --api-key). Example: notch --provider custom --base-url https://my.endpoint/v1 --model my-model"
+    );
+    this.name = "ByokMissingBaseUrlError";
+  }
+};
+function resolveByokModel(spec) {
+  const providerInfo = findByokProvider(spec.provider);
+  if (!providerInfo) {
+    throw new Error(
+      `Unknown provider "${spec.provider}". Available: ${listByokProviders().map((p) => p.id).join(", ")}, custom`
+    );
+  }
+  if (providerInfo.id === "__custom__" && !spec.baseUrl) {
+    throw new ByokMissingBaseUrlError();
+  }
+  const shape = spec.apiShape ?? providerInfo.apiShape ?? "openai";
+  const isLocalOllama = providerInfo.id === "ollama" || providerInfo.id === "ollama-anthropic";
+  const baseUrl = isLocalOllama ? ollamaChatUrl(spec.baseUrl) : spec.baseUrl ?? providerInfo.baseUrl;
+  const modelId = spec.model && spec.model.length > 0 ? spec.model : providerInfo.defaultModel;
+  if (!modelId) {
+    throw new Error(
+      `Provider "${providerInfo.id}" has no default model. Pass --model or set byok.model in .notch.json.`
+    );
+  }
+  let apiKey = spec.apiKey;
+  if (!apiKey && providerInfo.apiKeyEnv) {
+    apiKey = process.env[providerInfo.apiKeyEnv];
+  }
+  if (!apiKey) {
+    const synced = loadSyncedByokKeysSync();
+    if (synced) {
+      const fromSync = synced.keys[providerInfo.id];
+      if (typeof fromSync === "string" && fromSync.length > 0) apiKey = fromSync;
+    }
+  }
+  if (!apiKey && providerInfo.fallbackApiKey) {
+    apiKey = providerInfo.fallbackApiKey;
+  }
+  if (!apiKey && !providerInfo.apiKeyEnv) {
+    apiKey = "not-needed";
+  }
+  if (!apiKey) {
+    throw new ByokMissingApiKeyError(providerInfo);
+  }
+  if (providerInfo.id === "anthropic" && apiKey.startsWith("sk-ant-oat")) {
+    throw new Error("Use an Anthropic Console API key, not a Claude subscription token.");
+  }
+  const headers = {
+    ...providerInfo.headers ?? {},
+    ...providerInfo.id === "anthropic" && process.env.ANTHROPIC_WORKSPACE_ID ? { "anthropic-workspace-id": process.env.ANTHROPIC_WORKSPACE_ID } : {},
+    ...spec.headers ?? {}
+  };
+  if (shape === "anthropic") {
+    const anthropic = createAnthropic({
+      apiKey,
+      baseURL: baseUrl,
+      headers
+    });
+    return {
+      model: anthropic(modelId),
+      providerInfo,
+      modelId
+    };
+  }
+  const provider = createOpenAI({
+    ...providerInfo.id === "ollama" ? { fetch: ollamaFetch(baseUrl, spec) } : {},
+    apiKey,
+    baseURL: baseUrl,
+    headers
+  });
+  return {
+    model: providerInfo.id === "openai" ? provider.responses(modelId) : provider.chat(modelId),
+    providerInfo,
+    modelId
+  };
+}
 
 // vendor/notch-cli/src/providers/pi-ai-adapter.ts
 var PI_AI_PROVIDER_MAP = {
@@ -325,7 +904,7 @@ function resolveModel(config) {
   const proxyKey = process.env.MODAL_PROXY_KEY;
   const proxySecret = process.env.MODAL_PROXY_SECRET;
   const modalProxyHeaders = proxyKey && proxySecret ? { "Modal-Key": proxyKey, "Modal-Secret": proxySecret } : {};
-  const provider = createOpenAI({
+  const provider = createOpenAI2({
     apiKey,
     baseURL: baseUrl,
     headers: { ...modalProxyHeaders, ...config.headers }
@@ -375,25 +954,25 @@ function extractByokProvider(config) {
 }
 
 // vendor/notch-cli/src/providers/ollama-credentials.ts
-import fs from "fs/promises";
-import path from "path";
+import fs2 from "fs/promises";
+import path2 from "path";
 function notchConfigDir() {
   const xdg = process.env.XDG_CONFIG_HOME;
-  if (xdg) return path.join(xdg, "notch");
+  if (xdg) return path2.join(xdg, "notch");
   const appdata = process.env.APPDATA;
-  if (appdata && process.platform === "win32") return path.join(appdata, "notch");
+  if (appdata && process.platform === "win32") return path2.join(appdata, "notch");
   const home = process.env.HOME ?? process.env.USERPROFILE;
   if (!home) {
     throw new Error("Cannot determine home directory for credential storage.");
   }
-  return path.join(home, ".config", "notch");
+  return path2.join(home, ".config", "notch");
 }
 function ollamaCredsPath() {
-  return path.join(notchConfigDir(), "ollama.json");
+  return path2.join(notchConfigDir(), "ollama.json");
 }
 async function readOllamaCreds() {
   try {
-    const raw = await fs.readFile(ollamaCredsPath(), "utf-8");
+    const raw = await fs2.readFile(ollamaCredsPath(), "utf-8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.apiKey !== "string" || typeof parsed.endpoint !== "string") return null;
     return {
@@ -407,9 +986,9 @@ async function readOllamaCreds() {
 }
 
 // vendor/notch-cli/src/permissions/index.ts
-import fs2 from "fs/promises";
-import path2 from "path";
-import os from "os";
+import fs3 from "fs/promises";
+import path3 from "path";
+import os2 from "os";
 import { minimatch } from "minimatch";
 
 // vendor/notch-cli/src/permissions/handlers/bash-classifier.ts
@@ -892,11 +1471,11 @@ var DEFAULT_PERMISSIONS = {
   denyWriteGlobs: [...DEFAULT_DENY_WRITE_GLOBS]
 };
 async function loadPermissions(projectRoot) {
-  const projectPath = path2.join(projectRoot, ".notch.json");
-  const globalPath = path2.join(os.homedir(), ".notch", "permissions.json");
+  const projectPath = path3.join(projectRoot, ".notch.json");
+  const globalPath = path3.join(os2.homedir(), ".notch", "permissions.json");
   let config = { ...DEFAULT_PERMISSIONS };
   try {
-    const raw = await fs2.readFile(globalPath, "utf-8");
+    const raw = await fs3.readFile(globalPath, "utf-8");
     const parsed = JSON.parse(raw);
     if (parsed.permissions) {
       config = mergePermissions(config, parsed.permissions);
@@ -904,7 +1483,7 @@ async function loadPermissions(projectRoot) {
   } catch {
   }
   try {
-    const raw = await fs2.readFile(projectPath, "utf-8");
+    const raw = await fs3.readFile(projectPath, "utf-8");
     const parsed = JSON.parse(raw);
     if (parsed.permissions) {
       config = mergePermissions(config, parsed.permissions);
@@ -1110,11 +1689,11 @@ function selectModel(current, selection) {
   return next;
 }
 async function loadConfig(overrides = {}, selection = {}) {
-  const config = { ...DEFAULTS, projectRoot: path3.resolve(overrides.projectRoot ?? process.cwd()), models: { chat: { ...DEFAULT_MODEL } } };
+  const config = { ...DEFAULTS, projectRoot: path4.resolve(overrides.projectRoot ?? process.cwd()), models: { chat: { ...DEFAULT_MODEL } } };
   let explicitModelConfig = false;
-  const configPath = path3.resolve(config.projectRoot, ".notch.json");
+  const configPath = path4.resolve(config.projectRoot, ".notch.json");
   try {
-    const raw = await fs3.readFile(configPath, "utf-8");
+    const raw = await fs4.readFile(configPath, "utf-8");
     const fileConfig = JSON.parse(raw);
     if (fileConfig.model && (isValidModel(fileConfig.model) || isByokRef(fileConfig.model))) {
       config.models.chat.model = fileConfig.model;
@@ -1265,9 +1844,9 @@ function toolResultValue(part) {
 }
 
 // vendor/notch-cli/src/agent/loop.ts
-import { isStepCount as isStepCount2 } from "ai";
+import { isStepCount as isStepCount2, asSchema } from "ai";
 import { ToolLoopAgent } from "ai";
-import { promises as fs15 } from "fs";
+import { promises as fs16 } from "fs";
 import { execSync as execSync2 } from "child_process";
 
 // vendor/notch-cli/src/tools/index.ts
@@ -1275,8 +1854,8 @@ import { tool as tool2 } from "ai";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 // vendor/notch-cli/src/tools/read.ts
-import fs4 from "fs/promises";
-import path4 from "path";
+import fs5 from "fs/promises";
+import path5 from "path";
 import { z } from "zod";
 var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"]);
 var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([".pdf", ".zip", ".tar", ".gz", ".wasm", ".exe", ".dll", ".so", ".dylib"]);
@@ -1289,8 +1868,8 @@ var parameters = z.object({
 });
 async function readImage(filePath, ext) {
   try {
-    const stat = await fs4.stat(filePath);
-    const buf = await fs4.readFile(filePath);
+    const stat = await fs5.stat(filePath);
+    const buf = await fs5.readFile(filePath);
     const mimeType = ext === ".svg" ? "image/svg+xml" : ext === ".png" ? "image/png" : ext === ".gif" ? "image/gif" : ext === ".webp" ? "image/webp" : ext === ".bmp" ? "image/bmp" : ext === ".ico" ? "image/x-icon" : "image/jpeg";
     if (ext === ".svg") {
       const svgText = buf.toString("utf-8");
@@ -1313,8 +1892,8 @@ data:${mimeType};base64,${base64.slice(0, 200)}... [${base64.length} chars total
 }
 async function readPDF(filePath) {
   try {
-    const stat = await fs4.stat(filePath);
-    const buf = await fs4.readFile(filePath);
+    const stat = await fs5.stat(filePath);
+    const buf = await fs5.readFile(filePath);
     const text = buf.toString("latin1");
     const textChunks = [];
     const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
@@ -1355,10 +1934,10 @@ var readTool = {
   description: 'Read file contents with line numbers. Use offset/limit for large files. Supports text files, images (returns metadata + base64), and PDFs (basic text extraction). Returns numbered lines like "  1\\tline content".',
   parameters,
   async execute(params, ctx) {
-    const filePath = path4.isAbsolute(params.path) ? params.path : path4.resolve(ctx.cwd, params.path);
-    const ext = path4.extname(filePath).toLowerCase();
+    const filePath = path5.isAbsolute(params.path) ? params.path : path5.resolve(ctx.cwd, params.path);
+    const ext = path5.extname(filePath).toLowerCase();
     try {
-      await fs4.access(filePath);
+      await fs5.access(filePath);
       if (IMAGE_EXTENSIONS.has(ext)) {
         return await readImage(filePath, ext);
       }
@@ -1366,12 +1945,12 @@ var readTool = {
         return await readPDF(filePath);
       }
       if (BINARY_EXTENSIONS.has(ext)) {
-        const stat2 = await fs4.stat(filePath);
+        const stat2 = await fs5.stat(filePath);
         return {
           content: `Binary file: ${filePath} (${(stat2.size / 1024).toFixed(1)} KB, ${ext})`
         };
       }
-      const stat = await fs4.stat(filePath);
+      const stat = await fs5.stat(filePath);
       if (stat.size > MAX_FILE_SIZE) {
         return {
           content: `File too large: ${filePath} (${(stat.size / 1024 / 1024).toFixed(1)} MB). Use offset/limit to read portions.`,
@@ -1382,7 +1961,7 @@ var readTool = {
       if (ctx._readCache?.has(cacheKey2)) {
         return { content: ctx._readCache.get(cacheKey2) };
       }
-      const raw = await fs4.readFile(filePath, "utf-8");
+      const raw = await fs5.readFile(filePath, "utf-8");
       const allLines = raw.split("\n");
       const offset = Math.max(0, (params.offset ?? 1) - 1);
       const limit = params.limit ?? MAX_LINES;
@@ -1406,8 +1985,8 @@ var readTool = {
 };
 
 // vendor/notch-cli/src/tools/write.ts
-import fs5 from "fs/promises";
-import path5 from "path";
+import fs6 from "fs/promises";
+import path6 from "path";
 import { z as z2 } from "zod";
 var parameters2 = z2.object({
   path: z2.string().describe("Relative or absolute path to write"),
@@ -1418,16 +1997,16 @@ var writeTool = {
   description: "Write a file (create or overwrite). Creates parent directories if needed. Always provide the COMPLETE file content.",
   parameters: parameters2,
   async execute(params, ctx) {
-    const filePath = path5.isAbsolute(params.path) ? params.path : path5.resolve(ctx.cwd, params.path);
+    const filePath = path6.isAbsolute(params.path) ? params.path : path6.resolve(ctx.cwd, params.path);
     try {
-      await fs5.mkdir(path5.dirname(filePath), { recursive: true });
+      await fs6.mkdir(path6.dirname(filePath), { recursive: true });
       let existed = false;
       try {
-        await fs5.access(filePath);
+        await fs6.access(filePath);
         existed = true;
       } catch {
       }
-      await fs5.writeFile(filePath, params.content, "utf-8");
+      await fs6.writeFile(filePath, params.content, "utf-8");
       const lines = params.content.split("\n").length;
       const action = existed ? "Updated" : "Created";
       return { content: `${action} ${filePath} (${lines} lines)` };
@@ -1438,8 +2017,8 @@ var writeTool = {
 };
 
 // vendor/notch-cli/src/tools/edit.ts
-import fs6 from "fs/promises";
-import path6 from "path";
+import fs7 from "fs/promises";
+import path7 from "path";
 import { z as z3 } from "zod";
 var parameters3 = z3.object({
   path: z3.string().describe("Relative or absolute path to the file"),
@@ -1452,9 +2031,9 @@ var editTool = {
   description: "Perform exact string replacement in a file. old_string must match exactly and be unique unless replace_all is true. Use for surgical edits.",
   parameters: parameters3,
   async execute(params, ctx) {
-    const filePath = path6.isAbsolute(params.path) ? params.path : path6.resolve(ctx.cwd, params.path);
+    const filePath = path7.isAbsolute(params.path) ? params.path : path7.resolve(ctx.cwd, params.path);
     try {
-      const content = await fs6.readFile(filePath, "utf-8");
+      const content = await fs7.readFile(filePath, "utf-8");
       if (!content.includes(params.old_string)) {
         return {
           content: `old_string not found in ${filePath}. Make sure it matches exactly (including whitespace and indentation).`,
@@ -1472,7 +2051,7 @@ var editTool = {
         }
       }
       const newContent = params.replace_all ? content.replaceAll(params.old_string, params.new_string) : content.replace(params.old_string, params.new_string);
-      await fs6.writeFile(filePath, newContent, "utf-8");
+      await fs7.writeFile(filePath, newContent, "utf-8");
       const oldLines = params.old_string.split("\n").length;
       const newLines = params.new_string.split("\n").length;
       return {
@@ -1488,8 +2067,8 @@ var editTool = {
 };
 
 // vendor/notch-cli/src/tools/apply-patch.ts
-import fs7 from "fs/promises";
-import path7 from "path";
+import fs8 from "fs/promises";
+import path8 from "path";
 import { z as z4 } from "zod";
 var PatchParseError = class extends Error {
 };
@@ -1677,21 +2256,21 @@ var applyPatchTool = {
     const summary = [];
     try {
       for (const action of actions) {
-        const abs = path7.isAbsolute(action.target) ? action.target : path7.resolve(ctx.cwd, action.target);
+        const abs = path8.isAbsolute(action.target) ? action.target : path8.resolve(ctx.cwd, action.target);
         if (action.kind === "add") {
           try {
-            await fs7.access(abs);
+            await fs8.access(abs);
             return { content: `Add File failed: ${action.target} already exists`, isError: true };
           } catch {
           }
-          await fs7.mkdir(path7.dirname(abs), { recursive: true });
-          await fs7.writeFile(abs, action.content, "utf-8");
+          await fs8.mkdir(path8.dirname(abs), { recursive: true });
+          await fs8.writeFile(abs, action.content, "utf-8");
           summary.push(`A ${action.target}`);
         } else if (action.kind === "delete") {
-          await fs7.unlink(abs);
+          await fs8.unlink(abs);
           summary.push(`D ${action.target}`);
         } else {
-          const original = await fs7.readFile(abs, "utf-8");
+          const original = await fs8.readFile(abs, "utf-8");
           const hasCrlf = original.includes("\r\n");
           const eol = hasCrlf ? "\r\n" : "\n";
           const hadTrailingNewline = original.endsWith("\n") || original.endsWith("\r\n");
@@ -1702,14 +2281,14 @@ var applyPatchTool = {
           }
           const joined = lines.join(eol);
           const next = hadTrailingNewline ? joined + eol : joined;
-          const destAbs = action.moveTo ? path7.isAbsolute(action.moveTo) ? action.moveTo : path7.resolve(ctx.cwd, action.moveTo) : abs;
+          const destAbs = action.moveTo ? path8.isAbsolute(action.moveTo) ? action.moveTo : path8.resolve(ctx.cwd, action.moveTo) : abs;
           if (action.moveTo) {
-            await fs7.mkdir(path7.dirname(destAbs), { recursive: true });
-            await fs7.writeFile(destAbs, next, "utf-8");
-            await fs7.unlink(abs);
+            await fs8.mkdir(path8.dirname(destAbs), { recursive: true });
+            await fs8.writeFile(destAbs, next, "utf-8");
+            await fs8.unlink(abs);
             summary.push(`R ${action.target} -> ${action.moveTo}`);
           } else {
-            await fs7.writeFile(abs, next, "utf-8");
+            await fs8.writeFile(abs, next, "utf-8");
             summary.push(`M ${action.target}`);
           }
         }
@@ -1727,7 +2306,7 @@ ${summary.join("\n")}` };
 };
 
 // vendor/notch-cli/src/tools/shell.ts
-import path8 from "path";
+import path9 from "path";
 import { z as z5 } from "zod";
 
 // vendor/notch-cli/src/terminal/local.ts
@@ -1927,7 +2506,7 @@ function validateCommand(command, cwd) {
   const fileOpRegex = /(?:^|\s)(?:>|>>|cat|cp|mv|ln|tee|tar|zip|scp|rsync|chmod|chown|rm)\s+(\/(?!tmp\b|dev\/null\b)[^\s]+)/g;
   let match;
   while ((match = fileOpRegex.exec(command)) !== null) {
-    const targetPath = path8.normalize(match[1]);
+    const targetPath = path9.normalize(match[1]);
     if (!targetPath.startsWith(cwd) && !targetPath.startsWith("/tmp")) {
       return `Blocked: command targets path outside project root: ${targetPath}`;
     }
@@ -2128,8 +2707,8 @@ Proceed?`
 
 // vendor/notch-cli/src/tools/grep.ts
 import { execSync } from "child_process";
-import fs8 from "fs/promises";
-import path9 from "path";
+import fs9 from "fs/promises";
+import path10 from "path";
 import { z as z7 } from "zod";
 var parameters7 = z7.object({
   pattern: z7.string().describe("Regex pattern to search for"),
@@ -2143,7 +2722,7 @@ var grepTool = {
   description: "Search file contents by regex pattern. Returns matching lines with file paths and line numbers. Supports glob filtering and context lines.",
   parameters: parameters7,
   async execute(params, ctx) {
-    const searchPath = params.path ? path9.isAbsolute(params.path) ? params.path : path9.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchPath = params.path ? path10.isAbsolute(params.path) ? params.path : path10.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
       const rgArgs = [
         "rg",
@@ -2171,11 +2750,11 @@ var grepTool = {
       const results = [];
       async function searchDir(dir) {
         if (results.length >= (params.max_results ?? 50)) return;
-        const entries = await fs8.readdir(dir, { withFileTypes: true });
+        const entries = await fs9.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
           if (results.length >= (params.max_results ?? 50)) return;
           if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-          const full = path9.join(dir, entry.name);
+          const full = path10.join(dir, entry.name);
           if (entry.isDirectory()) {
             await searchDir(full);
           } else if (entry.isFile()) {
@@ -2184,11 +2763,11 @@ var grepTool = {
               if (ext && !entry.name.endsWith(ext)) continue;
             }
             try {
-              const content = await fs8.readFile(full, "utf-8");
+              const content = await fs9.readFile(full, "utf-8");
               const lines = content.split("\n");
               for (let i = 0; i < lines.length; i++) {
                 if (regex.test(lines[i])) {
-                  const rel = path9.relative(ctx.cwd, full);
+                  const rel = path10.relative(ctx.cwd, full);
                   results.push(`${rel}:${i + 1}:${lines[i]}`);
                   regex.lastIndex = 0;
                   if (results.length >= (params.max_results ?? 50)) return;
@@ -2199,11 +2778,11 @@ var grepTool = {
           }
         }
       }
-      const stat = await fs8.stat(searchPath);
+      const stat = await fs9.stat(searchPath);
       if (stat.isFile()) {
-        const content = await fs8.readFile(searchPath, "utf-8");
+        const content = await fs9.readFile(searchPath, "utf-8");
         const lines = content.split("\n");
-        const rel = path9.relative(ctx.cwd, searchPath);
+        const rel = path10.relative(ctx.cwd, searchPath);
         for (let i = 0; i < lines.length; i++) {
           if (regex.test(lines[i])) {
             results.push(`${rel}:${i + 1}:${lines[i]}`);
@@ -2223,7 +2802,7 @@ var grepTool = {
 
 // vendor/notch-cli/src/tools/glob.ts
 import { glob as globFn } from "glob";
-import path10 from "path";
+import path11 from "path";
 import { z as z8 } from "zod";
 var parameters8 = z8.object({
   pattern: z8.string().describe('Glob pattern, e.g. "**/*.ts" or "src/**/*.tsx"'),
@@ -2234,7 +2813,7 @@ var globTool = {
   description: "Find files matching a glob pattern. Returns relative paths sorted by modification time. Ignores node_modules and .git by default.",
   parameters: parameters8,
   async execute(params, ctx) {
-    const searchDir = params.path ? path10.isAbsolute(params.path) ? params.path : path10.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchDir = params.path ? path11.isAbsolute(params.path) ? params.path : path11.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
       const matches = await globFn(params.pattern, {
         cwd: searchDir,
@@ -2243,9 +2822,9 @@ var globTool = {
         dot: false
       });
       if (matches.length === 0) {
-        return { content: `No files matching "${params.pattern}" in ${path10.relative(ctx.cwd, searchDir) || "."}` };
+        return { content: `No files matching "${params.pattern}" in ${path11.relative(ctx.cwd, searchDir) || "."}` };
       }
-      const relative = matches.map((m) => path10.relative(ctx.cwd, path10.resolve(searchDir, m)));
+      const relative = matches.map((m) => path11.relative(ctx.cwd, path11.resolve(searchDir, m)));
       return {
         content: `Found ${relative.length} file(s):
 ${relative.join("\n")}`
@@ -2331,7 +2910,7 @@ var GITHUB_API = "https://api.github.com";
 function getToken() {
   return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
 }
-async function ghFetch(path20, opts = {}) {
+async function ghFetch(path21, opts = {}) {
   const token = getToken();
   const headers = {
     "Accept": "application/vnd.github+json",
@@ -2339,7 +2918,7 @@ async function ghFetch(path20, opts = {}) {
     ...opts.headers ?? {}
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  return fetch(`${GITHUB_API}${path20}`, { ...opts, headers });
+  return fetch(`${GITHUB_API}${path21}`, { ...opts, headers });
 }
 var parameters10 = z10.object({
   action: z10.enum([
@@ -2498,8 +3077,8 @@ var githubTool = {
 
 // vendor/notch-cli/src/tools/lsp.ts
 import { execFileSync } from "child_process";
-import fs9 from "fs/promises";
-import path11 from "path";
+import fs10 from "fs/promises";
+import path12 from "path";
 import { z as z11 } from "zod";
 var parameters11 = z11.object({
   action: z11.enum(["definition", "references", "diagnostics", "hover"]).describe("LSP action: definition (go-to-def), references (find usages), diagnostics (type errors), hover (type info)"),
@@ -2509,7 +3088,7 @@ var parameters11 = z11.object({
   symbol: z11.string().optional().describe("Symbol name to search for (alternative to line/character)")
 });
 function detectLanguage(filePath) {
-  const ext = path11.extname(filePath).toLowerCase();
+  const ext = path12.extname(filePath).toLowerCase();
   switch (ext) {
     case ".ts":
     case ".tsx":
@@ -2662,8 +3241,8 @@ ${lines.join("\n")}`;
 }
 async function getHoverInfo(symbol, filePath, line, cwd) {
   try {
-    const absPath = path11.isAbsolute(filePath) ? filePath : path11.resolve(cwd, filePath);
-    const content = await fs9.readFile(absPath, "utf-8");
+    const absPath = path12.isAbsolute(filePath) ? filePath : path12.resolve(cwd, filePath);
+    const content = await fs10.readFile(absPath, "utf-8");
     const lines = content.split("\n");
     const startLine = Math.max(0, line - 3);
     const endLine = Math.min(lines.length, line + 2);
@@ -2681,7 +3260,7 @@ ${def}`;
   }
 }
 async function getDiagnostics(filePath, cwd) {
-  const absPath = path11.isAbsolute(filePath) ? filePath : path11.resolve(cwd, filePath);
+  const absPath = path12.isAbsolute(filePath) ? filePath : path12.resolve(cwd, filePath);
   const { lang } = detectLanguage(absPath);
   switch (lang) {
     case "typescript":
@@ -2745,7 +3324,7 @@ var lspTool = {
   parameters: parameters11,
   async execute(params, ctx) {
     const filePath = params.file;
-    const absPath = path11.isAbsolute(filePath) ? filePath : path11.resolve(ctx.cwd, filePath);
+    const absPath = path12.isAbsolute(filePath) ? filePath : path12.resolve(ctx.cwd, filePath);
     try {
       switch (params.action) {
         case "definition": {
@@ -2787,7 +3366,7 @@ var lspTool = {
 async function extractSymbol(filePath, line, character) {
   if (!line) return null;
   try {
-    const content = await fs9.readFile(filePath, "utf-8");
+    const content = await fs10.readFile(filePath, "utf-8");
     const lines = content.split("\n");
     const lineText = lines[line - 1];
     if (!lineText) return null;
@@ -2809,8 +3388,8 @@ async function extractSymbol(filePath, line, character) {
 }
 
 // vendor/notch-cli/src/tools/notebook.ts
-import fs10 from "fs/promises";
-import path12 from "path";
+import fs11 from "fs/promises";
+import path13 from "path";
 import { z as z12 } from "zod";
 var parameters12 = z12.object({
   action: z12.enum(["read", "edit", "add", "remove"]).describe("Action: read (view cells), edit (modify cell source), add (insert new cell), remove (delete cell)"),
@@ -2822,7 +3401,7 @@ var parameters12 = z12.object({
 });
 function formatNotebook(nb, filePath) {
   const parts = [
-    `# ${path12.basename(filePath)}`,
+    `# ${path13.basename(filePath)}`,
     `# ${nb.cells.length} cells | nbformat ${nb.nbformat}.${nb.nbformat_minor}`,
     ""
   ];
@@ -2853,11 +3432,11 @@ var notebookTool = {
   description: "Read and edit Jupyter .ipynb notebook files. Actions: read (view all cells with outputs), edit (modify a cell), add (insert a new cell), remove (delete a cell).",
   parameters: parameters12,
   async execute(params, ctx) {
-    const filePath = path12.isAbsolute(params.path) ? params.path : path12.resolve(ctx.cwd, params.path);
+    const filePath = path13.isAbsolute(params.path) ? params.path : path13.resolve(ctx.cwd, params.path);
     try {
       switch (params.action) {
         case "read": {
-          const raw = await fs10.readFile(filePath, "utf-8");
+          const raw = await fs11.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           return { content: formatNotebook(nb, filePath) };
         }
@@ -2868,7 +3447,7 @@ var notebookTool = {
           if (params.content === void 0) {
             return { content: "content is required for edit action.", isError: true };
           }
-          const raw = await fs10.readFile(filePath, "utf-8");
+          const raw = await fs11.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           if (params.cell_index < 0 || params.cell_index >= nb.cells.length) {
             return { content: `Cell index ${params.cell_index} out of range (0-${nb.cells.length - 1}).`, isError: true };
@@ -2877,14 +3456,14 @@ var notebookTool = {
             (l, i, arr) => i < arr.length - 1 ? l + "\n" : l
           );
           nb.cells[params.cell_index].source = lines;
-          await fs10.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Cell [${params.cell_index}] updated in ${path12.basename(filePath)}.` };
+          await fs11.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Cell [${params.cell_index}] updated in ${path13.basename(filePath)}.` };
         }
         case "add": {
           if (params.content === void 0) {
             return { content: "content is required for add action.", isError: true };
           }
-          const raw = await fs10.readFile(filePath, "utf-8");
+          const raw = await fs11.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           const cellType = params.cell_type ?? "code";
           const lines = params.content.split("\n").map(
@@ -2898,21 +3477,21 @@ var notebookTool = {
           };
           const insertIdx = params.insert_after !== void 0 ? params.insert_after + 1 : nb.cells.length;
           nb.cells.splice(insertIdx, 0, newCell);
-          await fs10.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path12.basename(filePath)}.` };
+          await fs11.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path13.basename(filePath)}.` };
         }
         case "remove": {
           if (params.cell_index === void 0) {
             return { content: "cell_index is required for remove action.", isError: true };
           }
-          const raw = await fs10.readFile(filePath, "utf-8");
+          const raw = await fs11.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           if (params.cell_index < 0 || params.cell_index >= nb.cells.length) {
             return { content: `Cell index ${params.cell_index} out of range (0-${nb.cells.length - 1}).`, isError: true };
           }
           const removed = nb.cells.splice(params.cell_index, 1)[0];
-          await fs10.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path12.basename(filePath)}. ${nb.cells.length} cells remaining.` };
+          await fs11.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path13.basename(filePath)}. ${nb.cells.length} cells remaining.` };
         }
         default:
           return { content: `Unknown action: ${params.action}`, isError: true };
@@ -3062,10 +3641,10 @@ function buildContext(args) {
   for (const [name, tool3] of Object.entries(realTools)) {
     if (EXCLUDED_TOOLS.has(name)) continue;
     const jsName = toJsIdentifier(name);
-    const exec = tool3.execute;
+    const exec2 = tool3.execute;
     wrappedTools[jsName] = async (params) => {
       try {
-        const result = await exec(params ?? {});
+        const result = await exec2(params ?? {});
         if (!result) return "";
         if (typeof result === "string") return result;
         return result.content ?? "";
@@ -3799,12 +4378,12 @@ import { z as z17 } from "zod";
 import { spawn as spawn2 } from "child_process";
 
 // vendor/notch-cli/src/plugins/discovery.ts
-import fs11 from "fs/promises";
-import path13 from "path";
-import os2 from "os";
+import fs12 from "fs/promises";
+import path14 from "path";
+import os3 from "os";
 async function discoverPlugins(projectRoot) {
-  const globalDir = path13.join(os2.homedir(), ".notch", "plugins");
-  const projectDir = path13.join(projectRoot, ".notch", "plugins");
+  const globalDir = path14.join(os3.homedir(), ".notch", "plugins");
+  const projectDir = path14.join(projectRoot, ".notch", "plugins");
   const plugins = /* @__PURE__ */ new Map();
   for (const plugin of await scanDirectory(globalDir)) {
     plugins.set(plugin.name, plugin);
@@ -3817,13 +4396,13 @@ async function discoverPlugins(projectRoot) {
 async function scanDirectory(dir) {
   const results = [];
   try {
-    const entries = await fs11.readdir(dir, { withFileTypes: true });
+    const entries = await fs12.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const pluginDir = path13.join(dir, entry.name);
-      const pkgPath = path13.join(pluginDir, "package.json");
+      const pluginDir = path14.join(dir, entry.name);
+      const pkgPath = path14.join(pluginDir, "package.json");
       try {
-        const raw = await fs11.readFile(pkgPath, "utf-8");
+        const raw = await fs12.readFile(pkgPath, "utf-8");
         const pkg = JSON.parse(raw);
         if (pkg["notch-plugin"] && pkg.name) {
           results.push({
@@ -3843,7 +4422,7 @@ async function scanDirectory(dir) {
 }
 
 // vendor/notch-cli/src/plugins/loader.ts
-import path14 from "path";
+import path15 from "path";
 import { pathToFileURL } from "url";
 
 // vendor/notch-cli/src/commands/registry.ts
@@ -3854,7 +4433,7 @@ function registerCommand(name, handler) {
 
 // vendor/notch-cli/src/plugins/loader.ts
 async function loadPlugin(discovered, projectRoot, log) {
-  const entryPath = path14.resolve(discovered.path, discovered.manifest.main);
+  const entryPath = path15.resolve(discovered.path, discovered.manifest.main);
   const tools = [];
   const hooks = [];
   const ctx = {
@@ -3946,9 +4525,9 @@ var PluginManager = class {
 var pluginManager = new PluginManager();
 
 // vendor/notch-cli/src/safety/guardian.ts
-import fs12 from "fs/promises";
+import fs13 from "fs/promises";
 import { fileURLToPath } from "url";
-import path15 from "path";
+import path16 from "path";
 import { generateText } from "ai";
 import { z as z18 } from "zod";
 
@@ -4144,8 +4723,8 @@ async function loadPolicy() {
   if (cachedPolicy) return cachedPolicy;
   try {
     const here = fileURLToPath(import.meta.url);
-    const mdPath = path15.join(path15.dirname(here), "guardian-policy.md");
-    const raw = await fs12.readFile(mdPath, "utf-8");
+    const mdPath = path16.join(path16.dirname(here), "guardian-policy.md");
+    const raw = await fs13.readFile(mdPath, "utf-8");
     if (raw.length > 200) {
       cachedPolicy = raw;
       return raw;
@@ -4293,7 +4872,7 @@ import { isStepCount } from "ai";
 import { streamText } from "ai";
 
 // vendor/notch-cli/src/agent/builtins/index.ts
-import { readdirSync, readFileSync, existsSync } from "fs";
+import { readdirSync, readFileSync as readFileSync2, existsSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath as fileURLToPath2 } from "url";
 import { parse as parseToml } from "smol-toml";
@@ -4341,7 +4920,7 @@ function asPositiveInt(v, field, file, fallback) {
 function parseBuiltinFile(filePath, fileName) {
   let raw;
   try {
-    raw = readFileSync(filePath, "utf8");
+    raw = readFileSync2(filePath, "utf8");
   } catch (err) {
     console.warn(`  [builtins] could not read ${fileName}: ${err.message}`);
     return null;
@@ -5339,21 +5918,25 @@ function stripSchemaNoise(value) {
 
 // vendor/notch-cli/src/agent/compression.ts
 import { generateText as generateText3 } from "ai";
+
+// vendor/notch-cli/src/agent/context-budget.ts
+function estimateTextTokens(text) {
+  const nonAscii = [...text].filter((char) => char.charCodeAt(0) > 127).length;
+  return Math.ceil((text.length - nonAscii) / 3 + nonAscii);
+}
+function contextBudget(window, overhead = 0, outputLimit) {
+  if (!Number.isSafeInteger(window) || window < 2048) throw new Error("Context must be at least 2,048 tokens.");
+  const output = Math.min(outputLimit ?? 4096, Math.max(512, Math.floor(window / 4)));
+  const safety = Math.max(256, Math.ceil(window * 0.05));
+  const history = window - overhead - output - safety;
+  if (history < 512) throw new Error("Instructions and tool definitions leave too little context. Increase the context limit or reduce project instructions.");
+  return { output, history, compactAt: Math.floor(history * 0.8) };
+}
+
+// vendor/notch-cli/src/agent/compression.ts
 import { createHash } from "crypto";
 function estimateTokens(messages) {
-  let chars = 0;
-  for (const msg of messages) {
-    if (typeof msg.content === "string") {
-      chars += msg.content.length;
-    } else if (Array.isArray(msg.content)) {
-      for (const part of msg.content) {
-        if ("text" in part) chars += part.text.length;
-        else if ("output" in part) chars += JSON.stringify(toolResultValue(part)).length;
-        else if ("input" in part) chars += JSON.stringify(part.input).length;
-      }
-    }
-  }
-  return Math.ceil(chars / 4);
+  return estimateTextTokens(messages.map((message) => JSON.stringify(message)).join("\n"));
 }
 var InMemoryArtifactStore = class {
   map = /* @__PURE__ */ new Map();
@@ -5422,31 +6005,6 @@ function budgetReduce(messages, opts = {}) {
   });
   return { messages: out, stashed, savedChars };
 }
-function snip(messages, opts = {}) {
-  const keepStart = opts.keepStart ?? 1;
-  const keepRecent = opts.keepRecent ?? 6;
-  const trigger = opts.triggerMiddleCount ?? 40;
-  const snipCount = opts.snipCount ?? 10;
-  if (messages.length < keepStart + keepRecent + trigger) {
-    return { messages, snipped: 0 };
-  }
-  const head = messages.slice(0, keepStart);
-  const tail = messages.slice(-keepRecent);
-  const middle = messages.slice(keepStart, messages.length - keepRecent);
-  let cut = Math.min(snipCount, middle.length);
-  while (cut < middle.length && middle[cut].role === "tool") cut++;
-  const dropped = middle.slice(0, cut);
-  const kept = middle.slice(cut);
-  if (dropped.length === 0) return { messages, snipped: 0 };
-  const marker = {
-    role: "user",
-    content: `[snip: ${dropped.length} older messages removed by age]`
-  };
-  return {
-    messages: [...head, marker, ...kept, ...tail],
-    snipped: dropped.length
-  };
-}
 var TEXT_BLOCK_MAX = 8e3;
 function microCompact(messages) {
   const result = [];
@@ -5467,101 +6025,80 @@ function microCompact(messages) {
   }
   return result;
 }
-function contextCollapse(messages, opts = {}) {
-  const keepStart = opts.keepStart ?? 1;
-  const keepRecent = opts.keepRecent ?? 4;
-  const trigger = opts.triggerMiddleCount ?? 12;
-  const store = opts.store ?? globalArtifactStore;
-  if (messages.length < keepStart + keepRecent + trigger) {
-    return { messages, collapsed: false };
-  }
-  const head = messages.slice(0, keepStart);
-  const middle = messages.slice(keepStart, messages.length - keepRecent);
-  const tail = messages.slice(-keepRecent);
-  if (middle.length === 0) return { messages, collapsed: false };
-  let key;
-  try {
-    const serialized = JSON.stringify(middle);
-    key = artifactKey(serialized);
-    void store.put(key, serialized);
-  } catch {
-  }
-  const summaryText = buildDeterministicSummary(middle);
-  const ref = key ? ` (originals at ${makeArtifactUri(key)})` : "";
-  const summaryMarker = {
-    role: "user",
-    content: `[Context collapsed \u2014 ${middle.length} messages summarized${ref}]
-${summaryText}`
-  };
-  return {
-    messages: [...head, summaryMarker, ...tail],
-    collapsed: true,
-    artifactKey: key
-  };
-}
-var RESERVE_BUFFER_TOKENS = 13e3;
-var MAX_SUMMARY_TOKENS = 2e4;
+var compressionThreshold = (window) => contextBudget(window).compactAt;
 var MAX_COMPRESSION_FAILURES = 3;
-var compressionFailures = 0;
+var compressionFailures = /* @__PURE__ */ new WeakMap();
 async function autoCompactSummarize(messages, opts) {
-  const threshold = opts.contextWindow - RESERVE_BUFFER_TOKENS;
+  const threshold = opts.historyBudget ? Math.floor(opts.historyBudget * 0.8) : compressionThreshold(opts.contextWindow);
   const currentTokens = estimateTokens(messages);
-  if (currentTokens < threshold * 0.75 || messages.length < 6) {
+  if (currentTokens < threshold || messages.length < 6) {
     return { messages, compressed: false };
   }
-  if (compressionFailures >= MAX_COMPRESSION_FAILURES) {
+  if ((compressionFailures.get(opts.model) ?? 0) >= MAX_COMPRESSION_FAILURES) {
     return deterministicCompress(messages, opts.keepRecent ?? 4);
   }
   const keepRecent = opts.keepRecent ?? 4;
   const keepStart = 1;
+  const cut = safeTailStart(messages, keepRecent);
   const head = messages.slice(0, keepStart);
-  const middle = messages.slice(keepStart, -keepRecent);
-  const tail = messages.slice(-keepRecent);
+  const middle = messages.slice(keepStart, cut);
+  const tail = messages.slice(cut);
   if (middle.length === 0) {
     return { messages, compressed: false };
   }
-  const middleText = summarizeMessages(middle);
+  const middleText = boundedSummaryInput(middle, opts.contextWindow);
   let summaryText;
   try {
     const result = await generateText3({
       model: opts.model,
       instructions: "You are a conversation summarizer. Condense the following conversation history into a brief summary. Preserve: files modified, key decisions, errors encountered, and the current task state. Be concise but thorough. Output only the summary, no preamble.",
       messages: [{ role: "user", content: middleText }],
-      maxOutputTokens: Math.min(1024, Math.floor(MAX_SUMMARY_TOKENS / 4))
+      maxOutputTokens: Math.min(1024, contextBudget(opts.contextWindow).output),
+      abortSignal: opts.signal,
+      maxRetries: 0
     });
-    summaryText = result.text;
-    compressionFailures = 0;
+    summaryText = result.text.trim();
+    if (!summaryText) throw new Error("Empty compaction summary");
+    compressionFailures.delete(opts.model);
   } catch {
-    compressionFailures++;
+    opts.signal?.throwIfAborted();
+    compressionFailures.set(opts.model, (compressionFailures.get(opts.model) ?? 0) + 1);
     return deterministicCompress(messages, keepRecent);
   }
   return buildCompressedHistory(head, summaryText, tail);
 }
-async function fullCompact(messages, model) {
+async function fullCompact(messages, model, contextWindow = 131072, signal) {
   if (messages.length < 4) {
     return { messages, compressed: false };
   }
-  const allButLast2 = messages.slice(0, -2);
-  const last2 = messages.slice(-2);
-  const middleText = summarizeMessages(allButLast2);
+  const cut = safeTailStart(messages, 2);
+  if (!cut) return { messages, compressed: false };
+  const head = messages.slice(0, 1);
+  const allButLast2 = messages.slice(1, cut);
+  const last2 = messages.slice(cut);
+  const middleText = boundedSummaryInput(allButLast2, contextWindow);
   let summaryText;
   try {
     const result = await generateText3({
       model,
       instructions: "Compress this entire conversation into a dense summary. Include: the original task, all files created/modified, key decisions, current state, and any unresolved issues. Max 500 words.",
       messages: [{ role: "user", content: middleText }],
-      maxOutputTokens: 2048
+      maxOutputTokens: Math.min(2048, contextBudget(contextWindow).output),
+      abortSignal: signal,
+      maxRetries: 0
     });
     summaryText = result.text;
   } catch {
+    signal?.throwIfAborted();
     summaryText = buildDeterministicSummary(allButLast2);
   }
-  return buildCompressedHistory([], summaryText, last2);
+  return buildCompressedHistory(head, summaryText, last2);
 }
 function deterministicCompress(messages, keepRecent) {
+  const cut = safeTailStart(messages, keepRecent);
   const head = messages.slice(0, 1);
-  const middle = messages.slice(1, -keepRecent);
-  const tail = messages.slice(-keepRecent);
+  const middle = messages.slice(1, cut);
+  const tail = messages.slice(cut);
   if (middle.length === 0) return { messages, compressed: false };
   const summaryText = buildDeterministicSummary(middle);
   return buildCompressedHistory(head, summaryText, tail);
@@ -5573,10 +6110,12 @@ function buildDeterministicSummary(messages) {
   let errorCount = 0;
   for (const msg of messages) {
     if (msg.role === "user" && typeof msg.content === "string") {
-      userRequests.push(msg.content.slice(0, 100));
+      userRequests.push(msg.content.slice(0, 1e3));
     }
+    if (msg.role === "assistant" && typeof msg.content === "string") userRequests.push(`Assistant state: ${msg.content.slice(0, 1e3)}`);
     if (Array.isArray(msg.content)) {
       for (const part of msg.content) {
+        if ("text" in part) userRequests.push(`${msg.role}: ${part.text.slice(0, 1e3)}`);
         if ("toolName" in part) {
           const p = part;
           toolsUsed.add(String(p.toolName));
@@ -5617,21 +6156,32 @@ function summarizeMessages(messages) {
   }
   return lines.join("\n");
 }
+function safeTailStart(messages, keepRecent) {
+  let cut = Math.max(0, messages.length - keepRecent);
+  while (cut > 0 && messages[cut]?.role !== "user") cut--;
+  let lastUser = messages.length - 1;
+  while (lastUser >= 0 && messages[lastUser].role !== "user") lastUser--;
+  return lastUser < 0 ? 0 : Math.min(cut, lastUser);
+}
+function boundedSummaryInput(messages, window) {
+  const text = summarizeMessages(messages), limit = Math.max(256, contextBudget(window).history - 512);
+  const tokens = estimateTextTokens(text);
+  if (tokens <= limit) return text;
+  const half = Math.floor(text.length * limit / tokens * 0.45);
+  return text.slice(0, half) + "\n[Older transcript abbreviated]\n" + text.slice(-half);
+}
 function buildCompressedHistory(head, summaryText, tail) {
   const compressed = [...head];
   const summaryContent = `[Previous conversation context]
 ${summaryText}
 [End of context]`;
   if (tail.length > 0 && tail[0].role === "user") {
-    const firstContent = typeof tail[0].content === "string" ? tail[0].content : "";
-    compressed.push({
-      role: "user",
-      content: `${summaryContent}
+    const firstContent = tail[0].content;
+    compressed.push({ role: "user", content: typeof firstContent === "string" ? `${summaryContent}
 
 ---
 
-${firstContent}`
-    });
+${firstContent}` : [{ type: "text", text: summaryContent }, ...firstContent] });
     compressed.push(...tail.slice(1));
   } else {
     compressed.push({ role: "user", content: summaryContent });
@@ -5643,45 +6193,41 @@ ${firstContent}`
   }
   return { messages: compressed, compressed: true };
 }
-async function autoCompress(messages, model, contextWindow, onCompress) {
-  const threshold = (contextWindow - RESERVE_BUFFER_TOKENS) * 0.75;
-  let result = budgetReduce(messages).messages;
-  result = snip(result).messages;
-  result = microCompact(result);
-  let tokens = estimateTokens(result);
-  if (tokens < threshold) return result;
-  const collapsed = contextCollapse(result);
-  if (collapsed.collapsed) {
-    onCompress?.();
-    result = collapsed.messages;
-    tokens = estimateTokens(result);
-  }
-  if (tokens < threshold) return result;
-  const auto = await autoCompactSummarize(result, { model, contextWindow });
-  if (auto.compressed) {
-    onCompress?.();
+async function autoCompress(messages, model, contextWindow, onCompress, signal, historyBudget) {
+  const result = await autoCompressWithStats(messages, model, contextWindow, signal, historyBudget);
+  if (result.messages !== messages) onCompress?.();
+  return result.messages;
+}
+async function autoCompressWithStats(messages, model, contextWindow, signal, historyBudget = contextBudget(contextWindow).history) {
+  const stats = { budgetStashed: 0, snipped: 0, collapsed: false, autoCompacted: false, fullCompacted: false };
+  const threshold = Math.floor(historyBudget * 0.8);
+  if (estimateTokens(messages) < threshold) return { messages, stats };
+  const br = budgetReduce(messages);
+  let result = microCompact(br.messages);
+  stats.budgetStashed = br.stashed;
+  if (estimateTokens(result) >= threshold) {
+    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget });
     result = auto.messages;
-    tokens = estimateTokens(result);
+    stats.autoCompacted = auto.compressed;
   }
-  if (tokens < threshold) return result;
-  const full = await fullCompact(result, model);
-  if (full.compressed) {
-    onCompress?.();
+  if (estimateTokens(result) > historyBudget) {
+    const full = await fullCompact(result, model, contextWindow, signal);
     result = full.messages;
+    stats.fullCompacted = full.compressed;
   }
-  return result;
+  return { messages: result, stats };
 }
 
 // vendor/notch-cli/src/context/project-instructions.ts
-import fs13 from "fs/promises";
-import path16 from "path";
-import os3 from "os";
+import fs14 from "fs/promises";
+import path17 from "path";
+import os4 from "os";
 var INSTRUCTION_FILES = [".notch.md", "NOTCH.md", ".notch/instructions.md"];
 async function loadProjectInstructions(projectRoot) {
   const sources = [];
-  const homeDir = os3.homedir();
+  const homeDir = os4.homedir();
   for (const file of INSTRUCTION_FILES) {
-    const globalPath = path16.join(homeDir, file);
+    const globalPath = path17.join(homeDir, file);
     const content = await safeRead(globalPath);
     if (content) {
       sources.push({ path: globalPath, content, scope: "global" });
@@ -5689,7 +6235,7 @@ async function loadProjectInstructions(projectRoot) {
     }
   }
   for (const file of INSTRUCTION_FILES) {
-    const projectPath = path16.join(projectRoot, file);
+    const projectPath = path17.join(projectRoot, file);
     const content = await safeRead(projectPath);
     if (content) {
       sources.push({ path: projectPath, content, scope: "project" });
@@ -5711,7 +6257,7 @@ ${sections.join("\n\n")}`;
 }
 async function safeRead(filePath) {
   try {
-    const content = await fs13.readFile(filePath, "utf-8");
+    const content = await fs14.readFile(filePath, "utf-8");
     return content.trim() || null;
   } catch {
     return null;
@@ -5719,28 +6265,28 @@ async function safeRead(filePath) {
 }
 
 // vendor/notch-cli/src/memory/store.ts
-import fs14 from "fs/promises";
-import path17 from "path";
-import os4 from "os";
+import fs15 from "fs/promises";
+import path18 from "path";
+import os5 from "os";
 import { generateText as generateText4 } from "ai";
-var MEMORY_DIR = path17.join(os4.homedir(), ".notch", "memory");
-var INDEX_FILE = path17.join(MEMORY_DIR, "MEMORY.md");
-var SUMMARY_FILE = path17.join(MEMORY_DIR, "SUMMARY.md");
-var SUMMARY_FILENAME = path17.basename(SUMMARY_FILE);
+var MEMORY_DIR = path18.join(os5.homedir(), ".notch", "memory");
+var INDEX_FILE = path18.join(MEMORY_DIR, "MEMORY.md");
+var SUMMARY_FILE = path18.join(MEMORY_DIR, "SUMMARY.md");
+var SUMMARY_FILENAME = path18.basename(SUMMARY_FILE);
 var DEFAULT_PROMPT_CHAR_BUDGET = Number(process.env.NOTCH_MEMORY_PROMPT_CHARS ?? 6e3);
 var MAX_SINGLE_MEMORY_CHARS = Number(process.env.NOTCH_MEMORY_ITEM_CHARS ?? 4e3);
 var MAX_COMPACTION_INPUT_CHARS = Number(process.env.NOTCH_MEMORY_COMPACT_INPUT_CHARS ?? 3e4);
 async function ensureDir() {
-  await fs14.mkdir(MEMORY_DIR, { recursive: true });
+  await fs15.mkdir(MEMORY_DIR, { recursive: true });
 }
 async function loadMemories() {
   await ensureDir();
-  const files = await fs14.readdir(MEMORY_DIR);
+  const files = await fs15.readdir(MEMORY_DIR);
   const memories = [];
   for (const file of files) {
     if (!file.endsWith(".md") || file === "MEMORY.md" || file === SUMMARY_FILENAME) continue;
     try {
-      const content = await fs14.readFile(path17.join(MEMORY_DIR, file), "utf-8");
+      const content = await fs15.readFile(path18.join(MEMORY_DIR, file), "utf-8");
       const memory = parseMemoryFile(content, file);
       if (memory) memories.push(memory);
     } catch {
@@ -5811,7 +6357,7 @@ function extractField(frontmatter, field) {
 }
 async function loadMemorySummary() {
   try {
-    const raw = await fs14.readFile(SUMMARY_FILE, "utf-8");
+    const raw = await fs15.readFile(SUMMARY_FILE, "utf-8");
     return raw.replace(/^# Notch Memory Summary\s*/i, "").replace(/^_Updated:.*?_\s*/im, "").trim();
   } catch {
     return "";
@@ -6327,14 +6873,23 @@ async function runAgentLoop(messages, config) {
     "ARG_<argument_name>: <argument value>",
     `Available tool names: ${toolNames.join(", ")}`
   ].join("\n") : "";
-  await config.toolContext.runHook?.("pre-compact", { messageCount: history.length });
-  history = await autoCompress(history, config.model, contextWindow, () => {
-    wasCompressed = true;
-    config.onCompress?.();
-  });
-  if (wasCompressed) {
+  const schemaText = JSON.stringify(await Promise.all(Object.entries(tools).map(async ([name, value]) => ({ name, description: value.description, schema: await asSchema(value.inputSchema).jsonSchema }))));
+  const overhead = estimateTextTokens(`${config.systemPrompt}${templateFormatHint}${schemaText}`) + 256;
+  const budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+  let tokenRatio = 1;
+  const compact = async () => {
+    const estimated = estimateTokens(history);
+    if (estimated * tokenRatio < budget.compactAt) return;
+    await config.onCompact?.(history);
+    await config.toolContext.runHook?.("pre-compact", { messageCount: history.length });
+    history = await autoCompress(history, config.model, contextWindow, () => {
+      wasCompressed = true;
+      config.onCompress?.();
+    }, config.toolContext.abortSignal, Math.floor(budget.history / tokenRatio));
+    if (estimateTokens(history) * tokenRatio > budget.history) throw new Error("The current request or tool results exceed the selected context. Increase context or split the request; the transcript has been saved.");
     await config.toolContext.runHook?.("post-compact", { messageCount: history.length });
-  }
+  };
+  await compact();
   if (correctionCfg.intentGate && toolNames.length > 0) {
     const lastUserMsg = [...history].reverse().find((m) => m.role === "user");
     const userText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
@@ -6350,6 +6905,7 @@ async function runAgentLoop(messages, config) {
       history = mc.messages;
       config.onMicrocompact?.(mc.cleared, mc.savedChars);
     }
+    await compact();
     let fullText = "";
     const toolCalls = [];
     const toolResults = [];
@@ -6360,7 +6916,8 @@ async function runAgentLoop(messages, config) {
       tools,
       stopWhen: isStepCount2(1),
       repairToolCall: feedback.repair,
-      maxRetries: 0
+      maxRetries: 0,
+      maxOutputTokens: budget.output
     });
     const result = await agent.stream({ messages: history, abortSignal: config.toolContext.abortSignal });
     for await (const event of result.stream) {
@@ -6405,6 +6962,10 @@ async function runAgentLoop(messages, config) {
     if (streamUsage) {
       totalPromptTokens += streamUsage.promptTokens ?? 0;
       totalCompletionTokens += streamUsage.completionTokens ?? 0;
+      if (Number.isSafeInteger(streamUsage.promptTokens) && Number.isSafeInteger(streamUsage.completionTokens) && streamUsage.promptTokens >= 0 && streamUsage.completionTokens >= 0) {
+        tokenRatio = Math.max(1, Math.min(4, (streamUsage.promptTokens - overhead) / Math.max(1, estimateTokens(history))));
+        config.onUsage?.({ inputTokens: streamUsage.promptTokens, outputTokens: streamUsage.completionTokens, contextWindow });
+      }
       void recordShadowUsage(
         config.model,
         streamUsage
@@ -6520,17 +7081,6 @@ async function runAgentLoop(messages, config) {
         });
         recentErrors.length = 0;
       }
-      if (iterations % 5 === 0) {
-        const prevLen = history.length;
-        await config.toolContext.runHook?.("pre-compact", { messageCount: prevLen });
-        history = await autoCompress(history, config.model, contextWindow, () => {
-          wasCompressed = true;
-          config.onCompress?.();
-        });
-        if (history.length < prevLen) {
-          await config.toolContext.runHook?.("post-compact", { messageCount: history.length });
-        }
-      }
       continue;
     }
     if (nativeAssistantMessages.length) history.push(...nativeAssistantMessages);
@@ -6643,7 +7193,7 @@ async function buildSystemPrompt(projectRoot, _modelId, toolContext) {
         if (process.platform === "win32") lines.push("- The shell tool currently uses cmd.exe. Use portable Node commands or invoke PowerShell explicitly; Unix commands such as cat are not available by default.");
         lines.push(`- Current date (UTC): ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         try {
-          const entries = await fs15.readdir(projectRoot);
+          const entries = await fs16.readdir(projectRoot);
           const preview = entries.filter((e) => !e.startsWith(".")).slice(0, 30).join(", ");
           if (preview) lines.push(`- Top-level entries: ${preview}`);
         } catch {
@@ -6698,8 +7248,8 @@ ${memoryStr}`, {
 }
 
 // vendor/notch-cli/src/agent/checkpoints.ts
-import fs16 from "fs/promises";
-import path18 from "path";
+import fs17 from "fs/promises";
+import path19 from "path";
 var CheckpointManager = class {
   checkpoints = [];
   nextId = 1;
@@ -6707,13 +7257,13 @@ var CheckpointManager = class {
   pendingReads = /* @__PURE__ */ new Map();
   /** Call before a file is modified — records its current content */
   async recordBefore(filePath) {
-    filePath = path18.resolve(filePath);
+    filePath = path19.resolve(filePath);
     if (this.pendingFiles.has(filePath)) return;
     const existing = this.pendingReads.get(filePath);
     if (existing) return existing;
     const read = (async () => {
       try {
-        const bytes = await fs16.readFile(filePath);
+        const bytes = await fs17.readFile(filePath);
         const content = bytes.toString("utf8");
         if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${filePath}`);
         this.pendingFiles.set(filePath, content);
@@ -6736,7 +7286,7 @@ var CheckpointManager = class {
     for (const [filePath, before] of this.pendingFiles) {
       let after = null;
       try {
-        after = await fs16.readFile(filePath, "utf-8");
+        after = await fs17.readFile(filePath, "utf-8");
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
@@ -6759,7 +7309,7 @@ var CheckpointManager = class {
     for (const snap of checkpoint.files) {
       let current = null;
       try {
-        current = await fs16.readFile(snap.path, "utf8");
+        current = await fs17.readFile(snap.path, "utf8");
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
@@ -6768,13 +7318,13 @@ var CheckpointManager = class {
     for (const snap of checkpoint.files) {
       if (snap.before === null) {
         try {
-          await fs16.unlink(snap.path);
+          await fs17.unlink(snap.path);
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
         }
       } else {
-        await fs16.mkdir(path18.dirname(snap.path), { recursive: true });
-        await fs16.writeFile(snap.path, snap.before, "utf-8");
+        await fs17.mkdir(path19.dirname(snap.path), { recursive: true });
+        await fs17.writeFile(snap.path, snap.before, "utf-8");
       }
     }
     this.checkpoints.pop();
@@ -6807,8 +7357,8 @@ var CheckpointManager = class {
         }
       }
     }
-    return Array.from(fileMap.entries()).map(([path20, { before, after }]) => ({
-      path: path20,
+    return Array.from(fileMap.entries()).map(([path21, { before, after }]) => ({
+      path: path21,
       before,
       after
     }));
@@ -6829,25 +7379,32 @@ function definitionRules(values = [], level) {
   });
 }
 async function runDesktopTurn(turn) {
-  const cwd = await fs17.realpath(turn.cwd);
-  if (!(await fs17.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
+  const cwd = await fs18.realpath(turn.cwd);
+  if (!(await fs18.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
   if (!["approve", "read-only", "full-access"].includes(turn.accessMode)) throw new Error("Invalid desktop access mode.");
   turn.signal.throwIfAborted();
   const config = await loadConfig({ projectRoot: cwd });
   const selection = {
     ...turn.model && turn.model !== "auto" ? selectModel(config.models.chat, { model: turn.model }) : config.models.chat,
     ...turn.baseUrl ? { baseUrl: turn.baseUrl } : {},
+    ...turn.apiKey ? { apiKey: turn.apiKey } : {},
     ...turn.contextWindow ? { contextWindow: turn.contextWindow } : {},
     ...turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}
   };
-  if (selection.byokProvider === "ollama" && selection.baseUrl?.replace(/\/v1\/?$/, "") === "http://127.0.0.1:11436") {
+  if (selection.model.startsWith("openrouter/")) {
+    selection.baseUrl = "https://openrouter.ai/api/v1";
+    delete selection.headers;
+    delete selection.byokHeaders;
+    delete selection.byokApiShape;
+  }
+  const provider = selection.byokProvider || (isByokRef(selection.model) ? parseByokRef(selection.model).provider : void 0);
+  if (provider === "ollama" && selection.baseUrl?.replace(/\/v1\/?$/, "") === "http://127.0.0.1:11436") {
     const { managedOllama } = await import("./ollama-runtime-H64CY4CC.js");
     await managedOllama("0.30.0", turn.signal);
   }
-  if (selection.byokProvider === "mlx") {
-    const { startMlx } = await import("./local-runner-LCE77NC4.js");
-    const { parseByokRef: parseByokRef2 } = await import("./byok-WIIW54VP.js");
-    selection.baseUrl = await startMlx(parseByokRef2(selection.model).model, turn.signal);
+  if (provider === "mlx") {
+    const { startMlx } = await import("./local-runner-XMASBH2Q.js");
+    selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   const permissions = await loadPermissions(cwd);
   const allowed = definitionRules(turn.allowedTools, "allow"), denied = definitionRules(turn.disallowedTools, "deny");
@@ -6872,10 +7429,10 @@ async function runDesktopTurn(turn) {
       await turn.onLifecycle?.(event, payload);
       if (event !== "pre-tool") return;
       const args = payload.args;
-      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore(path19.resolve(cwd, args.path));
+      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore(path20.resolve(cwd, args.path));
       if (payload.tool === "apply_patch" && typeof args.input === "string") for (const action of parsePatch(args.input)) {
-        await turn.checkpoints.recordBefore(path19.resolve(cwd, action.target));
-        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path19.resolve(cwd, action.moveTo));
+        await turn.checkpoints.recordBefore(path20.resolve(cwd, action.target));
+        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path20.resolve(cwd, action.moveTo));
       }
     }
   };
@@ -6892,7 +7449,10 @@ ${turn.instructions}` : ""),
       contextWindow: selection.contextWindow,
       onTextChunk: turn.onText,
       onToolCall: turn.onToolCall,
-      onToolResult: turn.onToolResult
+      onToolResult: turn.onToolResult,
+      onUsage: turn.onUsage,
+      maxOutputTokens: turn.maxOutputTokens,
+      onCompact: turn.onCompact
     });
   } finally {
     await turn.checkpoints.commit("Desktop turn");
@@ -6900,9 +7460,17 @@ ${turn.instructions}` : ""),
 }
 export {
   CheckpointManager,
+  LOCAL_MODEL_CATALOG,
+  autoCompress,
+  contextBudget,
   definitionRules,
   desktopToolName,
   detectLocalHardware,
+  estimateTextTokens,
+  estimateTokens,
+  fullCompact,
+  inspectHubModel,
   modelFit,
-  runDesktopTurn
+  runDesktopTurn,
+  safeTailStart
 };

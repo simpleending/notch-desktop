@@ -1,0 +1,42 @@
+import { isPrimaryModelSender } from './model-policy.mjs';
+import { detectLocalHardware } from '../vendor/notch-core/desktop-harness.js';
+
+export function registerModelIpc(ipcMain, host) {
+  const manager = host.modelManager;
+  const state = async (refresh = false, refreshModels = refresh) => {
+    const status = await manager.status();
+    if (refresh && status.openrouter) await manager.cloudCatalog(true);
+    const models = (await host.listModels(refreshModels)).filter(row=>row.key!=='auto');
+    return { ...status, models, defaultModel: host.getDefaultModel(), hardware: await detectLocalHardware() };
+  };
+  const handlers = {
+    state: refresh => state(refresh === true),
+    connect: async (provider,key) => { await manager.connect(provider,key); return state(false,true); },
+    disconnect: async provider => { await manager.disconnect(provider); return state(false,true); },
+    context: async (model,tokens) => { await manager.setContext(model,tokens,await host.listModels()); return state(false,true); },
+    hub: runner => manager.hubCatalog(runner),
+    install: (repo,runner) => manager.startInstall(repo,runner),
+    cancel: () => manager.cancelInstall(),
+    status: () => manager.status(),
+  };
+  for (const [method,handle] of Object.entries(handlers)) ipcMain.handle(`notch-models:${method}`, (event,...args) => {
+    if (!isPrimaryModelSender(event)) throw new Error('Model settings are available only in the primary notch window.');
+    if (args.length > 2 || args.some(arg=>typeof arg==='string' && arg.length>4096)) throw new Error('Invalid model settings request.');
+    return handle(...args);
+  });
+}
+
+export const modelPreload = `\n/* notch model settings bridge */
+if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location.search).has('surface')){
+ const {contextBridge,ipcRenderer}=require('electron');
+ contextBridge.exposeInMainWorld('notchModels',Object.freeze({
+  state:refresh=>ipcRenderer.invoke('notch-models:state',refresh),
+  connect:(provider,key)=>ipcRenderer.invoke('notch-models:connect',provider,key),
+  disconnect:provider=>ipcRenderer.invoke('notch-models:disconnect',provider),
+  context:(model,tokens)=>ipcRenderer.invoke('notch-models:context',model,tokens),
+  hub:runner=>ipcRenderer.invoke('notch-models:hub',runner),
+  install:(repo,runner)=>ipcRenderer.invoke('notch-models:install',repo,runner),
+  cancel:()=>ipcRenderer.invoke('notch-models:cancel'),
+  status:()=>ipcRenderer.invoke('notch-models:status')
+ }));
+}\n`;

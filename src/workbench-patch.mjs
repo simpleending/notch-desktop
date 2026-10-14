@@ -15,6 +15,7 @@ export function patchWorkbenchRenderer(source) {
   source = patchFunction(source, 'WorkbenchModeThemeSync', 'function WorkbenchModeThemeSync(){return null;}');
   source = patchFunction(source, 'WorkbenchSidebarModeSwitch', 'function WorkbenchSidebarModeSwitch(props){return reactExports.createElement(NotchModeSwitch,props);}');
   source = patchFunction(source, 'WorkspaceTabsEmptyState', 'function WorkspaceTabsEmptyState(props){return reactExports.createElement(NotchPanelLauncher,props);}');
+  source = patchFunction(source, 'ChatComposerModelMenu', 'function ChatComposerModelMenu(props){return reactExports.createElement(NotchModelMenu,props);}');
   source = patchFunction(source, 'isChatComposerVoiceHoldPlaceholderPhaseAvailable', 'function isChatComposerVoiceHoldPlaceholderPhaseAvailable(){return false;}');
   source = patchFunction(source, 'normalizeThemeMode', 'function normalizeThemeMode(value){return value==="auto"?"auto":value==="dark"||value?.endsWith("-dark")?"dark":"light";}');
   source = patchFunction(source, 'readInitialThemeMode', 'function readInitialThemeMode(){return normalizeThemeMode(window.localStorage.getItem(THEME_STORAGE_KEY)||window.localStorage.getItem("notch.setup.theme")||"dark");}');
@@ -61,12 +62,15 @@ export function patchWorkbenchRenderer(source) {
   source = patchFunction(source, providerLogo, `function ${providerLogo}(props){return reactExports.createElement(NotchSymbol,props);}`);
   source = replaceOnce(source, 'dangerouslySetInnerHTML:{__html:workspaceFilesEmptyIllustrationRaw}', 'children:jsxRuntimeExports.jsx(NotchSymbol,{size:56})');
   source = replaceOnce(source, 'const NotchSetup=createNotchSetup(reactExports);', 'const {Brand:NotchWindowBrand,ThemeControls:NotchThemeControls,ModeSwitch:NotchModeSwitch,Welcome:NotchWelcome,QuickStart:NotchQuickStart,PanelLauncher:NotchPanelLauncher,Appearance:NotchAppearance,LocalProfile:NotchLocalProfile,Symbol:NotchSymbol}=createNotchWorkbench(reactExports,useTheme);const NotchSetup=createNotchSetup(reactExports);');
-  return '/* notch workbench skin */\nimport {createNotchWorkbench} from "./workbench-skin.mjs";\n' + source;
+  // Initialize after the bundle's house components, before React renders.
+  source = source.replace('const NotchSetup=createNotchSetup(reactExports);','const NotchModelMenu=createModelMenu(reactExports,{Popover,PopoverTrigger,PopoverContent},useTheme);const NotchSetup=createNotchSetup(reactExports);');
+  return '/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench} from "./workbench-skin.mjs";\n' + source;
 }
 
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root, 'assets/fonts'), path.join(assets, 'fonts'), { recursive: true });
   await cp(path.join(root, 'assets/notices'), path.join(assets, 'notices'), { recursive: true });
   await cp(path.join(root, 'assets/notch-symbol.png'), path.join(assets, 'notch-symbol.png'));

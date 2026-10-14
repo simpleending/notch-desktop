@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import type { ModelMessage } from 'ai';
 import { loadConfig, selectModel } from './config.js';
 import { resolveModel } from './providers/registry.js';
+import { isByokRef, parseByokRef } from './providers/byok.js';
 import { runAgentLoop, buildSystemPrompt, type AgentConfig } from './agent/loop.js';
 import { CheckpointManager } from './agent/checkpoints.js';
 import { parsePatch } from './tools/apply-patch.js';
@@ -11,13 +12,17 @@ import { checkAccess, type AccessMode } from './permissions/access.js';
 import type { ToolContext } from './tools/types.js';
 
 export { CheckpointManager };
-export { detectLocalHardware, modelFit } from './providers/local-models.js';
+export { detectLocalHardware, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
+export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
+export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };
 export interface DesktopTurn {
   cwd: string;
   sessionId: string;
   messages: ModelMessage[];
   model?: string;
+  apiKey?: string;
+  maxOutputTokens?: number;
   baseUrl?: string;
   contextWindow?: number;
   ollamaBatch?: number;
@@ -33,6 +38,8 @@ export interface DesktopTurn {
   onText?: AgentConfig['onTextChunk'];
   onToolCall?: AgentConfig['onToolCall'];
   onToolResult?: AgentConfig['onToolResult'];
+  onUsage?: AgentConfig['onUsage'];
+  onCompact?: AgentConfig['onCompact'];
   onLog?: (message: string) => void;
   onLifecycle?: (event: string, payload: Record<string, unknown>) => Promise<void>;
 }
@@ -57,16 +64,21 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   const config = await loadConfig({ projectRoot: cwd });
   const selection = { ...(turn.model && turn.model !== 'auto' ? selectModel(config.models.chat, { model: turn.model }) : config.models.chat),
     ...(turn.baseUrl ? { baseUrl: turn.baseUrl } : {}),
+    ...(turn.apiKey ? { apiKey: turn.apiKey } : {}),
     ...(turn.contextWindow ? { contextWindow: turn.contextWindow } : {}),
     ...(turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}),
   };
-  if (selection.byokProvider === 'ollama' && selection.baseUrl?.replace(/\/v1\/?$/, '') === 'http://127.0.0.1:11436') {
+  if (selection.model.startsWith('openrouter/')) {
+    selection.baseUrl = 'https://openrouter.ai/api/v1';
+    delete selection.headers; delete selection.byokHeaders; delete selection.byokApiShape;
+  }
+  const provider = selection.byokProvider || (isByokRef(selection.model) ? parseByokRef(selection.model).provider : undefined);
+  if (provider === 'ollama' && selection.baseUrl?.replace(/\/v1\/?$/, '') === 'http://127.0.0.1:11436') {
     const { managedOllama } = await import('./providers/ollama-runtime.js');
     await managedOllama('0.30.0', turn.signal);
   }
-  if (selection.byokProvider === 'mlx') {
+  if (provider === 'mlx') {
     const { startMlx } = await import('./providers/local-runner.js');
-    const { parseByokRef } = await import('./providers/byok.js');
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   const permissions = await loadPermissions(cwd);
@@ -99,6 +111,8 @@ export async function runDesktopTurn(turn: DesktopTurn) {
       systemPrompt: (await buildSystemPrompt(cwd, selection.model, ctx)) + (turn.instructions ? `\n\nDesktop agent instructions:\n${turn.instructions}` : ''), toolContext: ctx,
       maxIterations: turn.maxIterations, contextWindow: selection.contextWindow,
       onTextChunk: turn.onText, onToolCall: turn.onToolCall, onToolResult: turn.onToolResult,
+      onUsage: turn.onUsage,
+      maxOutputTokens: turn.maxOutputTokens, onCompact: turn.onCompact,
     });
   } finally { await turn.checkpoints.commit('Desktop turn'); }
 }

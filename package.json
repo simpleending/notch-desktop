@@ -6,24 +6,27 @@
   "description": "Notch desktop development: local models first, optional provider API keys",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.harness.json",
     "inspect:upstream": "node scripts/inspect-upstream.mjs",
     "models": "node scripts/local-models.mjs",
     "build:core": "node scripts/build-core.mjs",
     "build:prototype": "node scripts/build-prototype.mjs",
     "verify:setup": "node scripts/verify-setup.mjs",
-    "verify:skin": "node scripts/verify-workbench-skin.mjs"
+    "verify:skin": "node scripts/verify-workbench-skin.mjs",
+    "verify:agent": "node scripts/verify-agent.mjs",
+    "verify:compaction": "node scripts/verify-compaction.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.79",
     "@ai-sdk/openai": "^4.0.92",
     "@earendil-works/pi-ai": "^1.2.0",
     "@ff-labs/fff-node": "0.11.0",
-    "@freesyntax/notch-cli": "0.7.0",
+    "@freesyntax/notch-cli": "0.7.2",
     "ai": "^7.0.138",
     "ajv": "^8.20.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
-    "glob": "^11.0.0",
+    "glob": "13.0.6",
     "ignore": "^6.0.2",
     "minimatch": "^10.2.6",
     "ora": "^8.1.1",
@@ -39,6 +42,9 @@
     "playwright-core": "1.64.0",
     "tsup": "8.5.1",
     "typescript": "5.9.3"
+  },
+  "overrides": {
+    "esbuild": "0.28.2"
   },
   "engines": {
     "node": ">=22.19.0"

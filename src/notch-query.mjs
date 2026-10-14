@@ -54,10 +54,26 @@ export class NotchQuery {
   async supportedAgents() { return []; }
   async mcpServerStatus() { return []; }
   async accountInfo() { return { name: 'Local Notch', provider: 'notch' }; }
+  async getContextUsage() { await this.ready; const usage = this.state.contextUsage; return usage && usage.model === this.model ? structuredClone(usage) : null; }
+  acceptUsage({ inputTokens, outputTokens, contextWindow }) {
+    if (![inputTokens, outputTokens, contextWindow].every(Number.isSafeInteger) || inputTokens < 0 || outputTokens < 0 || contextWindow <= 0) return;
+    const totalTokens = inputTokens + outputTokens;
+    if (!Number.isSafeInteger(totalTokens)) return;
+    this.state.contextUsage = { model: this.model, totalTokens, maxTokens: contextWindow, percentage: Math.min(1, totalTokens / contextWindow),
+      categories: [{ name: 'Latest model request', tokens: totalTokens, color: '#dab5d1' }], gridRows: [], memoryFiles: [], mcpTools: [], agents: [],
+      isAutoCompactEnabled: true, apiUsage: null };
+  }
+  emitState(state) { this.emit(this.envelope('system', { subtype: 'session_state_changed', state })); }
   async setModel(model) {
     if (typeof model !== 'string' || !model.trim() || model.length > 512) throw new Error('Invalid model choice.');
     if (this.active) throw new Error('Finish or interrupt the current turn before changing models.');
-    this.model = model;
+    await this.ready;
+    const models = await this.host.listModels();
+    if (this.active) throw new Error('Finish or interrupt the current turn before changing models.');
+    if (!models.some(row => row.key === model && row.enabled)) throw new Error('Choose an available model from the composer.');
+    this.model = this.host.resolveModelChoice ? this.host.resolveModelChoice(model) : model;
+    this.state.contextUsage = null;
+    await this.host.saveSession(this.id, this.state);
   }
   async setPermissionMode(mode) { accessForMode(mode); if (this.active) await this.interrupt(); this.permissionMode = mode; }
   async setPlanMode(active) { if (typeof active !== 'boolean') throw new Error('Invalid plan mode.'); if (this.active) await this.interrupt(); this.planMode = active; return { active }; }
@@ -76,7 +92,9 @@ export class NotchQuery {
     return { canRewind: this.checkpoints.undoCount > 0 || filesChanged.length > 0, filesChanged, insertions: 0, deletions: 0 };
   }
   emitResult(error, result) {
+    if (this.compacting) { this.compacting=false; this.emit(this.envelope('system',{subtype:'status',status:null})); }
     const interrupted = this.active?.controller.signal.aborted;
+    this.emitState('idle');
     this.emit(this.envelope('result', {
       subtype: error || result?.status === 'max-iterations' ? 'error_during_execution' : 'success',
       is_error: !!error || result?.status === 'max-iterations',
@@ -90,6 +108,7 @@ export class NotchQuery {
   async consume(prompt) {
     await this.ready;
     this.emit(this.envelope('system', { subtype: 'init', cwd: this.request.cwd, model: this.model || 'auto', permissionMode: this.permissionMode, tools: Object.values(toolNames), mcp_servers: [], apiKeySource: 'local' }));
+    this.emitState('idle');
     if (typeof prompt === 'string') { await this.turn(prompt); return; }
     if (!prompt?.[Symbol.asyncIterator]) throw new Error('A prompt or prompt stream is required.');
     for await (const input of prompt) {
@@ -107,6 +126,7 @@ export class NotchQuery {
     if (outerSignal?.aborted) forwardAbort(); else outerSignal?.addEventListener('abort', forwardAbort, { once: true });
     let finish; const finished = new Promise(resolve => { finish = resolve; });
     this.active = { controller, finished, started: Date.now() };
+    this.emitState('running');
     const observations = []; let text = '', textId;
     const finishText = () => {
       if (!textId) return;
@@ -128,7 +148,10 @@ export class NotchQuery {
           controller.signal.throwIfAborted();
           if (!this.request.canUseTool) return false;
           const input = wireInput(name, args);
-          const decision = await approvalWithAbort(this.request.canUseTool(toolNames[name] || name, input, { signal: controller.signal, toolUseID: callId || randomUUID() }), controller.signal);
+          this.emitState('requires_action');
+          let decision;
+          try { decision = await approvalWithAbort(this.request.canUseTool(toolNames[name] || name, input, { signal: controller.signal, toolUseID: callId || randomUUID() }), controller.signal); }
+          finally { if (!controller.signal.aborted) this.emitState('running'); }
           controller.signal.throwIfAborted();
           if (decision?.behavior !== 'allow') return false;
           if (decision.updatedInput && !isDeepStrictEqual(input, decision.updatedInput)) throw new Error('Edited approval input is not supported yet. Submit the changed action as a new request.');
@@ -141,7 +164,14 @@ export class NotchQuery {
         },
         onToolCall: (name, args, id) => { finishText(); this.emit(this.envelope('assistant', { message: { role: 'assistant', content: [{ type: 'tool_use', id, name: toolNames[name] || name, input: wireInput(name, args) }] }, parent_tool_use_id: null })); },
         onToolResult: (_name, output, isError, id) => { this.emit(this.envelope('user', { message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output, is_error: isError }] }, parent_tool_use_id: null })); },
-        onLifecycle: async (event, payload) => { if (!['pre-tool', 'post-tool'].includes(event)) return; observations.push({ event, ...payload }); await this.host.journal(this.id, { event, ...payload }); },
+        onUsage: usage => this.acceptUsage(usage),
+        onCompact: messages => this.host.archiveTranscript?.(this.id, messages) ?? Promise.resolve(),
+        onLifecycle: async (event, payload) => {
+          if (event==='pre-compact') { this.compacting=true; this.emit(this.envelope('system',{subtype:'status',status:'compacting'})); return; }
+          if (event==='post-compact') { this.compacting=false; this.emit(this.envelope('system',{subtype:'status',status:null})); return; }
+          if (!['pre-tool', 'post-tool'].includes(event)) return;
+          observations.push({ event, ...payload }); await this.host.journal(this.id, { event, ...payload });
+        },
       });
       finishText(); this.state.messages = result.messages;
       await this.host.saveSession(this.id, this.state);
