@@ -23,7 +23,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
       try {
         const data=await api.hub(runner || undefined,{query:search,page,force});if(current!==hubRequest.current)return;
         setHub(previous=>page && previous?.query===data.query?{...data,models:[...new Map([...previous.models,...data.models].map(row=>[row.repo,row])).values()]}:data);
-        setRunner(data.runner);if(data.warning)setError(data.warning);
+        if(data.warning)setError(data.warning);
       } catch(error){if(current===hubRequest.current)setError(error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/,''));}
       finally {if(current===hubRequest.current)setHubLoading(false);}
     };
@@ -92,7 +92,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
             tab==='hub'?h('div',null,h('small',null,'Public downloads need no account. A token authenticates Hub metadata requests.'),h('button',{type:'button',onClick:()=>{setOptional(false);setKey('');try{localStorage.setItem('notch.models.hideHfToken','1');}catch{}}},'Not now')):null):null,
           connected?h('div',{className:'notch-provider-status'},h('span',null,`${tab==='cloud'?'OpenRouter':'Hugging Face'} connected · ${state.persistentKeys?'encrypted on this device':'session only'}`),h('button',{type:'button',disabled:busy,onClick:()=>void act(async()=>{await api.disconnect(provider);await reload(false);})},'Disconnect')):null,
           tab==='hub' && !connected && !optional?h('button',{className:'notch-model-link',type:'button',onClick:()=>{setOptional(true);try{localStorage.removeItem('notch.models.hideHfToken');}catch{}}},'Add optional Hugging Face token'):null,
-          tab==='hub' && state?.hardware?.mlxSupported?h('label',{className:'notch-model-context'},'Runtime',h('select',{'aria-label':'Local runtime',value:runner,onChange:event=>{setRunner(event.target.value);setHub(null);setConfirm(null);},disabled:busy},h('option',{value:'mlx'},'MLX · Apple Silicon'),h('option',{value:'ollama'},'Ollama'))):null,
+          tab==='hub' && state?.hardware?.mlxSupported?h('label',{className:'notch-model-context'},'Runtime',h('select',{'aria-label':'Local runtime',value:runner || hub?.runner || 'mlx',onChange:event=>{setRunner(event.target.value);setHub(null);setConfirm(null);},disabled:busy},h('option',{value:'mlx'},'MLX · Apple Silicon'),h('option',{value:'ollama'},'Ollama'))):null,
           h('input',{className:'notch-model-search',type:'search','aria-label':'Search models',maxLength:120,placeholder:tab==='hub'?'Search the Hub, e.g. Gemma or DeepSeek…':'Search models…',value:search,onChange:event=>{setSearch(event.target.value);setConfirm(null);},onKeyDown:keyboard}),
           h('div',{ref:list,role:'listbox','aria-label':`${tabs.find(([name])=>name===tab)[1]} models`,'aria-busy':tab==='hub'?hubLoading:tab==='cloud'?cloudLoading:false,className:'notch-model-list',onKeyDown:keyboard},
             ...filtered.map(row=>tab==='hub'?h('button',{type:'button',key:row.repo,role:'option','aria-selected':confirm?.repo===row.repo,disabled:!row.fits || busy || hubLoading || state?.job?.state==='running',onClick:()=>setConfirm(row)},
