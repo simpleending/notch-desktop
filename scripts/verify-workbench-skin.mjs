@@ -125,6 +125,8 @@ try {
     return list?.getAttribute('aria-busy')==='false' && list.querySelectorAll('[role=option]').length>3 && [...list.querySelectorAll('strong')].every(row=>/gemm/i.test(row.innerText));
   },undefined,{timeout:60000});
   checks.hubStaleSearch=true;
+  const hubBounds=await page.locator('.notch-model-picker').evaluate(menu=>({top:menu.getBoundingClientRect().top,bottom:menu.getBoundingClientRect().bottom,height:innerHeight}));
+  assert.ok(hubBounds.top>=0 && hubBounds.bottom<=hubBounds.height);checks.hubPopupFitsViewport=true;
   await capture(page,'hugging-face-dark');
   await page.getByRole('tab',{name:'OpenRouter',exact:true}).click();
   await page.getByLabel('OpenRouter API key',{exact:true}).waitFor();
@@ -141,6 +143,8 @@ try {
   }
   await cloudSearch.fill('notch-no-such-model-fixture');assert.equal(await page.locator('[aria-label="OpenRouter models"] [role=option]').count(),0);await cloudSearch.fill('');
   checks.cloudSearch=true;
+  const cloudBounds=await page.locator('.notch-model-picker').evaluate(menu=>({top:menu.getBoundingClientRect().top,bottom:menu.getBoundingClientRect().bottom,height:innerHeight}));
+  assert.ok(cloudBounds.top>=0 && cloudBounds.bottom<=cloudBounds.height);checks.cloudPopupFitsViewport=true;
   assert.equal(await page.getByLabel('OpenRouter API key',{exact:true}).getAttribute('type'),'password');
   assert.equal(await page.getByRole('button',{name:'Connect',exact:true}).isDisabled(),true);
   await page.getByRole('tab',{name:'Hugging Face',exact:true}).click();
