@@ -63,14 +63,18 @@ try{
     if(delay)await new Promise(r=>setTimeout(r,delay));
     await finish(returning,'returning-'+delay,closeWindows,{previousLogCount:oldLogs.size});
   }
-  for(let n=0;n<2;n++){
+  for(const [kind,channel,method,options] of [
+    ['application','external-application:list','listExternalApplications'],
+    ['plugin','app-plugin:views-list','listAppPluginViews'],
+    ['model','chat-composer-model:list','listChatComposerModels',{fetchStrategy:'live',executionHostKind:'local',workspaceDirectories:[]}],
+  ])for(let n=0;n<2;n++){
     await launch(returning);
-    await app.evaluate(()=>{const discovery=globalThis.__notchDiscovery,original=discovery.run.bind(discovery);globalThis.__slowDiscovery=false;discovery.run=operation=>original(async()=>{globalThis.__slowDiscovery=true;const result=await operation();await new Promise(resolve=>setTimeout(resolve,4000));return result;});});
-    const page=await app.firstWindow();await page.waitForFunction(()=>typeof window.notchDesktop?.listExternalApplications==='function');
-    await page.evaluate(()=>{window.__discoveryRequest=window.notchDesktop.listExternalApplications().then(rows=>({rows}),error=>({error:error.message}));});
+    await app.evaluate((_electron,channel)=>{const discovery=globalThis.__notchDiscovery,original=discovery.read.bind(discovery);globalThis.__slowDiscovery=false;discovery.read=(name,operation)=>original(name,async()=>{const selected=name===channel;if(selected)globalThis.__slowDiscovery=true;const result=await operation();if(selected)await new Promise(resolve=>setTimeout(resolve,4000));return result;});},channel);
+    const page=await app.firstWindow();await page.waitForFunction(method=>typeof window.notchDesktop?.[method]==='function',method);
+    await page.evaluate(({method,options})=>{window.__discoveryRequest=window.notchDesktop[method](options).catch(error=>({error:error.message}));},{method,options});
     const until=Date.now()+10000;while(!await app.evaluate(()=>globalThis.__slowDiscovery)&&Date.now()<until)await new Promise(r=>setTimeout(r,50));
-    assert.equal(await app.evaluate(()=>globalThis.__slowDiscovery),true,'Close while a real app-discovery IPC request is active');
-    await finish(returning,'slow-discovery-'+n,quit,{delayedDiscoveryMs:4000});
+    assert.equal(await app.evaluate(()=>globalThis.__slowDiscovery),true);
+    await finish(returning,'slow-'+kind+'-discovery-'+n,quit,{delayedDiscoveryMs:4000});
   }
   await launch(returning);const page=await app.firstWindow();await page.waitForFunction(()=>typeof window.notchDesktop?.listAppPluginViews==='function');
   const views=await page.evaluate(()=>window.notchDesktop.listAppPluginViews());assert.ok(views.length>0);assert.ok(views.every(v=>v.hostState==='running'));

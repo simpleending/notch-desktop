@@ -131,6 +131,12 @@ export function patchUndoIntegration(source) {
 }
 
 export function patchStartupShutdown(source) {
+  source = patchClassMethod(source, 'D8e', 'handle', body => {
+    const invoke = 'Promise.resolve().then(()=>r(a,...s))';
+    const cancellable = 'Promise.resolve().then(()=>globalThis.__notchDiscovery.read(e,()=>r(a,...s)))';
+    if (!body.includes(invoke) && !body.includes(cancellable)) throw new Error('Tracked IPC invocation differs from the inspected baseline.');
+    return body.replace(invoke, cancellable);
+  });
   source = patchFunction(source, 'D7e', 'function D7e(t,e,r=null){return c8r(t).then(()=>w7e.request(A8r(t),e,r));}');
   source = patchFunction(source, '_7e', original => {
     const anchor = 'closeIpcIngress:()=>{', stop = 'globalThis.__notchDiscovery.stop();';
@@ -148,12 +154,44 @@ export function patchStartupShutdown(source) {
     const settled = 'await this.initialization?.catch(()=>{});';
     if (!body.includes(anchor)) throw new Error('Plugin shutdown differs from the inspected baseline.');
     // Initialization still joins the existing error-collecting barrier after registries are cleared.
-    return body.includes(settled) ? body : body.replace(anchor, settled + anchor);
+    return body.replace(settled, '').replace(anchor, anchor + settled);
   });
-  for (const method of ['listApplications', 'listFileApplications']) {
-    source = patchClassMethod(source, 'Vwt', method, body => body.includes('__notchDiscovery.run') ? body :
-      `return globalThis.__notchDiscovery.run(()=>{${body}});`);
-  }
+  source = patchClassMethod(source, 'Fue', 'initializeInternal', body => {
+    if (body.includes('__notchDiscovery.wait')) return body;
+    const start = 'const e=await new vYr(', end = '}).load(),r=r2r(this.options.productId);', failed = 'catch(e){';
+    if (![start,end,failed].every(anchor=>body.includes(anchor))) throw new Error('Plugin catalog loading differs from the inspected baseline.');
+    return body.replace(start, 'const e=await globalThis.__notchDiscovery.wait(()=>new vYr(')
+      .replace(end, '}).load()),r=r2r(this.options.productId);')
+      .replace(failed, failed + 'if(globalThis.__notchDiscovery.signal.aborted&&globalThis.__notchDiscovery.isPluginStop(e))return;');
+  });
+  source = patchClassMethod(source, 'zYr', 'shutdown', 'return globalThis.__notchDiscovery.stopPluginHost(this);');
+  source = patchClassMethod(source, 'zYr', 'startProcess', body => body.startsWith('if(this.shuttingDown)return Promise.resolve();') ? body : 'if(this.shuttingDown)return Promise.resolve();' + body);
+  source = patchClassMethod(source, 'zYr', 'initialize', body => {
+    const replay = 'await this.replayInitialActivations()';
+    if (!body.includes(replay)) throw new Error('Plugin startup activation differs from the inspected baseline.');
+    return body.includes('!this.shuttingDown&&' + replay) ? body : body.replace(replay, '!this.shuttingDown&&' + replay);
+  });
+  source = patchClassMethod(source, 'zYr', 'startProcessOnce', body => {
+    if (body.includes('__notchDiscovery.isPluginStop')) return body;
+    const ready = 'if(await r.ready,this.process!==r)', ping = 'await i.check($Oe),this.setState("running"),i.startHeartbeat()', failed = 'catch(n){';
+    if (![ready,ping,failed].every(anchor=>body.includes(anchor))) throw new Error('Plugin host readiness differs from the inspected baseline.');
+    return body.replace(ready, 'await r.ready;if(this.shuttingDown)return;if(this.process!==r)')
+      .replace(ping, 'await i.check($Oe);if(this.shuttingDown)return;this.setState("running"),i.startHeartbeat()')
+      .replace(failed, failed + 'if(this.shuttingDown&&globalThis.__notchDiscovery.isPluginStop(n))return;');
+  });
+  source = patchClassMethod(source, 'zYr', 'performActivation', body => {
+    if (body.includes('__notchDiscovery.isPluginStop')) return body;
+    const start = 'this.process||await this.startProcess("starting");', active = '!this.runtimeStates.markActive(e,n)', success = 'this.onActivationResult(e,n,"success")', failed = 'catch(s){';
+    if (![start,active,success,failed].every(anchor=>body.includes(anchor))) throw new Error('Plugin activation differs from the inspected baseline.');
+    return body.replace(start, 'if(this.shuttingDown)return;' + start + 'if(this.shuttingDown)return;')
+      .replace(active, '!this.shuttingDown&&' + active).replace(success, 'if(this.shuttingDown)return;' + success)
+      .replace(failed, failed + 'if(this.shuttingDown&&globalThis.__notchDiscovery.isPluginStop(s))return;');
+  });
+  source = patchClassMethod(source, 'zYr', 'handleExit', body => {
+    const anchor = 'if(this.process!==e)return;', stopping = 'if(this.shuttingDown){this.disposeProcess();this.rejectPending(new Error("APP_PLUGIN_HOST_STOPPED"));return;}';
+    if (!body.includes(anchor)) throw new Error('Plugin process exit differs from the inspected baseline.');
+    return body.includes(stopping) ? body : body.replace(anchor, anchor + stopping);
+  });
   source = patchClassMethod(source, 'WPt', 'listApplications', body => {
     const loop = 'for(const r of this.definitions){';
     const guarded = loop + 'if(globalThis.__notchDiscovery.signal.aborted)return [];';
