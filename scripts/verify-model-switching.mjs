@@ -21,6 +21,7 @@ async function probe(){await app.evaluate(()=>{
     result.emit=event=>{const trace=globalThis.__switchTrace;if(event.type==='result')trace.results.push({...event,model:result.model});trace.events.push(event);return emit(event)};return result;};
   globalThis.fetch=(url,options)=>{if(String(url).endsWith('/api/chat')){const body=JSON.parse(options.body);globalThis.__switchTrace.requests.push({url:String(url),model:body.model,context:body.options.num_ctx});}return fetcher(url,options);};
 });}
+async function restoredLabel(label){await page.waitForFunction(expected=>document.querySelector('button[aria-label="Model"]')?.innerText===expected,label,{timeout:15000});assert.equal(await page.getByRole('button',{name:'Model',exact:true}).innerText(),label);}
 async function select(model){
   await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('searchbox',{name:'Search models'}).fill(model);
   const option=page.locator(`button[role="option"][title="ollama/${model}"]`);await option.waitFor();assert.equal(await option.count(),1);await option.click({timeout:15000});
@@ -42,7 +43,8 @@ async function turn(index,model,activeCheck=false){
   const result=trace.results.slice(before).find(result=>result.model===`ollama/${model}`);assert.equal(result?.subtype,'success',JSON.stringify(result));sessionId=result.session_id;
   assert.equal(result.model,`ollama/${model}`);assert.ok(String(result.result).includes(receipts[index]));
   assert.ok(trace.events.some(event=>event.message?.content?.some(part=>part.type==='tool_result'&&String(part.content).includes(receipts[index]))));
-  const usage=await page.evaluate(id=>window.notchDesktop.getChatSessionContextUsage(id),sessionId);assert.equal(usage.model,`ollama/${model}`);assert.equal(usage.maxTokens,8192);assert.ok(usage.totalTokens>0);
+  let usage;const usageUntil=Date.now()+10000;while(Date.now()<usageUntil){usage=await page.evaluate(id=>window.notchDesktop.getChatSessionContextUsage(id),sessionId);if(usage?.model===`ollama/${model}`&&usage.totalTokens>0)break;await new Promise(resolve=>setTimeout(resolve,100));}
+  assert.ok(usage,'Context usage must update after the completed model turn');assert.equal(usage.model,`ollama/${model}`);assert.equal(usage.maxTokens,8192);assert.ok(usage.totalTokens>0);
   const calls=trace.requests.filter(call=>call.model===model.replace(/:latest$/,'' )||call.model===model);assert.ok(calls.length>0);assert.ok(calls.every(call=>call.context===8192));
   const origin=new URL(calls.at(-1).url).origin;
   const mounted=(await(await fetch(origin+'/api/ps')).json()).models.find(row=>row.name===model);assert.equal(mounted.context_length,8192);
@@ -59,13 +61,14 @@ try{
   await turn(0,models[0],true);await select(models[1]);await turn(1,models[1]);
   const label=await page.getByRole('button',{name:'Model',exact:true}).innerText();await app.close();app=null;
   await launch();await page.waitForLoadState('domcontentloaded');await probe();const reopened=await page.evaluate(id=>window.notchDesktop.openChatSession(id),sessionId);await page.getByText(reopened.summary.title,{exact:true}).first().click();
-  assert.equal(await page.getByRole('button',{name:'Model',exact:true}).innerText(),label,'Model selection must survive restarting the session');
+  await restoredLabel(label);
   await select(models[0]);await turn(2,models[0]);
   const finalLabel=await page.getByRole('button',{name:'Model',exact:true}).innerText();await app.close();app=null;
+  for(let n=0;n<2;n++){await launch();await app.close();app=null;}
   await launch();await page.waitForLoadState('domcontentloaded');const finalSession=await page.evaluate(id=>window.notchDesktop.openChatSession(id),sessionId);await page.getByText(finalSession.summary.title,{exact:true}).first().click();
-  assert.equal(await page.getByRole('button',{name:'Model',exact:true}).innerText(),finalLabel,'The non-default model selection must also survive restart');
+  await restoredLabel(finalLabel);
   const saved=await fs.readFile(path.join(profile,'notch-sessions',sessionId+'.json'),'utf8');for(const receipt of receipts)assert.ok(saved.includes(receipt));
-  assert.deepEqual(errors,[]);await fs.writeFile(reportFile,JSON.stringify({passed:true,executable,root,sessionId,checks,historyPreserved:true,selectionSurvivedRestart:true,errors},null,2));console.log(JSON.stringify({passed:true,checks,historyPreserved:true,selectionSurvivedRestart:true}));
+  assert.deepEqual(errors,[]);await fs.writeFile(reportFile,JSON.stringify({passed:true,executable,root,sessionId,checks,historyPreserved:true,selectionSurvivedRestart:true,rapidQuitPreservedSelection:true,errors},null,2));console.log(JSON.stringify({passed:true,checks,historyPreserved:true,selectionSurvivedRestart:true,rapidQuitPreservedSelection:true}));
 }catch(error){if(page)await page.screenshot({path:reportFile.replace('.json','-failure.png')}).catch(()=>{});
   const selection=page?await page.evaluate(()=>{const button=document.querySelector('button[aria-label="Model"]'),key=button&&Object.keys(button).find(key=>key.startsWith('__reactFiber'));let fiber=key&&button[key];const rows=[];for(let n=0;fiber&&n<20;n++,fiber=fiber.return){const props=fiber.memoizedProps;if(Array.isArray(props?.options))rows.push({component:fiber.type?.name,value:props.value,loading:props.loading,options:props.options.map(row=>({value:row.value,label:row.label,disabled:row.disabled}))});}return rows;}).catch(()=>null):null;
   const native=page?await page.evaluate(()=>window.notchDesktop.listChatComposerModels({fetchStrategy:'live',executionHostKind:'local',workspaceDirectories:[]})).catch(()=>null):null;

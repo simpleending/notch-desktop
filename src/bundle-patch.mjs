@@ -139,10 +139,11 @@ export function patchStartupShutdown(source) {
   });
   source = patchFunction(source, 'D7e', 'function D7e(t,e,r=null){return c8r(t).then(()=>w7e.request(A8r(t),e,r));}');
   source = patchFunction(source, '_7e', original => {
-    const anchor = 'closeIpcIngress:()=>{', stop = 'globalThis.__notchDiscovery.stop();';
-    if (!original.includes(anchor)) throw new Error('Shutdown ingress differs from the inspected baseline.');
-    // A cancelled quit must leave discovery usable.
-    return original.includes(stop) ? original : original.replace(anchor, anchor + stop);
+    const anchor = 'quiesceRenderer:()=>k7e(e)', stop = 'globalThis.__notchDiscovery.stop();';
+    const cancelled = 'quiesceRenderer:()=>{' + stop + 'return k7e(e)}';
+    if (!original.includes(anchor) && !original.includes(cancelled)) throw new Error('Shutdown ingress differs from the inspected baseline.');
+    // Confirmed quit must release optional startup reads before renderer teardown waits on them.
+    return original.replace('closeIpcIngress:()=>{' + stop, 'closeIpcIngress:()=>{').replace(anchor, cancelled);
   });
   source = patchFunction(source, 'k7e', original => {
     const windows = 'lr.getAllWindows().map(o8r)', workbenches = '[...kp].filter(e=>!e.isDestroyed()).map(o8r)';

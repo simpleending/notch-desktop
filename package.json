@@ -23,6 +23,7 @@
     "verify:recovery": "node scripts/verify-undo.mjs --recovery",
     "verify:model-switching": "node scripts/verify-model-switching.mjs",
     "verify:unsaved-shutdown": "node scripts/verify-unsaved-shutdown.mjs",
+    "verify:renderer-shutdown": "node scripts/verify-renderer-shutdown.mjs",
     "verify:shutdown": "node scripts/verify-shutdown.mjs"
   },
   "dependencies": {
