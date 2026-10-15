@@ -90,6 +90,7 @@ export function patchWorkbench(source) {
   ];
   for (const [className, method, body] of changes) source = patchClassMethod(source, className, method, body);
   source = patchUndoIntegration(source);
+  source = patchPersistedContextUsage(source);
   source = patchStartupShutdown(source);
   const reporting = 'enabled:GF&&(ot.isPackaged||process.env.QODER_RUM_DEV_REPORT==="1")';
   if (!source.includes(reporting)) throw new Error('Upstream RUM initialization differs from the inspected baseline.');
@@ -128,6 +129,17 @@ export function patchUndoIntegration(source) {
   source = patchFunction(source, 'bPe', 'function bPe(t){return _Ke.has(t.toLowerCase())||t.toLowerCase()==="apply_patch";}');
   source = patchFunction(source, 'cnr', original => original.replace('(?:Add|Update|Delete) File:', '(?:(?:Add|Update|Delete) File|Move to):'));
   return patchFunction(source, 'Xme', 'function Xme(){return target=>globalThis.__notchHost.validatePlugin(target);}');
+}
+
+export function patchPersistedContextUsage(source) {
+  return patchClassMethod(source, 'jnr', 'getContextUsage', body => {
+    const previous = 's=n?await n.read():void 0';
+    const next = 's=n?await n.read():{usage:u7t((await globalThis.__notchHost.loadSession(e,r.cwd)).contextUsage),model:r.model}';
+    if (body.includes(next)) return body;
+    if (!body.includes(previous)) throw new Error('Context usage reader differs from the inspected baseline.');
+    // Capability changes can retire the runtime before its final usage reaches the UI cache.
+    return body.replace(previous, next);
+  });
 }
 
 export function patchStartupShutdown(source) {

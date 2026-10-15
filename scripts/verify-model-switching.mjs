@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {randomUUID} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
 import {processSnapshot,stopOwnedProcesses} from './process-tree.mjs';
 
 const executable=path.resolve(process.argv[2]),reportFile=path.resolve(process.argv[3]);
@@ -60,7 +61,12 @@ try{
   await page.getByRole('button',{name:'Access permissions',exact:true}).click();await page.getByRole('menuitem',{name:/^Ask for approval/}).click();
   await turn(0,models[0],true);await select(models[1]);await turn(1,models[1]);
   const label=await page.getByRole('button',{name:'Model',exact:true}).innerText();await app.close();app=null;
-  await launch();await page.waitForLoadState('domcontentloaded');await probe();const reopened=await page.evaluate(id=>window.notchDesktop.openChatSession(id),sessionId);await page.getByText(reopened.summary.title,{exact:true}).first().click();
+  // Simulate retirement before the UI cache receives the completed SDK snapshot.
+  const database=new DatabaseSync(path.join(profile,'main.sqlite'));try{database.prepare('DELETE FROM chat_session_context_usage WHERE session_id=?').run(sessionId);}finally{database.close();}
+  await launch();await page.waitForLoadState('domcontentloaded');await probe();
+  const restoredUsage=await page.evaluate(id=>window.notchDesktop.getChatSessionContextUsage(id),sessionId);
+  assert.equal(restoredUsage?.model,`ollama/${models[1]}`);assert.equal(restoredUsage?.totalTokens,checks[1].usage.totalTokens);assert.equal(restoredUsage?.maxTokens,8192);
+  const reopened=await page.evaluate(id=>window.notchDesktop.openChatSession(id),sessionId);await page.getByText(reopened.summary.title,{exact:true}).first().click();
   await restoredLabel(label);
   await select(models[0]);await turn(2,models[0]);
   const finalLabel=await page.getByRole('button',{name:'Model',exact:true}).innerText();await app.close();app=null;
@@ -68,7 +74,7 @@ try{
   await launch();await page.waitForLoadState('domcontentloaded');const finalSession=await page.evaluate(id=>window.notchDesktop.openChatSession(id),sessionId);await page.getByText(finalSession.summary.title,{exact:true}).first().click();
   await restoredLabel(finalLabel);
   const saved=await fs.readFile(path.join(profile,'notch-sessions',sessionId+'.json'),'utf8');for(const receipt of receipts)assert.ok(saved.includes(receipt));
-  assert.deepEqual(errors,[]);await fs.writeFile(reportFile,JSON.stringify({passed:true,executable,root,sessionId,checks,historyPreserved:true,selectionSurvivedRestart:true,rapidQuitPreservedSelection:true,errors},null,2));console.log(JSON.stringify({passed:true,checks,historyPreserved:true,selectionSurvivedRestart:true,rapidQuitPreservedSelection:true}));
+  assert.deepEqual(errors,[]);await fs.writeFile(reportFile,JSON.stringify({passed:true,executable,root,sessionId,checks,historyPreserved:true,selectionSurvivedRestart:true,rapidQuitPreservedSelection:true,usageSurvivedColdRestart:true,errors},null,2));console.log(JSON.stringify({passed:true,checks,historyPreserved:true,selectionSurvivedRestart:true,rapidQuitPreservedSelection:true,usageSurvivedColdRestart:true}));
 }catch(error){if(page)await page.screenshot({path:reportFile.replace('.json','-failure.png')}).catch(()=>{});
   const selection=page?await page.evaluate(()=>{const button=document.querySelector('button[aria-label="Model"]'),key=button&&Object.keys(button).find(key=>key.startsWith('__reactFiber'));let fiber=key&&button[key];const rows=[];for(let n=0;fiber&&n<20;n++,fiber=fiber.return){const props=fiber.memoizedProps;if(Array.isArray(props?.options))rows.push({component:fiber.type?.name,value:props.value,loading:props.loading,options:props.options.map(row=>({value:row.value,label:row.label,disabled:row.disabled}))});}return rows;}).catch(()=>null):null;
   const native=page?await page.evaluate(()=>window.notchDesktop.listChatComposerModels({fetchStrategy:'live',executionHostKind:'local',workspaceDirectories:[]})).catch(()=>null):null;
