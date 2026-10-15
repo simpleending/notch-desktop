@@ -10,7 +10,7 @@ import { extractAll, createPackageWithOptions } from '@electron/asar';
 import { installSetupRenderer } from '../src/renderer-patch.mjs';
 import { verifyRendererBranding } from '../src/branding-verification.mjs';
 import { rebrandTree } from '../src/rebrand-tree.mjs';
-import { patchDirectStartup, patchUndoIntegration } from '../src/bundle-patch.mjs';
+import { patchDirectStartup, patchUndoIntegration, patchStartupShutdown } from '../src/bundle-patch.mjs';
 import { rebuildPluginCatalog, verifyPluginCatalog } from '../src/plugin-integrity.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url)), version=process.argv[2] || '0.1.0-preview.1';
@@ -45,7 +45,7 @@ await fs.copyFile(path.join(ripgrepSource,'rg.exe'),path.join(app,'resources/bin
 assert.match((await promisify(execFile)(path.join(app,'resources/bin/notch-rg.exe'),['--version'],{windowsHide:true})).stdout,/^ripgrep 15\.2\.0[\s\S]*PCRE2 10\.45 is available/,'Packaged ripgrep must support the pinned PCRE2 engine.');
 extractAll(path.join(app,'resources/app.asar'),unpacked);
 const mainFile=path.join(unpacked,'out/main/index.js');
-await fs.writeFile(mainFile,patchUndoIntegration(patchDirectStartup(await fs.readFile(mainFile,'utf8'))));
+await fs.writeFile(mainFile,patchStartupShutdown(patchUndoIntegration(patchDirectStartup(await fs.readFile(mainFile,'utf8')))));
 await fs.cp(path.join(root,'src'),path.join(unpacked,'notch/src'),{recursive:true});
 await fs.cp(path.join(root,'vendor/notch-core'),path.join(unpacked,'notch/vendor/notch-core'),{recursive:true});
 const cliSource=path.join(root,'node_modules/@freesyntax/notch-cli'), cliTarget=path.join(unpacked,'notch/node_modules/@freesyntax/notch-cli');

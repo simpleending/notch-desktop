@@ -10,7 +10,7 @@ function closingBrace(source, start) {
   }
 }
 export function patchClassMethod(source, className, methodName, body) {
-  const classPattern = new RegExp(`\\b${className}=class(?:\\s+extends\\s+[\\w$]+)?\\s*\\{`, 'g');
+  const classPattern = new RegExp(`(?:\\b${className}=class(?:\\s+extends\\s+[\\w$]+)?|\\bclass ${className})\\s*\\{`, 'g');
   const classes = [...source.matchAll(classPattern)];
   if (classes.length !== 1) throw new Error(`Expected one upstream class ${className}.`);
   const first = classes[0].index + classes[0][0].length - 1, end = closingBrace(source, first);
@@ -31,10 +31,12 @@ export function patchClassMethod(source, className, methodName, body) {
   }
   if (methods.length !== 1) throw new Error(`Expected one ${className}.${methodName} method.`);
   const start = methods[0], stop = closingBrace(source, start);
-  return source.slice(0, start) + `{${body}}` + source.slice(stop);
+  const replacement = typeof body === 'function' ? body(source.slice(start + 1, stop - 1)) : body;
+  return source.slice(0, start) + `{${replacement}}` + source.slice(stop);
 }
 export function patchFunction(source, name, replacement) {
-  const matches = [...source.matchAll(new RegExp(`\\bfunction ${name}\\(`, 'g'))];
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const matches = [...source.matchAll(new RegExp(`\\bfunction ${escaped}\\(`, 'g'))];
   if (matches.length !== 1) throw new Error(`Expected one upstream function ${name}.`);
   const start = matches[0].index, scanner = tokenizer(source.slice(start), { ecmaVersion: 'latest', sourceType: 'module' });
   scanner.getToken(); scanner.getToken(); scanner.getToken();
@@ -88,6 +90,7 @@ export function patchWorkbench(source) {
   ];
   for (const [className, method, body] of changes) source = patchClassMethod(source, className, method, body);
   source = patchUndoIntegration(source);
+  source = patchStartupShutdown(source);
   const reporting = 'enabled:GF&&(ot.isPackaged||process.env.QODER_RUM_DEV_REPORT==="1")';
   if (!source.includes(reporting)) throw new Error('Upstream RUM initialization differs from the inspected baseline.');
   source = source.replace(reporting, 'enabled:false');
@@ -125,4 +128,55 @@ export function patchUndoIntegration(source) {
   source = patchFunction(source, 'bPe', 'function bPe(t){return _Ke.has(t.toLowerCase())||t.toLowerCase()==="apply_patch";}');
   source = patchFunction(source, 'cnr', original => original.replace('(?:Add|Update|Delete) File:', '(?:(?:Add|Update|Delete) File|Move to):'));
   return patchFunction(source, 'Xme', 'function Xme(){return target=>globalThis.__notchHost.validatePlugin(target);}');
+}
+
+export function patchStartupShutdown(source) {
+  source = patchFunction(source, 'D7e', 'function D7e(t,e,r=null){return c8r(t).then(()=>w7e.request(A8r(t),e,r));}');
+  source = patchFunction(source, '_7e', original => {
+    const anchor = 'closeIpcIngress:()=>{', stop = 'globalThis.__notchDiscovery.stop();';
+    if (!original.includes(anchor)) throw new Error('Shutdown ingress differs from the inspected baseline.');
+    // A cancelled quit must leave discovery usable.
+    return original.includes(stop) ? original : original.replace(anchor, anchor + stop);
+  });
+  source = patchFunction(source, 'k7e', original => {
+    const windows = 'lr.getAllWindows().map(o8r)', workbenches = '[...kp].filter(e=>!e.isDestroyed()).map(o8r)';
+    if (!original.includes(windows) && !original.includes(workbenches)) throw new Error('Renderer shutdown participants differ from the inspected baseline.');
+    return original.replace(windows, workbenches);
+  });
+  source = patchClassMethod(source, 'Fue', 'shutdown', body => {
+    const anchor = 'const t=this.hostController.shutdown();';
+    const settled = 'await this.initialization?.catch(()=>{});';
+    if (!body.includes(anchor)) throw new Error('Plugin shutdown differs from the inspected baseline.');
+    // Initialization still joins the existing error-collecting barrier after registries are cleared.
+    return body.includes(settled) ? body : body.replace(anchor, settled + anchor);
+  });
+  for (const method of ['listApplications', 'listFileApplications']) {
+    source = patchClassMethod(source, 'Vwt', method, body => body.includes('__notchDiscovery.run') ? body :
+      `return globalThis.__notchDiscovery.run(()=>{${body}});`);
+  }
+  source = patchClassMethod(source, 'WPt', 'listApplications', body => {
+    const loop = 'for(const r of this.definitions){';
+    const guarded = loop + 'if(globalThis.__notchDiscovery.signal.aborted)return [];';
+    if (!body.includes(loop)) throw new Error('Windows discovery differs from the inspected baseline.');
+    return body.includes(guarded) ? body : body.replace(loop, guarded);
+  });
+  source = patchFunction(source, 'dRt', original => {
+    if (original.includes('__notchDiscovery.signal')) return original;
+    const options = 'windowsHide:!0,timeout:iRt';
+    if (!original.includes(options)) throw new Error('Registry child options differ from the inspected baseline.');
+    return original.replace(options, options + ',signal:globalThis.__notchDiscovery.signal');
+  });
+  source = patchFunction(source, 'oRt', original => {
+    const loop = 'for(const d of s){', guarded = loop + 'if(globalThis.__notchDiscovery.signal.aborted)return {kind:"absent"};';
+    if (!original.includes(loop)) throw new Error('Registry discovery differs from the inspected baseline.');
+    return original.includes(guarded) ? original : original.replace(loop, guarded)
+      .replace('if(p)return', 'if(globalThis.__notchDiscovery.signal.aborted)return {kind:"absent"};if(p)return');
+  });
+  return patchFunction(source, '$Ft', original => {
+    if (original.includes('__notchDiscovery.signal')) return original;
+    const start = 'findExecutable:async i=>{', call = 'await HV(n,[i],{windowsHide:!0})';
+    if (!original.includes(start) || !original.includes(call)) throw new Error('Application discovery process differs from the inspected baseline.');
+    return original.replace(start, start + 'if(globalThis.__notchDiscovery.signal.aborted)return null;')
+      .replace(call, 'await HV(n,[i],{windowsHide:!0,signal:globalThis.__notchDiscovery.signal})');
+  });
 }
