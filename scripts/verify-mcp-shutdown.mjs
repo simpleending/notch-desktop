@@ -48,5 +48,6 @@ async function realChild(){
   }finally{if(root.exitCode===null){if(before)await stopOwnedProcesses(root.pid,before);else root.kill();}}
 }
 const keepAlive=setInterval(()=>{},1000);let checks;
-try{checks=await Promise.all([controlled('old-outer',originalPlan,1000),controlled('old-force',plan,1000),controlled('aligned-windows-budget',plan,2000),controlled('real-force-error',plan,2000,true),realChild()]);}finally{clearInterval(keepAlive);}
+// Isolate the two old budgets so their competing timers cannot race in the negative controls.
+try{checks=await Promise.all([controlled('old-outer',originalPlan,2000),controlled('old-force',plan,1000),controlled('aligned-windows-budget',plan,2000),controlled('real-force-error',plan,2000,true),realChild()]);}finally{clearInterval(keepAlive);}
 await fs.writeFile(reportFile,JSON.stringify({passed:true,executable,checks,overallDeadlineMs:10000,resourceWaveDeadlineMs:7000,graceMs:3000,forceConfirmationMs:2000,participantBudgetMs:6000},null,2));console.log(JSON.stringify({passed:true,checks}));
