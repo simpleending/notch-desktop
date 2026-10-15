@@ -143,6 +143,7 @@ export function patchPersistedContextUsage(source) {
 }
 
 export function patchStartupShutdown(source) {
+  source = patchMcpShutdownBudget(source);
   source = patchClassMethod(source, 'D8e', 'handle', body => {
     const invoke = 'Promise.resolve().then(()=>r(a,...s))';
     const cancellable = 'Promise.resolve().then(()=>globalThis.__notchDiscovery.read(e,()=>r(a,...s)))';
@@ -241,4 +242,12 @@ export function patchStartupShutdown(source) {
     return original.replace(start, start + 'if(globalThis.__notchDiscovery.signal.aborted)return null;')
       .replace(call, 'await HV(n,[i],{windowsHide:!0,signal:globalThis.__notchDiscovery.signal})');
   });
+}
+
+export function patchMcpShutdownBudget(source) {
+  const previous = 'yo("mcp.shutdown","critical",4e3,()=>t.mcpService.shutdown())';
+  const next = 'yo("mcp.shutdown","critical",5e3,()=>t.mcpService.shutdown())';
+  if (source.split(previous).length + source.split(next).length !== 3) throw new Error('MCP shutdown participant differs from the inspected baseline.');
+  // The service needs its full 3s grace plus 1s force confirmation before the outer deadline.
+  return source.replace(previous, next);
 }

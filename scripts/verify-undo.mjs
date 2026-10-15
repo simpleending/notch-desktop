@@ -12,7 +12,7 @@ const reportFile=path.resolve(args[1]||'release/stable-undo-plugins.json');
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'notch-stable-undo-'));const profile=path.join(root,'profile'),workspace=path.join(root,'project');await fs.mkdir(profile);await fs.mkdir(workspace);await fs.writeFile(path.join(workspace,'file.txt'),'original');
 const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|ELECTRON_RUN_AS_NODE/i.test(key)));
 let app,page,sessionId;const checks={},errors=[];checks.errors=errors;
-async function launch(){app=await _electron.launch({executablePath:executable,args:['--lang=en-US',`--user-data-dir=${profile}`],env,timeout:45000});app.on('window',w=>w.on('pageerror',e=>errors.push(e.stack||e.message)));if(process.argv.includes('--recovery')){await app.evaluate(()=>{globalThis.__notchRecoveryFixture=true;});await probe();}page=await app.firstWindow();}
+async function launch(){app=await _electron.launch({executablePath:executable,args:['--lang=en-US',`--user-data-dir=${profile}`],env,timeout:45000});app.on('window',w=>w.on('pageerror',e=>errors.push(e.stack||e.message)));if(process.argv.includes('--recovery'))await app.evaluate(()=>{globalThis.__notchRecoveryFixture=true;});await probe();page=await app.firstWindow();}
 async function openSavedSession(){
  const restored=await page.evaluate(id=>window.notchDesktop.openChatSession(id),sessionId);
  await page.getByText(restored.summary.title,{exact:true}).first().click();
@@ -55,7 +55,6 @@ try{
  assert.ok(JSON.stringify(checks.plugins).includes('notch.canvas'),'The bundled canvas plugin must load through the real host.');
  assert.ok(!JSON.stringify(checks.plugins).includes('APP_PLUGIN_INTEGRITY_FAILED'));
  await page.evaluate(()=>window.notchDesktop.listChatComposerModels({fetchStrategy:'live',executionHostKind:'local',workspaceDirectories:[]}));
- if(!process.argv.includes('--recovery'))await probe();
  await page.getByRole('button',{name:'Open project',exact:true}).click();await app.evaluate(({dialog},root)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[root]})},workspace);await page.getByText('Click to add a readable and editable folder',{exact:true}).click();await page.getByRole('dialog').getByRole('textbox').fill('undo reliability');await page.getByRole('button',{name:'Create',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
  for(const [i,prompt]of ['Undo check one','Undo check two','Undo check three'].entries()){const composer=page.locator('[contenteditable=true][role=textbox]').first();await composer.fill(prompt);await composer.press('Enter');await complete(i+1);}
  assert.equal(await fs.readFile(path.join(workspace,'file.txt'),'utf8'),'two');assert.equal((await fs.readFile(path.join(workspace,'created.txt'),'utf8')).trim(),'new');
@@ -78,7 +77,8 @@ try{
  const undo=page.locator('[data-file-changes-summary]').getByRole('button',{name:'Undo',exact:true});await undo.waitFor();assert.equal(await undo.count(),1,'Only the first tracked turn remains available to undo');await undo.scrollIntoViewIfNeeded();await undo.click();
  const confirm=page.getByRole('button',{name:'Undo file changes',exact:true});await confirm.waitFor();
  assert.equal(await fs.readFile(path.join(workspace,'file.txt'),'utf8'),'one','The confirmation dialog must not change files.');
- await confirm.click();const undoDeadline=Date.now()+15000;while(await fs.readFile(path.join(workspace,'file.txt'),'utf8')!=='original'&&Date.now()<undoDeadline)await new Promise(resolve=>setTimeout(resolve,100));
+ await confirm.click();await confirm.waitFor({state:'hidden'});const undoDeadline=Date.now()+15000;
+ while(Date.now()<undoDeadline){const history=JSON.parse(await fs.readFile(path.join(profile,'notch-undo',sessionId+'.json'),'utf8'));if(await fs.readFile(path.join(workspace,'file.txt'),'utf8')==='original'&&history.checkpoints.length===0)break;await new Promise(resolve=>setTimeout(resolve,100));}
  assert.equal(await fs.readFile(path.join(workspace,'file.txt'),'utf8'),'original');checks.nativeUndoButton=true;checks.allTurnsRestored=true;
  checks.remaining=JSON.parse(await fs.readFile(path.join(profile,'notch-undo',sessionId+'.json'),'utf8')).checkpoints.length;assert.equal(checks.remaining,0);
  await page.screenshot({path:reportFile.replace('.json','-after.png')});assert.deepEqual(errors,[]);checks.errors=errors;checks.passed=true;

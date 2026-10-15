@@ -24,7 +24,8 @@
     "verify:model-switching": "node scripts/verify-model-switching.mjs",
     "verify:unsaved-shutdown": "node scripts/verify-unsaved-shutdown.mjs",
     "verify:renderer-shutdown": "node scripts/verify-renderer-shutdown.mjs",
-    "verify:shutdown": "node scripts/verify-shutdown.mjs"
+    "verify:shutdown": "node scripts/verify-shutdown.mjs",
+    "verify:mcp-shutdown": "node scripts/verify-mcp-shutdown.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.79",
