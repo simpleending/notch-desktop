@@ -2,6 +2,10 @@
 
 This checklist records the scope and evidence for the Windows x64 v0.1 release. Unsupported platforms and unverified cloud scenarios remain explicit limitations; they are not counted as passing. Release artifacts are published only after installed-build checks.
 
+Version 0.1.4 uses OpenRouter's maintained AI SDK 7 adapter. A review of the current [integration](https://openrouter.ai/docs/guides/community/vercel-ai-sdk), [streaming](https://openrouter.ai/docs/api-reference/streaming) and [reasoning](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens) documentation found that the generic OpenAI adapter discarded reasoning details and errors inside successful HTTP streams. Local protocol fixtures now verify encrypted reasoning through the desktop tool loop and JSON-restored transcripts, keep-alive comments, and errors before or after partial text. All 103 source tests and strict typecheck pass. This verifies the documented API contract without paid inference.
+
+The model picker also stays below the window title bar and marks its surface as non-draggable. At 1000 × 700, the previous build placed tabs partly over Electron's draggable title bar, which suppresses pointer events. `verify:model-picker` covers 24 tab selections at four window sizes in both themes, plus keyboard navigation. The Windows installer offers to launch notch when interactive setup finishes; silent installation stays quiet.
+
 Version 0.1.3 includes OpenRouter's `~provider/model-latest` aliases in both fresh and cached model catalogs. Invalid identifiers remain rejected, and browsing without a key does not enable inference. Local models require a verified native context limit as well as tool support; unknown, ambiguous and unsupported limits leave the model unavailable with an explanation. Models with known limits still use conservative memory estimates when detailed KV metadata is absent. The source suite has 100 passing tests and a clean strict typecheck. A live public catalog check found all 460 eligible text models, including 19 latest aliases, on October 15, 2026; the provider's catalog can change.
 
 | Requirement | Current evidence / remaining work |

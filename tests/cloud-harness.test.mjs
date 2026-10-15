@@ -25,6 +25,36 @@ test('OpenRouter uses the explicit key, correct endpoint, bounded output and pro
     assert.doesNotMatch(JSON.stringify(result.messages),/sk-or-/);
   } finally {globalThis.fetch=previous;}
 });
+test('OpenRouter preserves encrypted reasoning across the desktop tool loop and a saved transcript',async()=>{
+  const previous=globalThis.fetch,cwd=await mkdtemp(path.join(os.tmpdir(),'notch-cloud-reasoning-'));
+  const details=[{type:'reasoning.encrypted',data:'opaque-fixture',id:'reasoning-fixture',format:'anthropic-claude-v1',index:0}];
+  const frame=(delta,finish_reason=null)=>({id:'qa',object:'chat.completion.chunk',created:1,model:'~lab/model-latest',choices:[{index:0,delta,finish_reason}]});
+  let calls=0;
+  globalThis.fetch=async(url,options)=>{
+    assert.equal(String(url),'https://openrouter.ai/api/v1/chat/completions');
+    const body=JSON.parse(options.body);calls++;
+    const frames=calls===1?[frame({reasoning_details:details}),frame({tool_calls:[{index:0,id:'read-fixture',type:'function',function:{name:'read',arguments:JSON.stringify({path:'receipt.txt'})}}]}),frame({},'tool_calls')]:[frame({content:'REASONING_VERIFIED'}),frame({},'stop')];
+    if(calls>1){assert.deepEqual(body.messages.find(message=>message.role==='assistant').reasoning_details,details);assert.match(body.messages.find(message=>message.role==='tool').content,/receipt/);}
+    return new Response(': OPENROUTER PROCESSING\n\n'+frames.map(value=>`data: ${JSON.stringify(value)}\n\n`).join('')+'data: [DONE]\n\n',{headers:{'Content-Type':'text/event-stream'}});
+  };
+  try{
+    await writeFile(path.join(cwd,'receipt.txt'),'receipt');
+    const turn={cwd,model:'openrouter/~lab/model-latest',apiKey:'fixture-only',contextWindow:8192,accessMode:'read-only',signal:AbortSignal.timeout(15000),checkpoints:new CheckpointManager(),tools:['Read'],approve:async()=>false};
+    const result=await runDesktopTurn({...turn,sessionId:'reasoning-first',messages:[{role:'user',content:'Read receipt.txt'}]});
+    assert.equal(result.text,'REASONING_VERIFIED');assert.equal(calls,2);
+    const restored=JSON.parse(JSON.stringify(result.messages));
+    await runDesktopTurn({...turn,sessionId:'reasoning-resume',messages:[...restored,{role:'user',content:'Continue'}]});assert.equal(calls,3);
+  }finally{globalThis.fetch=previous;}
+});
+
+for(const partial of [false,true])test(`OpenRouter HTTP 200 stream errors fail the desktop turn${partial?' after partial text':''}`,async()=>{
+  const previous=globalThis.fetch,cwd=await mkdtemp(path.join(os.tmpdir(),'notch-cloud-error-'));
+  const frame=(delta,finish_reason=null)=>({id:'qa',object:'chat.completion.chunk',created:1,model:'fixture',choices:[{index:0,delta,finish_reason}]});
+  globalThis.fetch=async()=>new Response((partial?`data: ${JSON.stringify(frame({content:'Partial'}))}\n\n`:'')+`data: ${JSON.stringify({...frame({content:''},'error'),error:{code:'server_error',message:'Provider disconnected unexpectedly'}})}\n\ndata: [DONE]\n\n`,{headers:{'Content-Type':'text/event-stream'}});
+  try{await assert.rejects(runDesktopTurn({cwd,sessionId:'cloud-error',messages:[{role:'user',content:'Hello'}],model:'openrouter/fixture',apiKey:'fixture-only',contextWindow:8192,accessMode:'read-only',signal:AbortSignal.timeout(15000),checkpoints:new CheckpointManager(),tools:['Read'],approve:async()=>false}),/Provider disconnected unexpectedly/);}
+  finally{globalThis.fetch=previous;}
+});
+
 test('MLX inspection uses the repository revision and nested text context configuration',async()=>{
   const previous=globalThis.fetch, calls=[],revision='b'.repeat(40);
   globalThis.fetch=async (url,options)=>{

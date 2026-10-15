@@ -19,6 +19,7 @@
 
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import type { LanguageModel } from 'ai';
 import { loadSyncedByokKeysSync } from '../auth.js';
 import { ollamaChatUrl, ollamaRoot } from './ollama-url.js';
@@ -517,6 +518,11 @@ export function resolveByokModel(spec: ByokSpec): {
       providerInfo,
       modelId,
     };
+  }
+
+  if (providerInfo.id === 'openrouter') {
+    const openrouter = createOpenRouter({ apiKey, baseURL: baseUrl, headers });
+    return { model: openrouter.chat(modelId) as LanguageModel, providerInfo, modelId };
   }
 
   const provider = createOpenAI({

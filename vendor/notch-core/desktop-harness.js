@@ -30,6 +30,7 @@ import { createOpenAI as createOpenAI2 } from "@ai-sdk/openai";
 // vendor/notch-cli/src/providers/byok.ts
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
+import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 
 // vendor/notch-cli/src/auth.ts
 import http from "http";
@@ -600,6 +601,10 @@ function resolveByokModel(spec) {
       providerInfo,
       modelId
     };
+  }
+  if (providerInfo.id === "openrouter") {
+    const openrouter = createOpenRouter({ apiKey, baseURL: baseUrl, headers });
+    return { model: openrouter.chat(modelId), providerInfo, modelId };
   }
   const provider = createOpenAI({
     ...providerInfo.id === "ollama" ? { fetch: ollamaFetch(baseUrl, spec) } : {},
