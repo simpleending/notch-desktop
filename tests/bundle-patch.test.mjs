@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { patchClassMethod, rebrandWorkbenchText, patchUndoIntegration, patchMcpShutdownBudget } from '../src/bundle-patch.mjs';
 
 test('MCP budget migration refuses drift and duplicate participants and is repeatable',()=>{
-  const participant='yo("mcp.shutdown","critical",4e3,()=>t.mcpService.shutdown())';
+  const participant='const mOr=3e3,FVe=1e3;yo("mcp.shutdown","critical",4e3,()=>t.mcpService.shutdown())';
   const patched=patchMcpShutdownBudget(participant);
   assert.equal(patchMcpShutdownBudget(patched),patched);
-  assert.throws(()=>patchMcpShutdownBudget('changed'),/differs/);
-  assert.throws(()=>patchMcpShutdownBudget(participant+patched),/differs/);
+  assert.throws(()=>patchMcpShutdownBudget('changed'),/differ/);
+  assert.throws(()=>patchMcpShutdownBudget(participant+patched),/differ/);
 });
 test('method patches respect strings, regex braces and nested template expressions', () => {
   const source = 'let Demo=class extends Base{target(t){const regex=/[{}]/;const x=`hi ${ {a:1}.a }`;return "}"}other(){return 2}};';

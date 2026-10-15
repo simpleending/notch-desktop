@@ -245,9 +245,10 @@ export function patchStartupShutdown(source) {
 }
 
 export function patchMcpShutdownBudget(source) {
-  const previous = 'yo("mcp.shutdown","critical",4e3,()=>t.mcpService.shutdown())';
-  const next = 'yo("mcp.shutdown","critical",5e3,()=>t.mcpService.shutdown())';
-  if (source.split(previous).length + source.split(next).length !== 3) throw new Error('MCP shutdown participant differs from the inspected baseline.');
-  // The service needs its full 3s grace plus 1s force confirmation before the outer deadline.
-  return source.replace(previous, next);
+  const participants=[4,5,6].map(seconds=>`yo("mcp.shutdown","critical",${seconds}e3,()=>t.mcpService.shutdown())`);
+  const previous='mOr=3e3,FVe=1e3',next='mOr=3e3,FVe=2e3';
+  if (participants.reduce((count,part)=>count+source.split(part).length-1,0)!==1 || source.split(previous).length+source.split(next).length!==3) throw new Error('MCP shutdown configuration differs from the inspected baseline.');
+  // Windows must finish taskkill and then confirm exit; retain 3s grace inside the unchanged 7s wave.
+  for(const participant of participants)source=source.replace(participant,participants[2]);
+  return source.replace(previous,next);
 }
