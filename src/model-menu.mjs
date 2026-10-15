@@ -59,6 +59,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
       const timer = setInterval(()=>api.status().then(status=>{if(!cancelled)setState(previous=>({...previous,...status}));}).catch(()=>{}),1000);
       return ()=>{cancelled=true;clearInterval(timer);};
     },[open,state?.job?.state]);
+    const displayError=error||state?.keyLoadError||state?.discoveryWarning;
     const all = state?.models || [], current = all.find(row=>row.key===props.value) || ((!props.value || props.value==='auto') ? all.find(row=>row.key===state?.defaultModel) : undefined);
     const native = props.options?.find(row=>row.value===props.value);
     const local = current && current.provider!=='openrouter';
@@ -113,6 +114,6 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
             local && current.availableContextWindows.includes(262144)?h('label',{className:'notch-model-note'},h('input',{type:'checkbox',checked:extended,onChange:event=>{setExtended(event.target.checked);try{localStorage.setItem('notch.models.extendedContext',event.target.checked?'1':'0');}catch{}}}),' Show extended context (256K)'):null,
             local && current.requestedContextWindow && current.requestedContextWindow!==current.defaultContextWindow?h('p',{className:'notch-model-note'},`${formatContext(current.requestedContextWindow)} requested; reduced to ${formatContext(current.defaultContextWindow)} for current memory.`):null):null,
           h('div',{className:'notch-model-footer'},h('span',null,tab==='cloud'?`${filtered.length} models`:state?.hardware?`${formatSize(state.hardware.availableMemory)} ${state.hardware.appleSilicon?'unified memory':'RAM'} free${state.hardware.totalVram>0?` · ${formatSize(state.hardware.availableVram)} / ${formatSize(state.hardware.totalVram)} VRAM free`:''}`:''),h('button',{type:'button',disabled:busy || hubLoading || cloudLoading,onClick:()=>void act(async()=>{await reload(true);if(tab==='hub')await loadHub(0,true);if(tab==='cloud')await loadCloud(true);})},'Refresh')),
-          error?h('p',{role:'alert',className:'notch-model-error'},error):null)));
+          displayError?h('p',{role:'alert',className:'notch-model-error'},displayError):null)));
   };
 }

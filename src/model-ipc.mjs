@@ -7,7 +7,7 @@ export function registerModelIpc(ipcMain, host) {
     const status = await manager.status();
     if (refresh && status.openrouter) await manager.cloudCatalog(true);
     const models = (await host.listModels(refreshModels)).filter(row=>row.key!=='auto');
-    return { ...status, models, defaultModel: host.getDefaultModel(), hardware: await detectLocalHardware() };
+    return { ...status, models, defaultModel: host.getDefaultModel(), discoveryWarning:host.getModelDiscoveryWarning(), hardware: await detectLocalHardware() };
   };
   const handlers = {
     state: refresh => state(refresh === true),

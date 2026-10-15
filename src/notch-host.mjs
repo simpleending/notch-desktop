@@ -14,9 +14,8 @@ function sessionFile(directory, id) {
 }
 export function createHost(dataDirectory, { hardware: detectHardware = detectLocalHardware, fetcher = fetch, runTurn = runDesktopTurn } = {}) {
   const sessions = path.join(dataDirectory, 'notch-sessions');
-  let models = [], fetchedAt = 0, pending, defaultModel;
-  const endpoints = new Map();
-  const profiles = new Map();
+  let models = [], fetchedAt = 0, pending, defaultModel, discoveryWarning;
+  let endpoints = new Map(), profiles = new Map(), unverifiedModels = new Set();
   const queries = new Map();
   const rewinding = new Set();
   const host = {
@@ -26,6 +25,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     assertTurnAvailable(id) { if (rewinding.has(id)) throw new Error('Finish undo before starting another turn.'); },
     getCachedModels: () => models,
     getDefaultModel: () => defaultModel,
+    getModelDiscoveryWarning: () => discoveryWarning,
     resolveModelChoice(model) {
       const chosen = !model || model === 'auto' ? defaultModel : model;
       if (!chosen || !models.some(row => row.key === chosen && row.enabled)) throw new Error('The selected model is unavailable or does not fit current memory. Choose a model in the composer.');
@@ -44,15 +44,20 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
       }
       if (pending) return pending;
       pending = (async () => {
-        const results = await Promise.allSettled(['http://127.0.0.1:11436', 'http://127.0.0.1:11434'].map(async root => {
+        const roots=['http://127.0.0.1:11436','http://127.0.0.1:11434'];
+        const results = await Promise.allSettled(roots.map(async root => {
           const [response,running] = await Promise.all([
             fetcher(`${root}/api/tags`, { signal: AbortSignal.timeout(1500) }),
             fetcher(`${root}/api/ps`, { signal: AbortSignal.timeout(1500) }).then(response=>response.ok?response.json():{models:[]}).catch(()=>({models:[]})),
           ]);
           if (!response.ok) throw new Error(`Ollama unavailable (${response.status}).`);
-          const data = await response.json(); return { root, rows: data.models || [], mounted: Array.isArray(running.models)?running.models:[] };
+          const data = await response.json();
+          if(!Array.isArray(data.models))throw new Error('Invalid Ollama model inventory.');
+          return { root, rows: data.models, mounted: Array.isArray(running.models)?running.models:[] };
         }));
-        const unique = new Map(), hardware = await detectHardware(force); endpoints.clear(); profiles.clear();
+        const failed=new Set(roots.filter((_root,index)=>results[index].status==='rejected'));
+        const retained=models.filter(row=>row.key!=='auto'&&row.provider==='ollama'&&failed.has(endpoints.get(row.key)?.replace(/\/v1$/,'')));
+        const unique=new Map(),nextEndpoints=new Map(),nextProfiles=new Map(),unverified=new Set(),hardware=await detectHardware(force);
         for (const result of results) {
           if (result.status !== 'fulfilled') continue;
           for (const row of result.value.rows) {
@@ -65,8 +70,8 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
             const mounted = result.value.mounted.find(model=>model.name===row.name && (!row.digest || model.digest===row.digest));
             const fit = localContextProfile(size,hardware,metadata,mounted);
             const contextWindow = host.modelManager?.context(key,fit.choices,fit.contextWindow) || fit.contextWindow;
-            profiles.set(key, { ...fit, contextWindow });
-            endpoints.set(key, `${result.value.root}/v1`);
+            nextProfiles.set(key, { ...fit, contextWindow });
+            nextEndpoints.set(key, `${result.value.root}/v1`);
             const label = metadata.model_info?.['general.base_model.0.name'];
             unique.set(key, { key, displayName: typeof label === 'string' && label ? label : row.name,
               description: fit.fits ? 'local Ollama · estimated memory fit' : fit.reason, provider: 'ollama', bytes: size, source: 'system', enabled: fit.fits,
@@ -76,17 +81,21 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
               efforts: [], defaultEffort: null, supportsDisabled: true });
           }
         }
-        if (host.modelManager) for (const row of await host.modelManager.mlxModels(hardware)) { unique.set(row.key,row); profiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
-        models = [...unique.values()];
-        defaultModel = models.find(row => row.isDefault && row.enabled)?.key || models.find(row => row.enabled)?.key;
+        // A failed transport is not an empty inventory; stale entries cannot start a local turn.
+        for(const row of retained)if(!unique.has(row.key)){unique.set(row.key,{...row});nextEndpoints.set(row.key,endpoints.get(row.key));nextProfiles.set(row.key,{...profiles.get(row.key)});unverified.add(row.key);}
+        if (host.modelManager) for (const row of await host.modelManager.mlxModels(hardware)) { unique.set(row.key,row); nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
+        const nextModels=[...unique.values()];
+        let nextDefault=nextModels.find(row=>row.isDefault&&row.enabled)?.key||nextModels.find(row=>row.enabled)?.key;
         if (host.modelManager) {
           const cloud = await host.modelManager.cloudCatalog().catch(()=>[]);
-          for (const row of cloud) profiles.set(row.key, { contextWindow: row.defaultContextWindow, nativeContext:row.maxInputTokens, maxOutputTokens: row.maxOutputTokens });
-          models.push(...cloud);
+          for (const row of cloud) nextProfiles.set(row.key, { contextWindow: row.defaultContextWindow, nativeContext:row.maxInputTokens, maxOutputTokens: row.maxOutputTokens });
+          nextModels.push(...cloud);
         }
-        if (hardware.mlxSupported) defaultModel = models.find(row=>row.provider==='mlx' && row.enabled)?.key || defaultModel;
-        if (defaultModel) models.unshift({ ...models.find(row => row.key === defaultModel), key: 'auto', displayName: 'local model', isDefault: true });
-        fetchedAt = Date.now(); return models;
+        if(hardware.mlxSupported)nextDefault=nextModels.find(row=>row.provider==='mlx'&&row.enabled)?.key||nextDefault;
+        if(nextDefault)nextModels.unshift({...nextModels.find(row=>row.key===nextDefault),key:'auto',displayName:'local model',isDefault:true});
+        models=nextModels;defaultModel=nextDefault;endpoints=nextEndpoints;profiles=nextProfiles;unverifiedModels=unverified;
+        discoveryWarning=unverified.size?'Could not refresh Ollama. Showing cached models; start Ollama or refresh to retry.':undefined;
+        fetchedAt=unverified.size?0:Date.now();return models;
       })().finally(() => { pending = undefined; });
       return pending;
     },
@@ -159,6 +168,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
           // Memory may have changed since the picker opened; size again before loading.
           if (!turn.model?.startsWith('openrouter/')) await host.listModels(true);
           const model = host.resolveModelChoice(turn.model);
+          if(unverifiedModels.has(model))throw new Error('Could not verify the local model. Start Ollama or refresh to retry.');
           const apiKey = model.startsWith('openrouter/') ? await host.modelManager?.key('openrouter') : undefined;
           if (model.startsWith('openrouter/') && !apiKey) throw new Error('Connect an OpenRouter API key in the model picker.');
           return runTurn({ ...turn, model, apiKey, workspaceSearch: (operation, params, cwd, signal) => host.workspaceSearch.tool(operation, cwd, params, signal),
