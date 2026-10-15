@@ -88,11 +88,21 @@ test('plugin stop joins cancelled startup and activation before resetting runtim
   const events=[];let rejectStartup,rejectActivation;
   const startup=new Promise((_resolve,reject)=>rejectStartup=reject).catch(error=>{assert.equal(isPluginStop(error),true);events.push('startup cancelled')});
   const activation=new Promise((_resolve,reject)=>rejectActivation=reject).catch(error=>{assert.equal(isPluginStop(error),true);events.push('activation cancelled')});
-  const host={process:{kill(){events.push('killed')}},processStart:startup,activationPromises:new Map([['plugin',activation]]),
-    request:async()=>{},setState:state=>events.push(state),disposeProcess(){this.process=undefined},
+  const host={stateValue:'running',process:{kill(){events.push('killed')}},processStart:startup,activationPromises:new Map([['plugin',activation]]),
+    request:async()=>{events.push('graceful shutdown')},setState:state=>events.push(state),disposeProcess(){this.process=undefined},
     rejectPending(error){rejectStartup(error);rejectActivation(error)},runtimeStates:{resetForShutdown(){events.push('reset')}}};
   const stopped=stopPluginHost(host);assert.equal(stopPluginHost(host),stopped);await stopped;
-  assert.deepEqual(events,['shuttingDown','killed','startup cancelled','activation cancelled','reset','stopped']);
+  assert.deepEqual(events,['shuttingDown','graceful shutdown','killed','startup cancelled','activation cancelled','reset','stopped']);
   assert.equal(isPluginStop(Error('genuine failure')),false);
   assert.equal(isPluginStop(Error('APP_PLUGIN_HOST_LIVENESS_STOPPED')),true);
+});
+
+test('stopping a starting plugin host waits for spawn without requesting unavailable graceful shutdown',async()=>{
+  const events=[];let spawned;
+  const ready=new Promise(resolve=>spawned=resolve);
+  const host={stateValue:'starting',process:{ready,kill(){events.push('killed')}},processStart:ready,activationPromises:new Map(),
+    request(){throw Error('Starting host cannot answer shutdown')},setState:state=>events.push(state),
+    disposeProcess(){this.process=undefined},rejectPending(){},runtimeStates:{resetForShutdown(){events.push('reset')}}};
+  const stopped=stopPluginHost(host);await Promise.resolve();assert.deepEqual(events,['shuttingDown']);
+  spawned();await stopped;assert.deepEqual(events,['shuttingDown','killed','reset','stopped']);
 });

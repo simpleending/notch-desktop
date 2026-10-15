@@ -11,13 +11,19 @@ export function isPluginStop(error) {
 
 export function stopPluginHost(host) {
   return host.notchShutdown ??= (async () => {
+    const running = host.stateValue === 'running';
     host.shuttingDown = true;
     host.setState('shuttingDown'); host.liveness?.stop();
     if (host.restartTimer) clearTimeout(host.restartTimer);
     host.restartTimer = undefined;
     const child = host.process;
     try {
-      if (child) { await host.request('host.shutdown', undefined, undefined, undefined, 2000).catch(() => {}); child.kill(); }
+      if (child) {
+        if (running) await host.request('host.shutdown', undefined, undefined, undefined, 2000).catch(() => {});
+        // A starting host has no activated plugins; its process must spawn before kill can work.
+        else await child.ready.catch(() => {});
+        child.kill();
+      }
     } finally {
       host.disposeProcess(); host.rejectPending(new Error('APP_PLUGIN_HOST_STOPPED'));
     }
