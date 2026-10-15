@@ -2,6 +2,8 @@
 
 This checklist records the scope and evidence for the Windows x64 v0.1 release. Unsupported platforms and unverified cloud scenarios remain explicit limitations; they are not counted as passing. Release artifacts are published only after installed-build checks.
 
+Version 0.1.3 includes OpenRouter's `~provider/model-latest` aliases in both fresh and cached model catalogs. Invalid identifiers remain rejected, and browsing without a key does not enable inference. Local models require a verified native context limit as well as tool support; unknown, ambiguous and unsupported limits leave the model unavailable with an explanation. Models with known limits still use conservative memory estimates when detailed KV metadata is absent. The source suite has 100 passing tests and a clean strict typecheck. A live public catalog check found all 460 eligible text models, including 19 latest aliases, on October 15, 2026; the provider's catalog can change.
+
 | Requirement | Current evidence / remaining work |
 | --- | --- |
 | First launch, branding, quiet setup, dark/light UI, keyboard navigation | Windows setup and workbench checks pass on the installed app. All 21 visible settings sections pass the branding check; all 552 renderer files are scanned, secondary illustrations replaced and renderer exports checked. Rare interactive states still need wider manual coverage. |

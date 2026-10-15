@@ -23,6 +23,18 @@ test('automatic local context respects model context, KV memory and tools',()=>{
 });
 
 const localMetadata={capabilities:['tools'],model_info:{'general.architecture':'test','test.block_count':32,'test.attention.head_count_kv':4,'test.attention.key_length':128,'test.attention.value_length':128,'test.context_length':262144}};
+
+test('local models require a verified native context but can use conservative KV estimates',()=>{
+  const hardware={availableMemory:14*GiB,totalMemory:24*GiB,availableVram:0};
+  for(const info of [{},{'text.context_length':4096,'vision.context_length':16384},...['8192',1024,0,NaN,Infinity].map(value=>({'general.architecture':'test','test.context_length':value}))]){
+    const fit=localContextProfile(3*GiB,hardware,{capabilities:['tools'],model_info:info});
+    assert.equal(fit.fits,false);assert.deepEqual(fit.choices,[]);assert.equal(fit.reason,'native context limit not confirmed');
+  }
+  for(const info of [{'general.architecture':'test','test.context_length':4096,'vision.context_length':16384},{'test.context_length':4096}]){
+    const fit=localContextProfile(3*GiB,hardware,{capabilities:['tools'],model_info:info});
+    assert.equal(fit.fits,true);assert.equal(fit.nativeContext,4096);assert.equal(fit.contextWindow,4096);assert.deepEqual(fit.choices,[2048,4096]);assert.equal(fit.kvBytesPerToken,null);
+  }
+});
 test('Auto scales with free VRAM through 128K, while 256K stays a manual choice',()=>{
   const hardware={availableMemory:14*GiB,totalMemory:24*GiB,totalVram:24*GiB};
   for(const [free,context] of [[8,16384],[12,65536],[24,131072]])assert.equal(localContextProfile(3*GiB,{...hardware,availableVram:free*GiB},localMetadata).contextWindow,context);
@@ -75,8 +87,20 @@ test('public OpenRouter browsing caches all text models without a key and never 
   assert.equal(a.find(row=>row.key==='openrouter/chat-only').tools,false);
   await manager.cloudCatalog(false,true);assert.equal(fetches,1);
 });
+
+test('OpenRouter latest aliases survive fresh and cached catalogs without accepting invalid identifiers',async()=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'notch-cloud-alias-'));
+  const alias={...model,id:'~lab/model-latest'};
+  assert.equal(cloudModelRows([alias],true)[0].key,'openrouter/~lab/model-latest');
+  for(const id of ['lab/model?key=value','lab/model\n','lab/model name','x'.repeat(257)])assert.deepEqual(cloudModelRows([{...model,id}],true),[]);
+  const manager=createModelManager(directory,{fetcher:async()=>({ok:true,json:async()=>({data:[alias]})})});
+  assert.equal((await manager.cloudCatalog(false,true))[0].key,'openrouter/~lab/model-latest');
+  const cached=createModelManager(directory,{fetcher:async()=>{throw new Error('Cached catalog should be reused.');}});
+  const rows=await cached.cloudCatalog(false,true);
+  assert.equal(rows[0].key,'openrouter/~lab/model-latest');assert.equal(rows[0].enabled,false);
+});
 test('refreshing a loaded model does not count its own allocation twice',()=>{
-  const hardware={availableMemory:2*GiB,totalMemory:24*GiB,availableVram:2*GiB},metadata={capabilities:['tools']};
+  const hardware={availableMemory:2*GiB,totalMemory:24*GiB,availableVram:2*GiB},metadata={capabilities:['tools'],model_info:{'test.context_length':8192}};
   assert.equal(localContextProfile(3*GiB,hardware,metadata).fits,false);
   assert.equal(localContextProfile(3*GiB,hardware,metadata,{size:5*GiB,size_vram:5*GiB}).fits,true);
   assert.equal(localContextProfile(3*GiB,hardware,metadata,{size:Infinity,size_vram:Infinity}).fits,false);
