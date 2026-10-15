@@ -6,6 +6,10 @@ test('method patches respect strings, regex braces and nested template expressio
   const result = patchClassMethod(source, 'Demo', 'target', 'return "Notch";');
   assert.equal(result, 'let Demo=class extends Base{target(t){return "Notch";}other(){return 2}};');
 });
+
+test('method patches support named classes with an inherited base',()=>{
+  assert.equal(patchClassMethod('class Demo extends Base{async target(){return 1}other(){return 3}}','Demo','target','return 2;'),'class Demo extends Base{async target(){return 2;}other(){return 3}}');
+});
 test('patching refuses missing/ambiguous upstream interfaces instead of guessing', () => {
   assert.throws(() => patchClassMethod('let Demo=class{other(){}}', 'Demo', 'missing', ''), /Expected one/);
   assert.throws(() => patchClassMethod('let Demo=class{target(){}target(){}}', 'Demo', 'target', ''), /Expected one/);

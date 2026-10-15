@@ -4,7 +4,22 @@ import { patchFunction, patchClassMethod } from './bundle-patch.mjs';
 import { patchWorkbenchRenderer, installWorkbenchAssets } from './workbench-patch.mjs';
 import { patchModelPreload } from './model-ipc.mjs';
 
+export function patchVoiceHardwareShutdown(source) {
+  for (const [method,variable,observable,anchor] of [
+    ['reconcileDjiMicConfiguration','o1','djiMicButtonValue','return s1&&!o1.enabled'],
+    ['configureVoiceFnShortcut','r1','voiceFnShortcutValue','return this.voiceFnShortcutValue.set(r1,void 0)'],
+  ]) source=patchClassMethod(source,'VoiceHardwareTriggerController',method,body=>{
+    // Shutdown can cancel IPC without returning a hardware-control snapshot.
+    const guard=`if(${variable}===undefined)return this.${observable}.get();`;
+    if(body.includes(guard))return body;
+    if(body.split(anchor).length!==2)throw new Error(`Voice hardware response changed: ${method}`);
+    return body.replace(anchor,guard+anchor);
+  });
+  return source;
+}
+
 export function patchSetupRenderer(source) {
+  source=patchVoiceHardwareShutdown(source);
   if (source.includes('/* notch setup renderer */')) return source;
   source = patchFunction(source, 'OnboardingOverlaySurface', 'function OnboardingOverlaySurface(){return reactExports.createElement(NotchSetup);}');
   source = patchFunction(source, 'FirstLaunchOnboardingSurface', 'const NotchSetup=createNotchSetup(reactExports);function FirstLaunchOnboardingSurface(props){return reactExports.createElement(NotchSetup,props);}');

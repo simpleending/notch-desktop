@@ -10,7 +10,7 @@ function closingBrace(source, start) {
   }
 }
 export function patchClassMethod(source, className, methodName, body) {
-  const classPattern = new RegExp(`(?:\\b${className}=class(?:\\s+extends\\s+[\\w$]+)?|\\bclass ${className})\\s*\\{`, 'g');
+  const classPattern = new RegExp(`(?:\\b${className}=class|\\bclass ${className})(?:\\s+extends\\s+[\\w$]+)?\\s*\\{`, 'g');
   const classes = [...source.matchAll(classPattern)];
   if (classes.length !== 1) throw new Error(`Expected one upstream class ${className}.`);
   const first = classes[0].index + classes[0][0].length - 1, end = closingBrace(source, first);
@@ -147,7 +147,18 @@ export function patchStartupShutdown(source) {
   source = patchFunction(source, 'k7e', original => {
     const windows = 'lr.getAllWindows().map(o8r)', workbenches = '[...kp].filter(e=>!e.isDestroyed()).map(o8r)';
     if (!original.includes(windows) && !original.includes(workbenches)) throw new Error('Renderer shutdown participants differ from the inspected baseline.');
-    return original.replace(windows, workbenches);
+    original = original.replace(windows, workbenches);
+    const ready = 'Promise.all([...kp].filter(e=>!e.isDestroyed()).map(c8r))';
+    if (original.includes(ready)) return original;
+    // A renderer cannot acknowledge shutdown before it registers its lifecycle listeners.
+    return `function k7e(t){return ${ready}.then(async()=>{${original.slice(original.indexOf('{') + 1, -1)}});}`;
+  });
+  source = patchClassMethod(source, 'Ude', 'createOverlayWindow', body => {
+    const failed = 'catch(c){throw this.logger.error("Onboarding overlay could not be opened",{error:c}),this.destroyOverlay(o),c}';
+    const cancelled = 'if(globalThis.__notchDiscovery.signal.aborted&&o.isDestroyed()&&(c.code==="ERR_ABORTED"||c.code==="ERR_FAILED"))return;';
+    if (body.includes(cancelled)) return body;
+    if (!body.includes(failed)) throw new Error('Onboarding load cancellation differs from the inspected baseline.');
+    return body.replace(failed, failed.replace('catch(c){', 'catch(c){' + cancelled));
   });
   source = patchClassMethod(source, 'Fue', 'shutdown', body => {
     const anchor = 'const t=this.hostController.shutdown();';

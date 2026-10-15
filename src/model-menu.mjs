@@ -1,6 +1,7 @@
 const logo = name => new URL(`./providers/${name}.svg`,import.meta.url).href;
 const formatContext = tokens => `${Math.round(tokens/1024)}K`;
 const formatSize = bytes => `${(bytes/2**30).toFixed(1)} GiB`;
+export const isModelSelectable = (row, options = [], loading = false) => row.enabled && !loading && options.some(option=>option.value===row.key && !option.disabled);
 
 /** Keep the workbench's popover focus/dismissal behavior and composer selection callback. */
 export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent }, useTheme) {
@@ -38,7 +39,9 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
       if (open) interactedOutside.current = false;
       const current = ++request.current;
       setError('');
-      api.state().then(data=>{if(request.current===current)setState(data);}).catch(error=>{if(request.current===current)setError(error.message);});
+      api.state().then(data=>{if(request.current===current){setState(data);
+        if(open && data.models.some(row=>row.enabled && !props.options?.some(option=>option.value===row.key)))props.onOpenChange?.(true);
+      }}).catch(error=>{if(request.current===current)setError(error.message);});
       return () => { request.current++; };
     },[open]);
     React.useEffect(() => {
@@ -64,7 +67,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const provider = tab==='cloud'?'openrouter':'huggingface', connected = state?.[provider];
     const inputId = `${id}-key`;
     const connectForm = (tab==='cloud' && !connected) || (tab==='hub' && !connected && optional);
-    const select = row => { if(!row.enabled || busy)return; props.onSelect(row.key); changeOpen(false); };
+    const select = row => { if(!isModelSelectable(row,props.options,props.loading) || busy)return; props.onSelect(row.key); changeOpen(false); };
     const keyboard = event => {
       if (!['ArrowDown','ArrowUp','Home','End'].includes(event.key)) return;
       const rows = [...list.current.querySelectorAll('[role=option]:not(:disabled)')]; if(!rows.length)return;
@@ -97,7 +100,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
           h('div',{ref:list,role:'listbox','aria-label':`${tabs.find(([name])=>name===tab)[1]} models`,'aria-busy':tab==='hub'?hubLoading:tab==='cloud'?cloudLoading:false,className:'notch-model-list',onKeyDown:keyboard},
             ...filtered.map(row=>tab==='hub'?h('button',{type:'button',key:row.repo,role:'option','aria-selected':confirm?.repo===row.repo,disabled:!row.fits || busy || hubLoading || state?.job?.state==='running',onClick:()=>setConfirm(row)},
               h('strong',null,row.repo),h('small',null,`${formatSize(row.bytes)} download · ${formatSize(row.required)} estimated RAM${row.fits?'':' · exceeds available memory'}`)):
-              h('button',{type:'button',key:row.key,title:row.key,role:'option','aria-selected':row.key===current?.key,disabled:!row.enabled || busy || (tab==='cloud'&&cloudLoading),onClick:()=>select(row)},
+              h('button',{type:'button',key:row.key,title:row.key,role:'option','aria-selected':row.key===current?.key,disabled:!isModelSelectable(row,props.options,props.loading) || busy || (tab==='cloud'&&cloudLoading),onClick:()=>select(row)},
                 h('strong',null,row.displayName),h('small',null,tab==='cloud'?`${formatContext(row.defaultContextWindow)} context · ${Number.isFinite(row.pricing?.input)&&Number.isFinite(row.pricing?.output)?`$${row.pricing.input.toFixed(2)} in / $${row.pricing.output.toFixed(2)} out per 1M tokens`:'see provider pricing'}${row.enabled?'':` · ${row.description}`}`:`${formatSize(row.bytes)} weights · ${formatContext(row.defaultContextWindow)} context · ${row.enabled?'local':row.description}`))),
             !filtered.length?h('p',{className:'notch-model-note'},busy || hubLoading || cloudLoading || !state?'Loading models…':tab==='hub'?'No compatible weights on this page. Try another search or load more.':'No matching models.'):null),
           tab==='hub' && hub?.query?.toLowerCase()===search.trim().toLowerCase() && Number.isSafeInteger(hub.nextPage)?h('button',{type:'button',className:'notch-model-link',disabled:hubLoading || busy,onClick:()=>void loadHub(hub.nextPage)},hubLoading?'Loading…':'Load more models'):null,

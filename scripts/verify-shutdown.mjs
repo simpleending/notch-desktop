@@ -3,26 +3,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
+import {ownedProcessIds,processSnapshot as processes,stopOwnedProcesses} from './process-tree.mjs';
 
 const executable=path.resolve(process.argv[2]),reportFile=path.resolve(process.argv[3]||'release/shutdown-verification.json');
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'notch-shutdown-'));
 const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|ELECTRON_RUN_AS_NODE/i.test(key)));
 const checks=[];let app;
-async function processes(){
-  const {stdout}=await promisify(execFile)('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate | ConvertTo-Json -Compress'],{windowsHide:true,timeout:15000,maxBuffer:2**20});
-  return JSON.parse(stdout);
-}
 async function logs(profile){
   const files=await fs.readdir(path.join(profile,'logs'),{recursive:true}).catch(e=>{if(e.code==='ENOENT')return [];throw e});
   return files.filter(file=>path.basename(file)==='main.log').map(file=>path.join(profile,'logs',file));
 }
 async function finish(profile,stage,close,details={}){
   const child=app.process(),exit=child.exitCode===null?new Promise(resolve=>child.once('exit',(code,signal)=>resolve({code,signal}))):Promise.resolve({code:child.exitCode});
-  const before=await processes(),owned=new Set([child.pid]);let changed=true;
-  while(changed){changed=false;for(const p of before)if(owned.has(p.ParentProcessId)&&!owned.has(p.ProcessId)){owned.add(p.ProcessId);changed=true;}}
+  const before=await processes(),owned=ownedProcessIds(child.pid,before);
   const started=Date.now();await close();
   let timer;const result=await Promise.race([exit,new Promise((_r,reject)=>{timer=setTimeout(()=>reject(Error('Startup shutdown exceeded 15 seconds')),15000)})]).finally(()=>clearTimeout(timer));
   app=null;assert.equal(result.code,0,JSON.stringify(result));
@@ -81,7 +75,7 @@ try{
   await finish(returning,'plugins-ready',closeWindows,{runningViews:views.length});
   await fs.writeFile(reportFile,JSON.stringify({passed:true,executable,root,checks},null,2));console.log(JSON.stringify({passed:true,root,cases:checks.length,checks:checks.map(c=>({stage:c.stage,elapsedMs:c.elapsedMs,ownedProcesses:c.ownedProcesses}))}));
 }catch(error){await fs.writeFile(reportFile,JSON.stringify({passed:false,executable,root,checks,error:error.stack},null,2));throw error;}finally{
-  if(app){const child=app.process();let timer;await Promise.race([app.close().catch(()=>{}),new Promise(resolve=>{timer=setTimeout(resolve,5000)})]).finally(()=>clearTimeout(timer));
-    if(child.exitCode===null)await promisify(execFile)('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true}).catch(()=>{});
+  if(app){const child=app.process(),before=await processes();let timer;await Promise.race([app.close().catch(()=>{}),new Promise(resolve=>{timer=setTimeout(resolve,5000)})]).finally(()=>clearTimeout(timer));
+    if(child.exitCode===null)await stopOwnedProcesses(child.pid,before);
   }
 }

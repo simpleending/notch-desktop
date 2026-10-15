@@ -1,6 +1,6 @@
 {
   "name": "@freesyntax/notch-desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "notch by freesyntax.dev: local models first, optional provider API keys",
@@ -20,6 +20,8 @@
     "verify:agent": "node scripts/verify-agent.mjs",
     "verify:compaction": "node scripts/verify-compaction.mjs",
     "verify:undo": "node scripts/verify-undo.mjs",
+    "verify:recovery": "node scripts/verify-undo.mjs --recovery",
+    "verify:model-switching": "node scripts/verify-model-switching.mjs",
     "verify:shutdown": "node scripts/verify-shutdown.mjs"
   },
   "dependencies": {
