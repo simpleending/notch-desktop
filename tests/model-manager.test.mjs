@@ -149,6 +149,16 @@ test('concurrent install requests cannot start two downloads after metadata vali
   const results=await Promise.allSettled([a,b]);assert.equal(results.filter(result=>result.status==='fulfilled').length,1);assert.equal(installs,1);
   assert.match(results.find(result=>result.status==='rejected').reason.message,/already/);await manager.cancelInstall();
 });
+
+test('download progress exposes the last stage, redacts tokens and clears percentages during validation',async()=>{
+  let output,finish;
+  const manager=createModelManager(await mkdtemp(path.join(os.tmpdir(),'notch-model-progress-')),{recommend:async()=>({models:[{repo:'lab/new',fits:true}]}),install:async(_repo,_runner,{onOutput})=>{output=onOutput;await new Promise(resolve=>{finish=resolve;});}});
+  await manager.startInstall('lab/new','ollama');output({text:'old stage\n\x1b[32m40% - downloading weights\x1b[0m\n'});
+  assert.equal((await manager.status()).job.percent,40);assert.equal((await manager.status()).job.message,'40% - downloading weights');
+  output({text:'Loading model and checking tools hf_private_token'});let {job}=await manager.status();assert.equal(job.percent,undefined);assert.doesNotMatch(job.message,/hf_private_token/);
+  finish();while((await manager.status()).job.state==='running')await new Promise(resolve=>setImmediate(resolve));
+  job=(await manager.status()).job;assert.equal(job.state,'complete');assert.match(job.message,/Installed/);
+});
 test('a verified MLX installation appears after restart only on supported Apple hardware',async()=>{
   const directory=await mkdtemp(path.join(os.tmpdir(),'notch-model-mlx-'));
   const manager=createModelManager(directory,{recommend:async()=>({models:[{repo:'owner/apple-model',fits:true,bytes:3*GiB}]}),install:async (_repo,_runner,{cwd})=>{assert.ok(cwd.startsWith(directory));}});

@@ -26,7 +26,7 @@ The Windows release supports x64 PCs running Windows 10 or 11. Check the release
 
 1. Download the Windows installer from the [latest release](https://github.com/simpleending/notch-desktop/releases/latest), then open **notch** from your Start menu.
 2. Open a project folder.
-3. Choose a local model, download one from Hugging Face, or connect your OpenRouter API key.
+3. Choose a local model, download one from Hugging Face, or connect your OpenRouter API key. In Hugging Face, click a model's download arrow, review its size and memory requirements, then choose **Download model**. notch installs the required runtime and model files and checks coding tools; progress and errors appear in the picker. When ready, choose **Show installed models** and select it. The model loads when you send a message.
 4. Try “Explain how this project works,” then review any changes before approving them.
 
 Local models need enough memory to run. Cloud models use your provider’s pricing and receive the project content included in your request. Your API keys are kept out of saved conversations.

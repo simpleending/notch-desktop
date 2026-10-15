@@ -79,8 +79,12 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       const cwd = path.join(directory,'model-installs'); await fs.mkdir(cwd,{recursive:true});
       if (job?.public.state==='running') throw new Error('A model download is already running.');
       const controller = new AbortController(); job = { controller, public: { id: randomUUID(), repo, runner, state: 'running', message: 'Preparing download…' } }; const current = job;
-      void install(repo,runner,{ cwd, signal: controller.signal, env: keys.has('huggingface') ? { HF_TOKEN: keys.get('huggingface') } : {}, onOutput: ({text})=>{ current.public.message = text.trim().slice(-500).replace(/\x1b\[[0-9;]*m/g,''); } })
-        .then(async()=>{if(runner==='mlx'){installedMlx=[...installedMlx.filter(item=>item.repo!==repo),{repo,bytes:row.bytes,...(Number.isSafeInteger(row.contextLength) && row.contextLength>=2048 ? {contextLength:row.contextLength} : {})}];await atomic(mlxFile,installedMlx);}current.public.state='complete';current.public.message='Installed. Refresh Installed to select it.';})
+      void install(repo,runner,{ cwd, signal: controller.signal, env: keys.has('huggingface') ? { HF_TOKEN: keys.get('huggingface') } : {}, onOutput: ({text})=>{
+        const line=text.replace(/\x1b\[[0-9;]*m/g,'').trim().split(/[\r\n]+/).filter(Boolean).at(-1);if(!line)return;
+        current.public.message=line.replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);
+        const percent=line.match(/^(\d{1,3})% - /);current.public.percent=percent?Math.min(100,Number(percent[1])):undefined;
+      } })
+        .then(async()=>{if(runner==='mlx'){installedMlx=[...installedMlx.filter(item=>item.repo!==repo),{repo,bytes:row.bytes,...(Number.isSafeInteger(row.contextLength) && row.contextLength>=2048 ? {contextLength:row.contextLength} : {})}];await atomic(mlxFile,installedMlx);}current.public.state='complete';current.public.message='Ready. Open Installed to select this model. It loads when you send a message.';})
         .catch(error=>{current.public.state=controller.signal.aborted?'cancelled':'failed';current.public.message=controller.signal.aborted?'Download cancelled; cached files are retained.':String(error.message).replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);});
       return service.status();
     },
