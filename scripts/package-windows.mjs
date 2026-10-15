@@ -86,7 +86,7 @@ const configuration={appId,productName,executableName:'Notch',copyright:'Copyrig
   directories:{output:path.join(staging,'installer')},extraMetadata:{version},npmRebuild:false,publish:null,
   win:{target:[{target:'nsis',arch:['x64']}],icon:path.join(app,'resources/app-icon.ico')},
   nsis:{artifactName:`notch-${version}-setup-x64.exe`,oneClick:false,perMachine:false,allowElevation:false,allowToChangeInstallationDirectory:true,
-    createDesktopShortcut:true,createStartMenuShortcut:true,shortcutName:productName,uninstallDisplayName:productName,deleteAppDataOnUninstall:false,runAfterFinish:false,differentialPackage:false,license:path.join(root,'LICENSE')}};
+    createDesktopShortcut:true,createStartMenuShortcut:true,shortcutName:productName,uninstallDisplayName:productName,deleteAppDataOnUninstall:false,runAfterFinish:true,differentialPackage:false,license:path.join(root,'LICENSE')}};
 const config=path.join(staging,'electron-builder.json');await fs.writeFile(config,JSON.stringify(configuration,null,2));
 await new Promise((resolve,reject)=>{
   const env={...Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|^csc_/i.test(key))),CSC_IDENTITY_AUTO_DISCOVERY:'false'};
