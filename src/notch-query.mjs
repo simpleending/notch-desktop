@@ -32,7 +32,10 @@ export class NotchQuery {
     this.closed = false; this.ended = false; this.active = undefined;
     this.model = request.model; this.permissionMode = request.permissionMode || 'default'; this.planMode = !!request.planMode;
     accessForMode(this.permissionMode, this.planMode);
-    this.ready = host.loadSession(this.id, request.cwd).then(state => { this.state = state; });
+    this.ready = host.loadSession(this.id, request.cwd).then(async state => {
+      this.state = state;
+      if (host.openCheckpoints) this.checkpoints = await host.openCheckpoints(this.id, state.cwd);
+    });
     this.task = this.consume(request.prompt).catch(error => { this.emitResult(error); }).finally(() => this.finish());
   }
   envelope(type, body = {}, uuid = randomUUID()) { return { type, uuid, session_id: this.id, ...body }; }
@@ -71,6 +74,11 @@ export class NotchQuery {
     const models = await this.host.listModels();
     if (this.active) throw new Error('Finish or interrupt the current turn before changing models.');
     if (!models.some(row => row.key === model && row.enabled)) throw new Error('Choose an available model from the composer.');
+    if (this.host.openCheckpoints) {
+      const state = await this.host.loadSession(this.id, this.request.cwd);
+      if (this.active) throw new Error('Finish or interrupt the current turn before changing models.');
+      this.state = state;
+    }
     this.model = this.host.resolveModelChoice ? this.host.resolveModelChoice(model) : model;
     this.state.contextUsage = null;
     await this.host.saveSession(this.id, this.state);
@@ -85,11 +93,21 @@ export class NotchQuery {
   }
   async close() { if (this.closed) return; this.closed = true; await this.interrupt(); this.finish(); }
   async return() { await this.close(); return { done: true, value: undefined }; }
-  async rewindFiles(_messageId, options = {}) {
+  async rewindFiles(messageId, options = {}) {
+    await this.ready;
     if (this.active) throw new Error('Interrupt the turn before restoring files.');
-    const filesChanged = this.checkpoints.allDiffs().map(row => row.path);
-    if (!options.dryRun) await this.checkpoints.undo();
-    return { canRewind: this.checkpoints.undoCount > 0 || filesChanged.length > 0, filesChanged, insertions: 0, deletions: 0 };
+    if (this.host.openCheckpoints) {
+      this.state = await this.host.loadSession(this.id, this.request.cwd);
+      this.checkpoints = await this.host.openCheckpoints(this.id, this.state.cwd);
+    }
+    const preview = await this.checkpoints.preview(messageId);
+    if (!options.dryRun && preview.canRewind) {
+      await this.checkpoints.undo(messageId);
+      this.state.messages.push({ role: 'user', content: 'Files from the selected turn and later turns were restored by the user. Inspect current files before continuing; do not replay the undone actions.' });
+      this.state.contextUsage = null;
+      await this.host.saveSession(this.id, this.state);
+    }
+    return preview;
   }
   emitResult(error, result) {
     if (this.compacting) { this.compacting=false; this.emit(this.envelope('system',{subtype:'status',status:null})); }
@@ -115,11 +133,12 @@ export class NotchQuery {
       if (this.closed) break;
       const content = input?.message?.content;
       if (typeof content !== 'string' && !Array.isArray(content)) throw new Error('Invalid workbench user message.');
-      await this.turn(content);
+      await this.turn(content, input.uuid);
     }
   }
-  async turn(content) {
+  async turn(content, messageId = randomUUID()) {
     if (this.closed) return;
+    this.host.assertTurnAvailable?.(this.id);
     const controller = new AbortController();
     const forwardAbort = () => controller.abort(this.request.abortController.signal.reason);
     const outerSignal = this.request.abortController?.signal;
@@ -135,6 +154,12 @@ export class NotchQuery {
       text = ''; textId = undefined;
     };
     try {
+      if (this.host.openCheckpoints) {
+        this.state = await this.host.loadSession(this.id, this.request.cwd);
+        this.checkpoints = await this.host.openCheckpoints(this.id, this.state.cwd);
+      }
+      this.host.assertTurnAvailable?.(this.id);
+      await this.checkpoints.beginTurn(messageId);
       this.state.messages.push({ role: 'user', content });
       await this.host.saveSession(this.id, this.state);
       const result = await this.runTurn({
@@ -170,6 +195,18 @@ export class NotchQuery {
           if (event==='pre-compact') { this.compacting=true; this.emit(this.envelope('system',{subtype:'status',status:'compacting'})); return; }
           if (event==='post-compact') { this.compacting=false; this.emit(this.envelope('system',{subtype:'status',status:null})); return; }
           if (!['pre-tool', 'post-tool'].includes(event)) return;
+          const hookEvent = event === 'pre-tool' ? 'PreToolUse' : payload.isError ? 'PostToolUseFailure' : 'PostToolUse';
+          const name = payload.tool === 'apply_patch' ? 'apply_patch' : toolNames[payload.tool] || payload.tool;
+          for (const group of this.request.hooks?.[hookEvent] || []) {
+            if (group.matcher && !new RegExp(group.matcher).test(name)) continue;
+            for (const hook of group.hooks || []) {
+              if (typeof hook !== 'function') throw new Error('Only workbench callback hooks are supported.');
+              const decision = await hook({ session_id: this.id, cwd: this.request.cwd, hook_event_name: hookEvent,
+                tool_name: name, tool_input: wireInput(payload.tool, payload.args || {}), tool_response: payload.result }, payload.toolCallId, { signal: controller.signal });
+              if (decision?.continue === false || decision?.hookSpecificOutput?.permissionDecision === 'deny') throw new Error(decision.stopReason || decision.hookSpecificOutput?.permissionDecisionReason || 'Workbench hook blocked this tool.');
+              if (decision?.hookSpecificOutput?.updatedInput) throw new Error('Changed hook input requires a new approved request.');
+            }
+          }
           observations.push({ event, ...payload }); await this.host.journal(this.id, { event, ...payload });
         },
       });

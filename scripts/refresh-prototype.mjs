@@ -5,6 +5,7 @@ import { patchWorkbench, rebrandWorkbenchText } from '../src/bundle-patch.mjs';
 import { inspectInstallation } from '../src/upstream-inspection.mjs';
 import { rebrandTree } from '../src/rebrand-tree.mjs';
 import { installSetupRenderer } from '../src/renderer-patch.mjs';
+import { rebuildPluginCatalog, verifyPluginCatalog } from '../src/plugin-integrity.mjs';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = path.resolve(process.argv[2] || 'release/Notch-prototype');
@@ -42,6 +43,8 @@ await writeFile(path.join(output, 'resources/build-manifest.json'), rebrandWorkb
 for (const name of ['extensions','dynamic-text','bundled-resources','application-icons']) {
   await rebrandTree(path.join(output, 'resources', name));
 }
+await rebuildPluginCatalog(path.join(output, 'resources/extensions'));
+await verifyPluginCatalog(path.join(output, 'resources/extensions'));
 await createPackageWithOptions(application, path.join(output, 'resources/app.asar'), { unpack: '**/*.{node,dll,exe,so,dylib}', unpackDir: '**/{@ff-labs,ffi-rs,@yuuang}' });
 await writeFile(path.join(output, 'prototype-build.json'), JSON.stringify({ ...marker, methodPatches: patched.changes }, null, 2));
 console.log(JSON.stringify({ output, patchedMethods: patched.changes.length }));

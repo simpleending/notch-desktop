@@ -87,6 +87,7 @@ export function patchWorkbench(source) {
     ['Ude', 'dialogBounds', 'const width=Math.min(960,Math.max(1,t.width-48)),height=Math.min(660,Math.max(1,t.height-48));return {x:t.x+Math.round((t.width-width)/2),y:t.y+Math.round((t.height-height)/2),width,height};'],
   ];
   for (const [className, method, body] of changes) source = patchClassMethod(source, className, method, body);
+  source = patchUndoIntegration(source);
   const reporting = 'enabled:GF&&(ot.isPackaged||process.env.QODER_RUM_DEV_REPORT==="1")';
   if (!source.includes(reporting)) throw new Error('Upstream RUM initialization differs from the inspected baseline.');
   source = source.replace(reporting, 'enabled:false');
@@ -113,4 +114,15 @@ export function rebrandWorkbenchText(source) {
 export function patchDirectStartup(source) {
   // The notch installer launches the app directly and does not ship the legacy update launcher.
   return patchFunction(source,'aBt','function aBt(){return "current";}');
+}
+
+export function patchUndoIntegration(source) {
+  const access = 'if(n){const c=this.dependencies.runtimeManager.acquireRewindSession(e);';
+  const replacement = 'if(globalThis.__notchHost)return globalThis.__notchHost.acquireRewind(e);' + access;
+  if (!source.includes(access)) throw new Error('File undo access differs from the inspected baseline.');
+  if (!source.includes(replacement)) source = source.replace(access, replacement);
+  source = source.replace('e.validatorVersion??"agent-sdk"', 'e.validatorVersion??"notch-0.1.0"');
+  source = patchFunction(source, 'bPe', 'function bPe(t){return _Ke.has(t.toLowerCase())||t.toLowerCase()==="apply_patch";}');
+  source = patchFunction(source, 'cnr', original => original.replace('(?:Add|Update|Delete) File:', '(?:(?:Add|Update|Delete) File|Move to):'));
+  return patchFunction(source, 'Xme', 'function Xme(){return target=>globalThis.__notchHost.validatePlugin(target);}');
 }

@@ -7280,18 +7280,158 @@ ${memoryStr}`, {
 // vendor/notch-cli/src/agent/checkpoints.ts
 import fs17 from "fs/promises";
 import path19 from "path";
-var CheckpointManager = class {
+import { randomUUID as randomUUID2 } from "crypto";
+var CheckpointManager = class _CheckpointManager {
   checkpoints = [];
   nextId = 1;
   pendingFiles = /* @__PURE__ */ new Map();
   pendingReads = /* @__PURE__ */ new Map();
+  pendingAfter = /* @__PURE__ */ new Map();
+  messageId;
+  storage;
+  saving = Promise.resolve();
+  restoring;
+  static async open(cwd, file) {
+    const manager = new _CheckpointManager();
+    const realCwd = await fs17.realpath(cwd), stat = await fs17.stat(realCwd, { bigint: true });
+    manager.storage = { cwd: realCwd, file: path19.resolve(file), identity: `${stat.dev}:${stat.ino}` };
+    let raw;
+    try {
+      raw = await fs17.readFile(file, "utf8");
+    } catch (error) {
+      if (error.code === "ENOENT") return manager;
+      throw error;
+    }
+    if (Buffer.byteLength(raw) > 64 * 2 ** 20) throw new Error("Undo history exceeds 64 MiB.");
+    const state = JSON.parse(raw);
+    if (state.version !== 1 || state.cwd !== manager.storage.cwd || state.identity !== manager.storage.identity || !Array.isArray(state.checkpoints) || !Array.isArray(state.pending)) throw new Error("Invalid undo history or workspace mismatch; history was preserved.");
+    const snapshot = (row, pending = false) => {
+      if (!row || typeof row.path !== "string" || !path19.isAbsolute(row.path) || !manager.isWithin(row.path) || !(row.before === null || typeof row.before === "string") || !(row.after === null || typeof row.after === "string" || pending && row.after === void 0) || row.uncertain !== void 0 && typeof row.uncertain !== "boolean") throw new Error("Invalid undo snapshot; history was preserved.");
+    };
+    let previous = 0;
+    for (const row of state.checkpoints) {
+      if (!Number.isSafeInteger(row.id) || row.id <= previous || !Number.isFinite(row.timestamp) || typeof row.description !== "string" || !Array.isArray(row.files)) throw new Error("Invalid undo checkpoint.");
+      manager.validateMessageId(row.messageId);
+      row.files.forEach((file2) => snapshot(file2));
+      if (new Set(row.files.map((file2) => file2.path)).size !== row.files.length) throw new Error("Duplicate undo path.");
+      previous = row.id;
+    }
+    if (!Number.isSafeInteger(state.nextId) || state.nextId <= previous) throw new Error("Invalid undo sequence.");
+    manager.checkpoints = state.checkpoints;
+    manager.nextId = state.nextId;
+    manager.validateMessageId(state.messageId);
+    manager.messageId = state.messageId;
+    for (const row of state.pending) {
+      snapshot(row, true);
+      if (manager.pendingFiles.has(row.path)) throw new Error("Duplicate pending undo path.");
+      manager.pendingFiles.set(row.path, row.before);
+      if (row.after !== void 0) manager.pendingAfter.set(row.path, row.after);
+    }
+    if (state.restoring) {
+      if (!Number.isInteger(state.restoring.index) || state.restoring.index < 0 || state.restoring.index >= manager.checkpoints.length || !Array.isArray(state.restoring.files)) throw new Error("Invalid undo recovery transaction.");
+      state.restoring.files.forEach((file2) => snapshot(file2));
+      manager.restoring = state.restoring;
+    }
+    if (manager.pendingFiles.size) {
+      const files = [];
+      for (const [filePath, before] of manager.pendingFiles) {
+        const current = await manager.read(filePath);
+        if (current !== before) files.push({ path: filePath, before, after: manager.pendingAfter.get(filePath) ?? null, uncertain: !manager.pendingAfter.has(filePath) });
+      }
+      manager.checkpoints.push({ id: manager.nextId++, timestamp: Date.now(), files, description: "Interrupted turn", messageId: manager.messageId });
+      manager.pendingFiles.clear();
+      manager.pendingAfter.clear();
+      manager.messageId = void 0;
+      await manager.persist();
+    }
+    return manager;
+  }
+  validateMessageId(id) {
+    if (id !== void 0 && (typeof id !== "string" || !/^[A-Za-z0-9_:.-]{1,128}$/.test(id))) throw new Error("Invalid undo turn ID.");
+  }
+  isWithin(file) {
+    if (!this.storage) return true;
+    const relative = path19.relative(this.storage.cwd, file);
+    return !!relative && relative !== ".." && !relative.startsWith(".." + path19.sep) && !path19.isAbsolute(relative) && (process.platform !== "win32" || !relative.includes(":"));
+  }
+  async safePath(file) {
+    if (!this.isWithin(file)) throw new Error("Undo path is outside this workspace.");
+    if (this.storage) {
+      const relative = path19.relative(path19.dirname(this.storage.file), file);
+      if (path19.resolve(file) === this.storage.file || this.isWithin(path19.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path19.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
+    }
+    let cursor = file;
+    while (true) {
+      try {
+        const stat = await fs17.lstat(cursor);
+        if (stat.isSymbolicLink() || cursor === file && stat.nlink > 1) throw new Error("Undo refuses symbolic links and shared hard links.");
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      if (cursor === this.storage?.cwd || path19.dirname(cursor) === cursor) break;
+      cursor = path19.dirname(cursor);
+    }
+  }
+  async read(file) {
+    await this.safePath(file);
+    try {
+      const bytes = await fs17.readFile(file), content = bytes.toString("utf8");
+      if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${file}`);
+      return content;
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+  }
+  async persist() {
+    if (!this.storage) return;
+    const data = JSON.stringify({
+      version: 1,
+      cwd: this.storage.cwd,
+      identity: this.storage.identity,
+      nextId: this.nextId,
+      checkpoints: this.checkpoints,
+      pending: [...this.pendingFiles].map(([path21, before]) => ({ path: path21, before, after: this.pendingAfter.get(path21) })),
+      messageId: this.messageId,
+      restoring: this.restoring
+    });
+    if (Buffer.byteLength(data) > 64 * 2 ** 20) throw new Error("Undo history exceeds 64 MiB; no further writes are allowed.");
+    const file = this.storage.file;
+    const save = this.saving.then(async () => {
+      await fs17.mkdir(path19.dirname(file), { recursive: true });
+      const temporary = `${file}.${randomUUID2()}.tmp`;
+      try {
+        await fs17.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
+        await fs17.rename(temporary, file);
+      } finally {
+        await fs17.unlink(temporary).catch(() => {
+        });
+      }
+    });
+    this.saving = save.catch(() => {
+    });
+    await save;
+  }
+  async beginTurn(messageId) {
+    this.validateMessageId(messageId);
+    if (this.restoring || this.pendingFiles.size) throw new Error("Finish pending undo recovery before starting another turn.");
+    this.messageId = messageId;
+    await this.persist();
+  }
   /** Call before a file is modified — records its current content */
   async recordBefore(filePath) {
     filePath = path19.resolve(filePath);
-    if (this.pendingFiles.has(filePath)) return;
     const existing = this.pendingReads.get(filePath);
     if (existing) return existing;
     const read = (async () => {
+      if (this.restoring) throw new Error("Finish pending undo recovery before writing files.");
+      await this.safePath(filePath);
+      if (this.pendingFiles.has(filePath)) {
+        if (this.pendingAfter.has(filePath) && await this.read(filePath) !== this.pendingAfter.get(filePath)) throw new Error(`File changed during this turn: ${filePath}`);
+        this.pendingAfter.delete(filePath);
+        await this.persist();
+        return;
+      }
       try {
         const bytes = await fs17.readFile(filePath);
         const content = bytes.toString("utf8");
@@ -7301,6 +7441,7 @@ var CheckpointManager = class {
         if (error.code !== "ENOENT") throw error;
         this.pendingFiles.set(filePath, null);
       }
+      await this.persist();
     })();
     this.pendingReads.set(filePath, read);
     try {
@@ -7309,43 +7450,77 @@ var CheckpointManager = class {
       this.pendingReads.delete(filePath);
     }
   }
+  async recordAfter() {
+    await Promise.all(this.pendingReads.values());
+    for (const filePath of this.pendingFiles.keys()) if (!this.pendingAfter.has(filePath)) this.pendingAfter.set(filePath, await this.read(filePath));
+    await this.persist();
+  }
   /** Commit all pending file changes as a checkpoint */
   async commit(description) {
-    await Promise.all(this.pendingReads.values());
+    await this.recordAfter();
     const files = [];
     for (const [filePath, before] of this.pendingFiles) {
-      let after = null;
-      try {
-        after = await fs17.readFile(filePath, "utf-8");
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-      }
+      const after = this.pendingAfter.get(filePath);
+      if (await this.read(filePath) !== after) throw new Error(`File changed since tool completion: ${filePath}`);
       if (before !== after) files.push({ path: filePath, before, after });
     }
     const checkpoint = {
       id: this.nextId++,
       timestamp: Date.now(),
       files,
-      description
+      description,
+      messageId: this.messageId
     };
-    if (files.length) this.checkpoints.push(checkpoint);
+    if (files.length || this.messageId) this.checkpoints.push(checkpoint);
     this.pendingFiles.clear();
+    this.pendingAfter.clear();
+    this.messageId = void 0;
+    await this.persist();
     return checkpoint;
   }
   /** Undo the most recent checkpoint — restores all files to their before state */
-  async undo() {
-    const checkpoint = this.checkpoints.at(-1);
-    if (!checkpoint) return null;
-    for (const snap of checkpoint.files) {
-      let current = null;
-      try {
-        current = await fs17.readFile(snap.path, "utf8");
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-      }
+  selection(messageId) {
+    if (this.restoring) {
+      if (messageId && this.checkpoints[this.restoring.index]?.messageId !== messageId) throw new Error("Retry interrupted undo before choosing another turn.");
+      return this.restoring;
+    }
+    const index = messageId ? this.checkpoints.findIndex((row) => row.messageId === messageId) : this.checkpoints.map((row) => row.files.length > 0).lastIndexOf(true);
+    if (index < 0) {
+      if (messageId) throw new Error("No saved file checkpoint for this turn.");
+      return null;
+    }
+    const files = /* @__PURE__ */ new Map();
+    for (const checkpoint of this.checkpoints.slice(index)) for (const snapshot of checkpoint.files) {
+      const old = files.get(snapshot.path);
+      files.set(snapshot.path, { ...snapshot, before: old ? old.before : snapshot.before, uncertain: !!(old?.uncertain || snapshot.uncertain) });
+    }
+    return { index, files: [...files.values()] };
+  }
+  async preview(messageId) {
+    const selected = this.selection(messageId);
+    if (!selected) return { canRewind: false, filesChanged: [], insertions: 0, deletions: 0 };
+    for (const snap of selected.files) {
+      const current = await this.read(snap.path);
+      if (snap.uncertain && current !== snap.before) throw new Error(`Undo blocked: interrupted write to ${snap.path} was not verified. Inspect this file first.`);
       if (current !== snap.after && current !== snap.before) throw new Error(`Undo blocked: ${snap.path} changed since this checkpoint.`);
     }
-    for (const snap of checkpoint.files) {
+    return { canRewind: true, filesChanged: selected.files.map((row) => row.path), insertions: 0, deletions: 0 };
+  }
+  async undo(messageId) {
+    const selected = this.selection(messageId);
+    if (!selected) return null;
+    await this.preview(messageId);
+    const checkpoint = this.checkpoints[selected.index];
+    this.restoring = selected;
+    await this.persist();
+    for (const snap of selected.files) {
+      const current = await this.read(snap.path);
+      if (current !== snap.after && current !== snap.before) throw new Error(`Undo blocked: ${snap.path} changed since this checkpoint.`);
+    }
+    for (const snap of selected.files) {
+      const current = await this.read(snap.path);
+      if (current !== snap.after && current !== snap.before) throw new Error(`Undo blocked: ${snap.path} changed since this checkpoint.`);
+      if (current === snap.before) continue;
       if (snap.before === null) {
         try {
           await fs17.unlink(snap.path);
@@ -7354,23 +7529,35 @@ var CheckpointManager = class {
         }
       } else {
         await fs17.mkdir(path19.dirname(snap.path), { recursive: true });
-        await fs17.writeFile(snap.path, snap.before, "utf-8");
+        const temporary = `${snap.path}.${randomUUID2()}.undo-tmp`;
+        const mode = current === null ? 384 : (await fs17.stat(snap.path)).mode & 511;
+        try {
+          await fs17.writeFile(temporary, snap.before, { mode, flag: "wx", flush: true });
+          await fs17.rename(temporary, snap.path);
+        } finally {
+          await fs17.unlink(temporary).catch(() => {
+          });
+        }
       }
     }
-    this.checkpoints.pop();
-    return checkpoint;
+    this.checkpoints.splice(selected.index);
+    this.restoring = void 0;
+    await this.persist();
+    return { ...checkpoint, files: selected.files };
   }
   /** Get the list of checkpoints (most recent last) */
   list() {
-    return [...this.checkpoints];
+    return structuredClone(this.checkpoints);
   }
   /** How many checkpoints are available to undo */
   get undoCount() {
-    return this.checkpoints.length;
+    return this.checkpoints.filter((row) => row.files.length > 0).length;
   }
   /** Discard pending without committing */
   discard() {
+    if (this.storage) throw new Error("Persisted pending snapshots cannot be discarded without verification.");
     this.pendingFiles.clear();
+    this.pendingAfter.clear();
   }
   /**
    * Get all diffs across all checkpoints (for /diff command).
@@ -7461,6 +7648,7 @@ async function runDesktopTurn(turn) {
     },
     runHook: async (event, payload) => {
       await turn.onLifecycle?.(event, payload);
+      if (event === "post-tool") await turn.checkpoints.recordAfter();
       if (event !== "pre-tool") return;
       const args = payload.args;
       if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore(path20.resolve(cwd, args.path));

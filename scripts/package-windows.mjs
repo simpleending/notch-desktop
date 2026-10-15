@@ -10,11 +10,14 @@ import { extractAll, createPackageWithOptions } from '@electron/asar';
 import { installSetupRenderer } from '../src/renderer-patch.mjs';
 import { verifyRendererBranding } from '../src/branding-verification.mjs';
 import { rebrandTree } from '../src/rebrand-tree.mjs';
-import { patchDirectStartup } from '../src/bundle-patch.mjs';
+import { patchDirectStartup, patchUndoIntegration } from '../src/bundle-patch.mjs';
+import { rebuildPluginCatalog, verifyPluginCatalog } from '../src/plugin-integrity.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url)), version=process.argv[2] || '0.1.0-preview.1';
 if(process.platform!=='win32' || process.arch!=='x64')throw new Error('Build this installer on Windows x64.');
-if(!/^\d+\.\d+\.\d+-preview\.\d+$/.test(version))throw new Error('Use a preview version such as 0.1.0-preview.1.');
+if(!/^\d+\.\d+\.\d+(?:-preview\.\d+)?$/.test(version))throw new Error('Use a release version such as 0.1.0 or 0.1.0-preview.1.');
+const preview = version.includes('-preview.'), productName = preview ? 'notch preview' : 'notch';
+const appId = `com.freesyntax.notch.desktop${preview ? '.preview' : ''}`;
 if(!process.env.npm_execpath)throw new Error('Run npm run package:windows.');
 const source=path.join(root,'release/Notch-prototype');await fs.access(path.join(source,'Notch.exe'));
 const staging=await fs.mkdtemp(path.join(root,'release/windows-preview-')), app=path.join(staging,'app'), unpacked=path.join(app,'build-app');
@@ -35,14 +38,21 @@ await promisify(execFile)(path.join(process.env.SystemRoot,'System32/WindowsPowe
 const ripgrepSource=path.join(ripgrepExtracted,ripgrepName);
 assert.equal(createHash('sha256').update(await fs.readFile(path.join(ripgrepSource,'rg.exe'))).digest('hex'),'14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680','Extracted ripgrep executable checksum mismatch.');
 await fs.cp(source,app,{recursive:true,filter:file=>!path.relative(source,file).split(path.sep).some(name=>name==='build-app' || name==='prototype-build.json' || name.startsWith('app-feedback-'))});
+await rebuildPluginCatalog(path.join(app, 'resources/extensions'));
+console.log(JSON.stringify({ pluginIntegrity: await verifyPluginCatalog(path.join(app, 'resources/extensions')) }));
 await fs.mkdir(path.join(app,'resources/bin'),{recursive:true});
 await fs.copyFile(path.join(ripgrepSource,'rg.exe'),path.join(app,'resources/bin/notch-rg.exe'));
 assert.match((await promisify(execFile)(path.join(app,'resources/bin/notch-rg.exe'),['--version'],{windowsHide:true})).stdout,/^ripgrep 15\.2\.0[\s\S]*PCRE2 10\.45 is available/,'Packaged ripgrep must support the pinned PCRE2 engine.');
 extractAll(path.join(app,'resources/app.asar'),unpacked);
 const mainFile=path.join(unpacked,'out/main/index.js');
-await fs.writeFile(mainFile,patchDirectStartup(await fs.readFile(mainFile,'utf8')));
+await fs.writeFile(mainFile,patchUndoIntegration(patchDirectStartup(await fs.readFile(mainFile,'utf8'))));
 await fs.cp(path.join(root,'src'),path.join(unpacked,'notch/src'),{recursive:true});
 await fs.cp(path.join(root,'vendor/notch-core'),path.join(unpacked,'notch/vendor/notch-core'),{recursive:true});
+const cliSource=path.join(root,'node_modules/@freesyntax/notch-cli'), cliTarget=path.join(unpacked,'notch/node_modules/@freesyntax/notch-cli');
+if(!path.resolve(cliTarget).startsWith(path.resolve(staging)+path.sep))throw new Error('Invalid embedded CLI target.');
+await fs.rm(cliTarget,{recursive:true,force:true});
+await fs.cp(cliSource,cliTarget,{recursive:true});
+assert.equal(JSON.parse(await fs.readFile(path.join(cliTarget,'package.json'),'utf8')).version,JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')).dependencies['@freesyntax/notch-cli'],'The packaged CLI must match the pinned tested version.');
 await installSetupRenderer(unpacked,root);
 for(const folder of ['out/main','out/renderer','out/preload'])await rebrandTree(path.join(unpacked,folder));
 console.log(JSON.stringify({branding:await verifyRendererBranding(unpacked)}));
@@ -60,7 +70,7 @@ await fs.copyFile(path.join(root,'assets/notices/sharp-win32-x64-LICENSE.txt'),p
 const buildManifest=path.join(app,'resources/build-manifest.json'), build=JSON.parse(await fs.readFile(buildManifest,'utf8'));
 build.productVersion=version;await fs.writeFile(buildManifest,JSON.stringify(build,null,2));
 const productFile=path.join(app,'resources/product.json'),product=JSON.parse(await fs.readFile(productFile,'utf8'));
-Object.assign(product,{channel:'preview',appId:'com.freesyntax.notch.desktop.preview',dataDirectoryName:'com.freesyntax.notch.desktop.preview',protocolScheme:'notch-preview',windowsLauncherDirectory:'notch-preview/Launcher',windowsLauncherMutexName:'Local/notchPreviewDesktopLauncher'});
+Object.assign(product,{channel:preview?'preview':'stable',appId,dataDirectoryName:appId,protocolScheme:preview?'notch-preview':'notch',windowsLauncherDirectory:`${preview?'notch-preview':'notch'}/Launcher`,windowsLauncherMutexName:preview?'Local/notchPreviewDesktopLauncher':'Local/notchDesktopLauncher'});
 await fs.writeFile(productFile,JSON.stringify(product,null,2));
 // The prepackaged builder skips executable metadata; reuse its cached resource editor.
 const cache=path.join(process.env.LOCALAPPDATA,'electron-builder/Cache/winCodeSign');
@@ -72,11 +82,11 @@ await promisify(execFile)(editor,[path.join(app,'Notch.exe'),'--set-icon',path.j
   '--set-version-string','ProductName','notch','--set-version-string','FileDescription','notch by freesyntax.dev',
   '--set-version-string','CompanyName','freesyntax.dev','--set-version-string','InternalName','notch',
   '--set-version-string','OriginalFilename','Notch.exe','--set-version-string','LegalCopyright','Copyright 2026 Driftrail'],{windowsHide:true});
-const configuration={appId:'com.freesyntax.notch.desktop.preview',productName:'notch preview',executableName:'Notch',copyright:'Copyright 2026 Driftrail',
+const configuration={appId,productName,executableName:'Notch',copyright:'Copyright 2026 Driftrail',
   directories:{output:path.join(staging,'installer')},extraMetadata:{version},npmRebuild:false,publish:null,
   win:{target:[{target:'nsis',arch:['x64']}],icon:path.join(app,'resources/app-icon.ico')},
   nsis:{artifactName:`notch-${version}-setup-x64.exe`,oneClick:false,perMachine:false,allowElevation:false,allowToChangeInstallationDirectory:true,
-    createDesktopShortcut:true,createStartMenuShortcut:true,shortcutName:'notch preview',uninstallDisplayName:'notch preview',deleteAppDataOnUninstall:false,runAfterFinish:false,differentialPackage:false,license:path.join(root,'LICENSE')}};
+    createDesktopShortcut:true,createStartMenuShortcut:true,shortcutName:productName,uninstallDisplayName:productName,deleteAppDataOnUninstall:false,runAfterFinish:false,differentialPackage:false,license:path.join(root,'LICENSE')}};
 const config=path.join(staging,'electron-builder.json');await fs.writeFile(config,JSON.stringify(configuration,null,2));
 await new Promise((resolve,reject)=>{
   const env={...Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|^csc_/i.test(key))),CSC_IDENTITY_AUTO_DISCOVERY:'false'};
@@ -86,5 +96,5 @@ await new Promise((resolve,reject)=>{
 const installer=path.join(staging,'installer',`notch-${version}-setup-x64.exe`), hash=createHash('sha256');
 for await(const chunk of createReadStream(installer))hash.update(chunk);
 await fs.writeFile(path.join(staging,'installer/SHA256SUMS.txt'),`${hash.digest('hex')}  ${path.basename(installer)}\n`);
-await fs.writeFile(path.join(root,'release/windows-preview-latest.json'),JSON.stringify({version,installer,application:app},null,2));
+await fs.writeFile(path.join(root,preview?'release/windows-preview-latest.json':'release/windows-stable-latest.json'),JSON.stringify({version,installer,application:app},null,2));
 console.log(JSON.stringify({version,installer,application:app}));

@@ -80,6 +80,13 @@ try {
   await page.getByText('Click to add a readable and editable folder',{exact:true}).click();
   await page.getByRole('dialog').getByRole('textbox').fill('notch agent check');
   await page.getByRole('button',{name:'Create',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
+  await page.getByRole('button',{name:'Model',exact:true}).click();
+  await page.getByRole('option').filter({hasText:/Qwen3\.5/i}).first().click();
+  await page.getByRole('button',{name:'Model',exact:true}).click();
+  await page.getByRole('combobox',{name:'Context limit'}).selectOption('8192');
+  await page.waitForFunction(()=>{const control=document.querySelector('select[aria-label="Context limit"]');return control?.value==='8192'&&!control.disabled;});
+  await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'Model',exact:true}).getByText('8K',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Access permissions',exact:true}).click();
   await page.getByRole('menuitem',{name:/^Ask for approval/}).click();
   const composer=page.getByRole('textbox',{name:'New Task',exact:true});
@@ -101,6 +108,7 @@ try {
   assert.ok(mounted,'The real inference model must be mounted.');
   assert.equal(mounted.context_length,checks.contextUsage.maxTokens,'The runtime allocation must match the reported context.');
   checks.allocatedContext=mounted.context_length;checks.gpuAllocation={bytes:mounted.size,bytesVram:mounted.size_vram};
+  assert.equal(checks.allocatedContext,8192,'The explicit picker choice must reach the runtime.');
   await page.screenshot({path:reportFile.replace(/\.json$/,'-completed.png')});
   await app.close();app=null;
   await launch();await page.waitForLoadState('domcontentloaded');
@@ -151,7 +159,12 @@ try {
   assert.ok(compacted.events.some(event=>event.subtype==='status'&&event.status==='compacting'));
   assert.ok(compacted.events.some(event=>event.type==='result'&&event.text.includes('COMPACTION_UI_VERIFIED')));
   const compactState=await page.evaluate(id=>window.notchDesktop.getChatSessionExecutionState(id),sessionId);
-  assert.equal(compactState.facts.compaction.status,'known');checks.nativeCompaction=compactState.facts.compaction;
+  // A completed runtime can be released; the API deliberately returns null then.
+  if(compactState)assert.equal(compactState.facts.compaction.status,'known');
+  assert.ok(compacted.events.some(event=>event.subtype==='status'&&event.status===null),'Compaction progress must close.');
+  const compactUsage=await page.evaluate(id=>window.notchDesktop.getChatSessionContextUsage(id),sessionId);
+  assert.ok(compactUsage?.totalTokens>0);assert.ok(compactUsage.totalTokens<compactUsage.maxTokens);
+  checks.nativeCompaction=compactState?.facts.compaction??{status:'released-after-success',persistedUsage:compactUsage.totalTokens};
   assert.ok((await fs.readdir(path.join(profile,'notch-sessions',sessionId+'.archives'))).length>0);
   assert.equal(await fs.readFile(path.join(workspacePath,'sum.mjs'),'utf8'),original);
   assert.deepEqual(errors,[]);

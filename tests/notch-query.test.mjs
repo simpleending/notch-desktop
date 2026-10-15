@@ -96,3 +96,18 @@ test('native compaction progress closes on success and failure without fabricate
     assert.equal(events.some(event=>event.subtype==='compact_boundary'),false);
   }
 });
+
+test('workbench file-review hooks are awaited with native names, inputs and matching call IDs', async () => {
+  const f = fixture(), hooks = [];
+  const query = new NotchQuery(f.host, { cwd: process.cwd(), prompt: 'write', hooks: {
+    PreToolUse: [{ hooks: [async (input, id) => { hooks.push({ event: input.hook_event_name, name: input.tool_name, input: input.tool_input, id }); }] }],
+    PostToolUse: [{ hooks: [async (input, id) => { hooks.push({ event: input.hook_event_name, id }); }] }],
+  } }, { runTurn: async turn => {
+    await turn.onLifecycle('pre-tool', { tool: 'write', args: { path: 'file.txt', content: 'x' }, toolCallId: 'exact-id' });
+    assert.equal(hooks.length, 1);
+    await turn.onLifecycle('post-tool', { tool: 'write', args: { path: 'file.txt', content: 'x' }, result: 'done', toolCallId: 'exact-id' });
+    return { messages: turn.messages };
+  } });
+  for await (const _event of query) {}
+  assert.deepEqual(hooks, [{ event: 'PreToolUse', name: 'Write', input: { file_path: 'file.txt', content: 'x' }, id: 'exact-id' }, { event: 'PostToolUse', id: 'exact-id' }]);
+});

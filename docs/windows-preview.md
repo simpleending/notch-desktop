@@ -1,11 +1,13 @@
-# notch Windows preview
+# notch for Windows
 
-Download the `.exe` installer from the official [GitHub releases](https://github.com/simpleending/notch-desktop/releases). Install it for your Windows account, then open **notch preview** from your Start menu or desktop.
+Download the `.exe` installer from the official [GitHub releases](https://github.com/simpleending/notch-desktop/releases). Install it for your Windows account, then open **notch** from your Start menu or desktop. Older preview builds use the name **notch preview**.
 
-This preview supports Windows 10/11 on x64 PCs. It includes its own application runtime; Node.js is not required to open the desktop. Local model downloads require an internet connection and enough disk space and memory. An installed Ollama model or an OpenRouter API key can also get you started.
+The Windows release supports Windows 10/11 on x64 PCs. It includes its own application runtime; Node.js is not required to open the desktop. Local model downloads require an internet connection and enough disk space and memory. An installed Ollama model or an OpenRouter API key can also get you started.
 
 The installer is unsigned. Windows or your browser may describe a new unsigned download as unrecognized or potentially unsafe. Download only from this repository's Releases page and compare its SHA-256 with `SHA256SUMS.txt` if you want to verify the file. GitHub hosting does not remove Windows reputation checks. Managed PCs may prevent installation under their organization's policy.
 
-The preview is for trying the interface and model workflow. Safe undo, extension support, wider hardware coverage and performance checks are still being completed; do not rely on undo to protect your work. Keep projects in version control and review requested writes and commands. OpenRouter uses your own key and bills usage through your provider.
+Review file changes, then use the turn's undo control to restore that turn and later tracked changes. Checkpoints survive restarting notch. A preview never changes files, and conflicting manual edits block restoration. Undo covers built-in file write, edit and patch tools; terminal commands and external tools still need version control. An unverified write interrupted during a crash is blocked for inspection. Old preview checkpoints were not persisted and cannot be recovered retrospectively.
+
+Bundled plugins are checked against SHA-256 manifests at startup. This detects changed bundled files; it does not establish that arbitrary third-party plugins are safe. OpenRouter uses your own key and bills usage through your provider. Paid cloud inference, macOS/Linux builds and Apple MLX inference are not part of the Windows release verification.
 
 Uninstall through Windows Settings → Apps. Uninstalling keeps your conversations, settings and downloaded models. Reinstalling the application does not require downloading models again.

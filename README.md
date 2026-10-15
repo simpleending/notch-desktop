@@ -8,9 +8,9 @@
 
 notch by [freesyntax.dev](https://freesyntax.dev) is a free coding workspace for working with AI on your own terms. Run open models on your computer, or connect OpenRouter with your own API key.
 
-**[Download for Windows](https://github.com/simpleending/notch-desktop/releases)** · [Website](https://freesyntax.dev) · [Get the CLI](https://www.npmjs.com/package/@freesyntax/notch-cli)
+**[Download for Windows](https://github.com/simpleending/notch-desktop/releases/latest)** · [Website](https://freesyntax.dev) · [Get the CLI](https://www.npmjs.com/package/@freesyntax/notch-cli)
 
-The Windows download is an early preview. Check the release notes for current limitations. macOS and Linux downloads are not available yet.
+The Windows release supports x64 PCs running Windows 10 or 11. Check the release notes for current limitations. macOS and Linux downloads are not available yet.
 
 ## Make yourself at home
 
@@ -18,17 +18,20 @@ The Windows download is an early preview. Check the release notes for current li
 - **Browse before connecting.** Search OpenRouter's chat and coding catalog without a key. Connect your own key to use models with coding tools; chat-only models are shown with their limitation.
 - **Stay in control.** Review file changes and commands before approving them, or choose the access level that suits your project.
 - **Pick up where you left off.** Reopen saved conversations and keep working as longer chats are summarized.
+- **Review and undo changes.** Restore a selected agent turn and its later tracked file changes, even after restarting. Undo previews protect later manual edits and never change files themselves.
 - **Use the memory you have.** notch adjusts conversation size to your available memory. You can choose a limit yourself when you need more room.
 - **Work your way.** Choose dark or light mode, adjust the text, and search your project’s files.
 
 ## Start a project
 
-1. Download the Windows installer from [Releases](https://github.com/simpleending/notch-desktop/releases), then open **notch preview** from your Start menu.
+1. Download the Windows installer from the [latest release](https://github.com/simpleending/notch-desktop/releases/latest), then open **notch** from your Start menu.
 2. Open a project folder.
 3. Choose a local model, download one from Hugging Face, or connect your OpenRouter API key.
 4. Try “Explain how this project works,” then review any changes before approving them.
 
 Local models need enough memory to run. Cloud models use your provider’s pricing and receive the project content included in your request. Your API keys are kept out of saved conversations.
+
+Undo covers the built-in file write, edit and patch tools. Terminal commands and external tools can make changes outside that history, so keep projects in version control. Checkpoints created before this release were not saved and cannot be recovered retrospectively. The Windows installer is unsigned; see the [download notes](docs/windows-preview.md).
 
 Prefer the terminal? Install the [notch CLI](https://www.npmjs.com/package/@freesyntax/notch-cli) with Node.js 22.19 or newer:
 

@@ -103,6 +103,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     },
     runHook: async (event, payload) => {
       await turn.onLifecycle?.(event, payload);
+      if (event === 'post-tool') await turn.checkpoints.recordAfter();
       if (event !== 'pre-tool') return;
       const args = payload.args as Record<string, unknown>;
       if ((payload.tool === 'write' || payload.tool === 'edit') && typeof args.path === 'string') await turn.checkpoints.recordBefore(path.resolve(cwd, args.path));

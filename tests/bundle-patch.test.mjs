@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { patchClassMethod, rebrandWorkbenchText } from '../src/bundle-patch.mjs';
+import { patchClassMethod, rebrandWorkbenchText, patchUndoIntegration } from '../src/bundle-patch.mjs';
 test('method patches respect strings, regex braces and nested template expressions', () => {
   const source = 'let Demo=class extends Base{target(t){const regex=/[{}]/;const x=`hi ${ {a:1}.a }`;return "}"}other(){return 2}};';
   const result = patchClassMethod(source, 'Demo', 'target', 'return "Notch";');
@@ -26,4 +26,13 @@ test('lowercase product error identifiers remain valid in the startup error cata
   const expression = new Function(`return ${source}`)();
   assert.equal(expression.test('notch_EXECUTION_CONTROL_FAILED'), true);
   assert.equal(expression.test('invalid code'), false);
+});
+
+test('native review tracks patch tools and move destinations and the port patch is idempotent', () => {
+  const source = 'const _Ke=new Set(["write","edit"]);function access(){if(n){const c=this.dependencies.runtimeManager.acquireRewindSession(e);}}function Xme(){return oldValidator;}function bPe(t){return _Ke.has(t);}function cnr(t,e){return [...e.input.matchAll(/^\\*\\*\\* (?:Add|Update|Delete) File: (.+)$/gm)].map(row=>row[1]);}';
+  const patched = patchUndoIntegration(source);
+  assert.equal(patchUndoIntegration(patched), patched);
+  const methods = new Function(`${patched};return {tracked:bPe,paths:cnr};`)();
+  assert.equal(methods.tracked('apply_patch'), true);
+  assert.deepEqual(methods.paths('apply_patch', {input:'*** Update File: old.txt\n*** Move to: new.txt'}), ['old.txt','new.txt']);
 });

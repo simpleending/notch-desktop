@@ -3,8 +3,9 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { NotchQuery } from './notch-query.mjs';
 import { createWorkspaceSearch } from './workspace-search.mjs';
-import { detectLocalHardware, runDesktopTurn } from '../vendor/notch-core/desktop-harness.js';
+import { detectLocalHardware, runDesktopTurn, CheckpointManager } from '../vendor/notch-core/desktop-harness.js';
 import { localContextProfile } from './model-policy.mjs';
+import { validateLocalPlugin } from './plugin-validation.mjs';
 
 const localIdentity = Object.freeze({ status: 'signed-in', mode: 'local', user: { id: 'local-notch', name: 'Local workspace', nickname: 'Local workspace', email: null }, error: null, loginUrl: null });
 function sessionFile(directory, id) {
@@ -16,9 +17,13 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
   let models = [], fetchedAt = 0, pending, defaultModel;
   const endpoints = new Map();
   const profiles = new Map();
+  const queries = new Map();
+  const rewinding = new Set();
   const host = {
     workspaceSearch: createWorkspaceSearch(),
     identity: localIdentity,
+    validatePlugin: validateLocalPlugin,
+    assertTurnAvailable(id) { if (rewinding.has(id)) throw new Error('Finish undo before starting another turn.'); },
     getCachedModels: () => models,
     getDefaultModel: () => defaultModel,
     resolveModelChoice(model) {
@@ -99,8 +104,41 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
       await fs.mkdir(sessions, { recursive: true });
       const file = sessionFile(sessions, id), temporary = `${file}.${randomUUID()}.tmp`, data = JSON.stringify(state);
       if (Buffer.byteLength(data) > 64 * 2 ** 20) throw new Error('Session exceeds the 64 MiB storage limit; history was not overwritten.');
-      try { await fs.writeFile(temporary, data, { mode: 0o600 }); await fs.rename(temporary, file); }
+      try { await fs.writeFile(temporary, data, { mode: 0o600, flag: 'wx', flush: true }); await fs.rename(temporary, file); }
       finally { await fs.unlink(temporary).catch(() => {}); }
+    },
+    async openCheckpoints(id, cwd) {
+      const file = sessionFile(path.join(dataDirectory, 'notch-undo'), id);
+      return CheckpointManager.open(cwd, file);
+    },
+    async acquireRewind(id) {
+      if (queries.get(id)?.active || rewinding.has(id)) throw new Error('Finish the active turn or undo before restoring files.');
+      const stored = JSON.parse(await fs.readFile(sessionFile(sessions, id), 'utf8'));
+      const state = await host.loadSession(id, stored.cwd);
+      const checkpoints = await host.openCheckpoints(id, state.cwd);
+      if (queries.get(id)?.active || rewinding.has(id)) throw new Error('Finish the active turn or undo before restoring files.');
+      rewinding.add(id);
+      let released = false;
+      const rewindFiles = async (messageId, options = {}) => {
+        if (released) throw new Error('Undo access has been released.');
+        const dryRun = typeof options === 'boolean' ? options : options.dryRun;
+        const result = await checkpoints.preview(messageId);
+        if (!dryRun && result.canRewind) {
+          await checkpoints.undo(messageId);
+          state.messages.push({ role: 'user', content: 'Files from the selected turn and later turns were restored by the user. Inspect current files before continuing; do not replay undone actions.' });
+          state.contextUsage = null;
+          await host.saveSession(id, state);
+          const query = queries.get(id);
+          if (query) query.state = structuredClone(state);
+          host.workspaceSearch.invalidate(state.cwd);
+        }
+        return result;
+      };
+      return { rewindFiles, async rewind(messageId, scope, dryRun) {
+        if (scope !== 'files') throw new Error('Choose file undo to restore changes. Conversation rewind is unavailable.');
+        const result = await rewindFiles(messageId, { dryRun });
+        return { ...result, status: result.canRewind ? (dryRun ? 'ready' : 'success') : 'unavailable' };
+      }, async prepareReplacement() {}, async release() { released = true; rewinding.delete(id); } };
     },
     async archiveTranscript(id, messages) {
       sessionFile(sessions, id);
@@ -112,8 +150,12 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     async hasSession(id) { try { await fs.access(sessionFile(sessions, id)); return true; } catch { return false; } },
     query(request) {
       const model = host.resolveModelChoice(request.model);
-      return new NotchQuery(host, { ...request, model, cwd: request.cwd || process.cwd() }, {
+      const id = request.resumeSessionId || request.sessionId;
+      const current = queries.get(id);
+      if (id && ((current && !current.closed && !current.ended) || rewinding.has(id))) throw new Error('This session is already open or restoring files.');
+      const query = new NotchQuery(host, { ...request, model, cwd: request.cwd || process.cwd() }, {
         runTurn: async turn => {
+          if (rewinding.has(turn.sessionId)) throw new Error('Finish undo before starting another turn.');
           // Memory may have changed since the picker opened; size again before loading.
           if (!turn.model?.startsWith('openrouter/')) await host.listModels(true);
           const model = host.resolveModelChoice(turn.model);
@@ -129,6 +171,9 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
             baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || 8192, nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
         },
       });
+      queries.set(query.id, query);
+      void query.task.finally(() => { if (queries.get(query.id) === query) queries.delete(query.id); });
+      return query;
     },
     async prepare(request) { let attached = false; return { attach(prompt) { if (attached) throw new Error('Prepared session already attached.'); attached = true; return host.query({ ...request, prompt }); }, async close() { attached = true; } }; },
   };
