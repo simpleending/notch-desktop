@@ -23,3 +23,5 @@ This checklist records the scope and evidence for the Windows x64 v0.1 release. 
 | Public source and final landing-page capture | Development source is public. The landing page uses two actual installed-app light-mode captures, showing the editor and model picker. Windows artifacts are published after their installed-build checks. This release verifies the listed Windows workflows; it does not claim every platform or integration is verified. |
 
 Verification reports contain machine-specific paths and remain outside the public repository. Commands and fixture checks belong in the repository so results can be reproduced. The release notes must distinguish verified Windows workflows from remaining platform, signing, performance-parity and paid-inference work.
+
+Rapid automated exits during background application/plugin discovery can log a shutdown-drain or stale-activation warning. Completed inference, search and editor verification sessions exit cleanly, and restart/undo checks preserve their saved state. Immediate-exit lifecycle handling still needs broader coverage; the passing renderer checks do not establish that every main-process log is error-free.
