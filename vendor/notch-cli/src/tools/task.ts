@@ -64,7 +64,7 @@ export const taskTool: NotchTool<typeof parameters> = {
     'Actions: create (new task), update (change status), list (show all tasks), get (show one task). ' +
     'Mark tasks as in_progress when starting and completed when done.',
   parameters,
-  async execute(params, _ctx): Promise<ToolResult> {
+  async execute(params, ctx): Promise<ToolResult> {
     switch (params.action) {
       case 'create': {
         if (!params.subject) {
@@ -80,7 +80,7 @@ export const taskTool: NotchTool<typeof parameters> = {
         };
         tasks.push(task);
         // Print to terminal
-        console.log(chalk.gray(`  ${formatTask(task)}`));
+        ctx.log(formatTask(task));
         return { content: `Task #${task.id} created: ${task.subject}` };
       }
 
@@ -95,7 +95,7 @@ export const taskTool: NotchTool<typeof parameters> = {
         if (params.status) task.status = params.status;
         if (params.subject) task.subject = params.subject;
         task.updatedAt = Date.now();
-        console.log(chalk.gray(`  ${formatTask(task)}`));
+        ctx.log(formatTask(task));
         return { content: `Task #${task.id} updated: ${task.subject} [${task.status}]` };
       }
 

@@ -1,6 +1,14 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 
+export async function closeQaApp(app) {
+  const child=app.process();
+  if(child.exitCode!==null)return;
+  const exited=new Promise(resolve=>child.once('exit',resolve));
+  // A forced-recovery run can leave the debugger close pending after the OS process exits.
+  await Promise.race([app.close(),exited]);
+}
+
 export async function processSnapshot() {
   const {stdout}=await promisify(execFile)('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,@{Name="CreationDate";Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress'],{windowsHide:true,timeout:15000,maxBuffer:2**20});
   return JSON.parse(stdout);

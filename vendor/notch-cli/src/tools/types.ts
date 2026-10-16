@@ -15,6 +15,8 @@ export type PermissionLevel = 'allow' | 'deny' | 'prompt';
 export interface ToolResult {
   content: string;
   isError?: boolean;
+  /** Preflight rejection or preview: this is not an executed command result. */
+  notExecuted?: boolean;
 }
 
 export interface NotchTool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
@@ -59,6 +61,8 @@ export interface ToolContext {
   /** Transient queue status; never added to model conversation history. */
   onQueue?: (message: string | null) => void;
   _fileVersions?: Map<string, string | null>;
+  /** Shared per-turn execution guard, including tools invoked from code cells. */
+  _executeGuard?: (name: string, args: Record<string,unknown>, execute: () => Promise<ToolResult>) => Promise<ToolResult>;
   /** Permission checker — returns whether a tool call is allowed, denied, or needs prompting */
   checkPermission?: (toolName: string, args: Record<string, unknown>) => PermissionLevel;
   /** Hook runner — fires lifecycle events (pre-tool, post-tool, session-start, etc.) */

@@ -1,5 +1,7 @@
 # Developing notch desktop
 
+The vendored desktop core and embedded CLI share the 0.7.18 execution guard. `tests/execution-reliability.test.mjs` exercises the native host and real OS shell with deterministic provider responses: a failed check cannot become success through model text, receipts survive host restart, real repairs and passing reruns clear failures, and duplicate calls/retries do not repeat indefinitely. The workbench adapter preserves failure statuses. SSH background launches are not implemented; use an explicit remote service manager and verify it separately.
+
 `node scripts/verify-openrouter-config.mjs <packaged-executable> <report.json>` checks the actual UI and packaged provider loop using a simulated OpenRouter catalog and responses in an isolated profile. It verifies semantic compaction with a 512-token output ceiling, model switching, real file-tool results, and history/model selection after restart. It makes no paid requests and leaves the user's profile untouched.
 
 `node scripts/verify-cli-openrouter.mjs <installed-cli-entry> <report.json>` is a separate live check requiring `OPENROUTER_API_KEY`. Run it only when paid testing is authorized. Its observer limits the selected models, output, request count, and conservatively reserved spending to $0.10; it excludes authorization headers and redacts keys from reports. Live coverage remains deferred until a key is configured.

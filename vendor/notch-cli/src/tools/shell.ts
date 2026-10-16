@@ -17,6 +17,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import type { NotchTool, ToolResult } from './types.js';
 import { LocalTerminal } from '../terminal/local.js';
+import { isVerificationCommand, masksFailure } from '../agent/execution-guard.js';
 const terminal = new LocalTerminal();
 
 // ---------------------------------------------------------------------------
@@ -70,6 +71,7 @@ const MAX_TIMEOUT = 600_000; // 10 minutes
 const parameters = z.object({
   command: z.string().describe('Shell command to execute'),
   timeout: z.number().optional().describe('Timeout in ms (default 30s, max 10m)'),
+  background: z.boolean().optional().describe('Start a long-running server without waiting for it to exit; returns PID and log paths. Then verify readiness separately. Never use for tests.'),
 });
 
 // ---------------------------------------------------------------------------
@@ -159,7 +161,7 @@ export const shellTool: NotchTool<typeof parameters> = {
   description:
     'Execute a shell command in the project directory. ' +
     'Dangerous commands (rm -rf, DROP TABLE, git push --force) require confirmation. ' +
-    'Some destructive system commands are blocked entirely.',
+    'Some destructive system commands are blocked entirely. Use background:true for servers, then a separate foreground readiness check. Commands in a batch execute in order.',
   parameters,
   async execute(params, ctx): Promise<ToolResult> {
     const { command } = params;
@@ -169,8 +171,11 @@ export const shellTool: NotchTool<typeof parameters> = {
     // Security validation
     const validationError = validateCommand(command, ctx.cwd);
     if (validationError) {
-      return { content: validationError, isError: true };
+      return { content: validationError, isError: true, notExecuted:true };
     }
+    if(process.platform==='win32'&&/[^&]&\s*$/.test(command))return {content:'A trailing & does not detach a server in cmd.exe. Use background:true, then verify readiness with a separate command.',isError:true,notExecuted:true};
+    if(params.background&&isVerificationCommand(command))return {content:'Run checks in the foreground so their exit status can be verified. background:true is for long-running servers, not tests.',isError:true,notExecuted:true};
+    if(isVerificationCommand(command)&&masksFailure(command))return {content:'Check not executed: || would hide its failure exit status. Run the check directly, without a success fallback, so the actual result can be verified.',isError:true,notExecuted:true};
 
     // Destructive command confirmation
     if (ctx.requireConfirm && isDestructive(command)) {
@@ -178,21 +183,23 @@ export const shellTool: NotchTool<typeof parameters> = {
         `\u26a0 Destructive command: ${command}\nProceed?`
       );
       if (!confirmed) {
-        return { content: 'Command cancelled by user.', isError: true };
+        return { content: 'Command cancelled by user.', isError: true, notExecuted:true };
       }
     }
 
     try {
-      const result = await terminal.run({
+      const request = {
         command, cwd: ctx.cwd, timeoutMs: timeout, maxOutputChars: MAX_OUTPUT,
         signal: ctx.abortSignal, env: { FORCE_COLOR: '0' },
-      });
+      };
+      const result = await (params.background ? terminal.start(request) : terminal.run(request));
+      if(result.diagnostics?.background)return {content:`Process started (PID ${result.diagnostics.pid}). Readiness is NOT verified. Check the endpoint or logs before reporting success.\nstdout: ${result.diagnostics.stdoutFile}\nstderr: ${result.diagnostics.stderrFile}`};
       const combined = [result.stdout, result.stderr].filter(Boolean).join('\n');
       const trimmed = combined.length > MAX_OUTPUT ? combined.slice(0, MAX_OUTPUT) : combined;
       const suffix = result.truncated || combined.length > MAX_OUTPUT ? '\n... (truncated)' : '';
       return {
         content: result.exitCode === 0 ? (trimmed || '(no output)') + suffix
-          : `Command failed (exit ${result.exitCode ?? 'cancelled/timeout'}):\n${trimmed || '(no output)'}${suffix}`,
+          : `Command failed (exit ${result.exitCode ?? 'cancelled/timeout'}):\n${trimmed || '(no output)'}${suffix}${/\[timeout\]/.test(result.stderr) ? '\nIf this is a long-running server, use background:true and verify readiness separately. Do not repeat an unchanged foreground command.' : ''}`,
         ...(result.exitCode !== 0 ? { isError: true } : {}),
       };
     } catch (error) {

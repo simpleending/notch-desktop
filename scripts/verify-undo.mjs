@@ -6,6 +6,7 @@ import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { verifyPluginCatalog } from '../src/plugin-integrity.mjs';
 import { verifyRecovery, verifyInterruptedUndo } from './verify-recovery.mjs';
+import {closeQaApp} from './process-tree.mjs';
 import { cloudModelRows } from '../src/model-policy.mjs';
 const cloudRow=cloudModelRows([{id:'fixture/chat',name:'Cloud verification',context_length:8192,architecture:{input_modalities:['text'],output_modalities:['text']},supported_parameters:['tools'],pricing:{prompt:'0',completion:'0'}}],true)[0];
 const args=process.argv.slice(2).filter(arg=>!['--recovery','--cloud-worktrees'].includes(arg));
@@ -75,7 +76,7 @@ try{
  if(process.argv.includes('--recovery'))checks.recovery=await verifyRecovery({app,profile,workspace,sessionId,changes,
   restart:async({early=false}={})=>{await launch();if(!early){await page.waitForLoadState('domcontentloaded');await openSavedSession();}return app;},
   stopped:()=>{app=null;}});
- await app.close();app=null;
+ await closeQaApp(app);app=null;
  await launch();await page.waitForLoadState('domcontentloaded');await openSavedSession();
  const target={sessionId,changeSetId:changes[1].change_set_id};const preview=await page.evaluate(v=>window.notchDesktop.previewTurnFileChangesUndo(v),target);checks.preview=preview;assert.equal(preview.canRewind,true,JSON.stringify(preview));assert.equal(preview.filesChanged.length,2);
  assert.equal(await fs.readFile(path.join(workspace,'file.txt'),'utf8'),'two');assert.equal((await fs.readFile(path.join(workspace,'created.txt'),'utf8')).trim(),'new');
@@ -91,4 +92,4 @@ try{
  assert.equal(await fs.readFile(path.join(workspace,'file.txt'),'utf8'),'original');checks.nativeUndoButton=true;checks.allTurnsRestored=true;
  checks.remaining=JSON.parse(await fs.readFile(path.join(profile,'notch-undo',sessionId+'.json'),'utf8')).checkpoints.length;assert.equal(checks.remaining,0);
  await page.screenshot({path:reportFile.replace('.json','-after.png')});assert.deepEqual(errors,[]);checks.errors=errors;checks.passed=true;
-}catch(error){checks.failure=error.stack||String(error);if(page)await page.screenshot({path:reportFile.replace('.json','-failure.png')}).catch(()=>{});throw error;}finally{if(app)await app.close();checks.root=root;checks.executable=executable;await fs.writeFile(reportFile,JSON.stringify(checks,null,2));console.log(JSON.stringify({passed:checks.passed,catalog:checks.catalog,changeSets:checks.changeSets?.length,preview:checks.preview,manualEditProtected:checks.manualEditProtected,allTurnsRestored:checks.allTurnsRestored,root,failure:checks.failure}));}
+}catch(error){checks.failure=error.stack||String(error);if(page)await page.screenshot({path:reportFile.replace('.json','-failure.png')}).catch(()=>{});throw error;}finally{if(app)await closeQaApp(app);checks.root=root;checks.executable=executable;await fs.writeFile(reportFile,JSON.stringify(checks,null,2));console.log(JSON.stringify({passed:checks.passed,catalog:checks.catalog,changeSets:checks.changeSets?.length,preview:checks.preview,manualEditProtected:checks.manualEditProtected,allTurnsRestored:checks.allTurnsRestored,root,failure:checks.failure}));}

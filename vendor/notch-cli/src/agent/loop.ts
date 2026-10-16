@@ -1,4 +1,5 @@
 import { toolOutput } from '../messages.js';
+import { ExecutionGuard } from './execution-guard.js';
 import { executionContext } from '../concurrency/local-inference.js';
 import { withTaskWorkspace, openRouterTaskContext } from '../concurrency/task-workspace.js';
 import { isStepCount, asSchema, jsonSchema } from 'ai';
@@ -74,7 +75,7 @@ export interface AgentConfig {
 
 export interface AgentResponse {
   workspace?: Parameters<NonNullable<ToolContext['onWorkspaceResult']>>[0];
-  status?: 'completed' | 'max-iterations';
+  status?: 'completed' | 'max-iterations' | 'stalled' | 'verification-failed';
   /** Final assistant text (after all tool rounds complete) */
   text: string;
   /** Full message history including tool calls */
@@ -92,26 +93,6 @@ export interface AgentResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Repeated-error detection
-// ---------------------------------------------------------------------------
-
-interface ErrorSignature {
-  toolName: string;
-  errorPrefix: string;
-}
-
-function getErrorSignature(toolName: string, result: string): ErrorSignature {
-  return {
-    toolName,
-    errorPrefix: result.slice(0, 120),
-  };
-}
-
-function signaturesMatch(a: ErrorSignature, b: ErrorSignature): boolean {
-  return a.toolName === b.toolName && a.errorPrefix === b.errorPrefix;
-}
-
-// ---------------------------------------------------------------------------
 // Agent Loop
 // ---------------------------------------------------------------------------
 
@@ -123,7 +104,7 @@ function signaturesMatch(a: ErrorSignature, b: ErrorSignature): boolean {
  * 2. Send messages + tools to model (with retry on transient failures)
  * 3. Stream the response text
  * 4. If model made tool calls, execute them and loop back to step 2
- * 5. Detect repeated errors — inject a hint after 2 consecutive identical failures
+ * 5. Serialize tools, bound unchanged retries, and preserve failed-check receipts
  * 6. When model returns text with no tool calls, return final response
  */
 export async function runAgentLoop(
@@ -147,9 +128,11 @@ export async function runAgentLoop(
 async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfig): Promise<AgentResponse> {
   // Build tools with read cache for this turn (prevents redundant file reads)
   const readCache = new Map<string, string>();
+  const guard = new ExecutionGuard(messages);
   const toolCtxWithCache = {
     ...config.toolContext,
     _readCache: readCache,
+    _executeGuard: guard.run.bind(guard),
     _fileVersions: new Map<string, string | null>(),
   };
   const feedback = toolValidationFeedback(buildToolMap(toolCtxWithCache));
@@ -167,9 +150,7 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
   let totalCompletionTokens = 0;
   let wasCompressed = false;
 
-  // Repeated-error tracking
-  const recentErrors: ErrorSignature[] = [];
-  const MAX_REPEATED_ERRORS = 3;
+  let verificationReminder = false;
 
   // Correction pipeline setup
   const correctionCfg = config.correction ?? autoDetectPreset(config.modelId ?? '');
@@ -238,6 +219,8 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
     await compact();
 
     // --- Stream (retry is handled by outer withRetry in index.ts) ---
+    guard.beginStep();
+    const holdText = totalToolCalls > 0 || guard.failedChecks.length > 0;
     let fullText = '';
     const toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }> = [];
     const toolResults: Array<{ toolCallId: string; result: unknown }> = [];
@@ -264,7 +247,7 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       }
       if (event.type === 'text-delta') {
         fullText += event.text;
-        config.onTextChunk?.(event.text);
+        if (!holdText && !guard.failedChecks.length) config.onTextChunk?.(event.text);
       } else if (event.type === 'tool-call') {
         toolCalls.push({
           toolCallId: event.toolCallId,
@@ -414,22 +397,6 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
 
     // --- Handle tool calls ---
     if (toolCalls.length > 0) {
-      // Check for repeated errors
-      let hasRepeatedError = false;
-      for (const tr of toolResults) {
-        const res = tr.result as { content?: string; isError?: boolean } | undefined;
-        if (res?.isError) {
-          const toolName = toolCalls.find((tc) => tc.toolCallId === tr.toolCallId)?.toolName ?? 'unknown';
-          const sig = getErrorSignature(toolName, res.content ?? '');
-          const repeated = recentErrors.filter((e) => signaturesMatch(e, sig)).length;
-          recentErrors.push(sig);
-
-          if (repeated >= MAX_REPEATED_ERRORS - 1) {
-            hasRepeatedError = true;
-          }
-        }
-      }
-
       // Append assistant message
       if (nativeCallCount === toolCalls.length && nativeAssistantMessages.length) {
         history.push(...nativeAssistantMessages);
@@ -457,25 +424,32 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
         })),
       } satisfies ToolModelMessage);
 
-      // Inject hint if the model is stuck in an error loop
-      if (hasRepeatedError) {
-        history.push({
-          role: 'user',
-          content:
-            '[System: You have repeated the same failing tool call multiple times. ' +
-            'Stop and try a different approach. If the tool is unavailable or the ' +
-            'command keeps failing, explain the issue to the user instead of retrying.]',
-        });
-        // Reset error tracking
-        recentErrors.length = 0;
+      if (guard.stopped) {
+        const text = guard.stopped + (guard.failedChecks.length ? '\n\n' + guard.failureReport() : '');
+        history.push({role: 'assistant', content: text});
+        config.onTextChunk?.(text);
+        return {status: 'stalled', text, messages: history, iterations, toolCallCount: totalToolCalls,
+          compressed: wasCompressed, correctionAttempts: totalCorrectionAttempts,
+          usage: {promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens}};
       }
-
+      if (fullText && !guard.failedChecks.length && holdText) config.onTextChunk?.(fullText);
 
       continue;
     }
 
+    // A model's success claim cannot override recorded failed checks.
+    if (guard.failedChecks.length) {
+      if (!verificationReminder) {
+        verificationReminder = true;
+        history.push({role: 'user', content: guard.failureReport() + '\nFix and rerun these checks. If unable, report the failure; do not claim success.'});
+        continue;
+      }
+      fullText = guard.failureReport();
+      config.onTextChunk?.(fullText);
+    } else if (holdText && fullText) config.onTextChunk?.(fullText);
+
     // --- No tool calls — done, unless coordinator mode has pending workers ---
-    if (nativeAssistantMessages.length) history.push(...nativeAssistantMessages);
+    if (!guard.failedChecks.length && nativeAssistantMessages.length) history.push(...nativeAssistantMessages);
     else history.push({ role: 'assistant', content: fullText });
 
     // Coordinator-mode hook: if the model ran out of tool calls but there are
@@ -487,7 +461,7 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
     }
 
     return {
-      status: 'completed',
+      status: guard.failedChecks.length ? 'verification-failed' : 'completed',
       text: fullText,
       messages: history,
       iterations,
@@ -569,6 +543,8 @@ export async function buildSystemPrompt(
         '- When running shell commands, prefer non-destructive operations.',
         '- If you encounter an error, analyze it and suggest a fix.',
         '- If the same tool call keeps failing, stop retrying and try a different approach.',
+        '- Tool calls execute in order. Avoid duplicate calls. Fix a failed check and rerun it successfully before reporting that checks passed.',
+        '- Start long-running servers with shell background:true, then check readiness with a separate foreground command. A started process is not a passed test.',
       ].join('\n'),
     ),
 

@@ -1,5 +1,11 @@
 # Windows release verification
 
+Version 0.1.14 embeds the public CLI 0.7.18 and shares its execution guards with the native IDE agent. Duplicate tool calls are skipped, dependent tools execute in order, unchanged failed retries are bounded, and failed verification receipts survive compaction and restart. The desktop result adapter reports stalled or failed-verification turns as failures. A successful model statement cannot clear a recorded failed check; an actual passing rerun is required.
+
+The source checks passed 167 desktop tests, including native-host real-shell failure/restart/recovery and retry cases, plus the typecheck. The embedded CLI passed eight OS/protocol reliability checks. Local background servers return a PID and log paths and require a separate readiness check. SSH retains foreground execution; its adapter explicitly rejects the new local-only background option rather than silently ignoring it. Live paid OpenRouter inference remains deferred.
+
+The frozen 0.1.14 package passed its native-host checks under the bundled Electron runtime, all eight embedded CLI checks, UI compaction/model switching/restart, Undo with manual-edit conflict protection and nine crash/session-end recovery stages, and all 14 startup/shutdown cases. The first extended recovery driver stalled in debugger teardown after seven successful stages and a clean app exit; the QA driver now waits for the OS exit as well, and the full rerun passed. Product bytes were unchanged. The installer is unsigned; its published checksum is provided with the download.
+
 Version 0.1.13 embeds CLI 0.7.17 and applies the selected OpenRouter model's output ceiling to normal replies, semantic compaction, and background requests. The CLI now reads the ceiling from the provider catalog and refreshes model-specific limits when switching models. The IDE uses its existing catalog limits in the same shared provider wrapper.
 
 The CLI passed 587 tests and the desktop passed 158 tests, with both typechecks passing. An exact packaged-module regression demonstrated the fix: 0.1.12 requested 1,024/2,048 summary tokens from a simulated model limited to 512; 0.1.13 requested 512 for both summarization and streaming. Protocol fixtures make no paid requests. Live OpenRouter testing is deferred until a provider key is configured; this is not an all-model compatibility guarantee.

@@ -88,6 +88,7 @@ export async function createRemoteWorkspace(service, target, signal) {
           return { content: result.lines.join('\n') || '(no matches)' };
         }
         if (name === 'shell') {
+          if (args.background) return {content:'SSH background:true is not supported. Use a remote service manager or explicitly detach the remote server, then verify readiness.',isError:true,notExecuted:true};
           for (const [file, observed] of versions) if (await read(file, signal) !== observed) throw new Error(`Remote file conflict: ${file} changed. Read it again before running a command.`);
           const result = await provider.execute({ command: args.command, timeoutMs: Math.max(1, Math.min(600000, args.timeout || 30000)), maxOutputBytes: 50000 }, { signal });
           versions.clear();

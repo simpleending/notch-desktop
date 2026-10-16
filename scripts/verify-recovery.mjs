@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {DatabaseSync} from 'node:sqlite';
-import {ownedProcessIds,processSnapshot as processes} from './process-tree.mjs';
+import {ownedProcessIds,processSnapshot as processes,closeQaApp} from './process-tree.mjs';
 
 const exec=promisify(execFile),pause=()=>new Promise(resolve=>setTimeout(resolve,100));
 const messageScript=fileURLToPath(new URL('./send-session-message.ps1',import.meta.url));
@@ -96,7 +96,7 @@ export async function verifyRecovery({app,profile,workspace,sessionId,changes,re
     const exit=await terminate(()=>sessionMessage(22,1,flags));assert.equal(exit.code,0,JSON.stringify(exit));
     await inspect(stage);checks.at(-1).exit=exit;
   }
-  await app.close();stopped();app=await restart({early:true});
+  await closeQaApp(app);stopped();app=await restart({early:true});
   await terminate(kill);await inspect('forced-during-startup');
   return checks;
 }

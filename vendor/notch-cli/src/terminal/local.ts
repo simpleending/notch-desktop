@@ -10,10 +10,21 @@
  */
 
 import { spawn } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { TerminalBackend, TerminalRunRequest, TerminalRunResult } from './types.js';
 
 const DEFAULT_MAX_OUTPUT = 32_000;
 const DEFAULT_TIMEOUT_MS = 60_000;
+
+function stopTree(child: ReturnType<typeof spawn>): void {
+  if(!child.pid||child.exitCode!==null)return;
+  if(process.platform==='win32'){
+    const killer=spawn('taskkill.exe',['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
+    killer.on('error',()=>child.kill());
+  }else{try{process.kill(-child.pid,'SIGKILL');}catch{child.kill('SIGKILL');}}
+}
 
 export class LocalTerminal implements TerminalBackend {
   readonly id = 'local';
@@ -21,6 +32,44 @@ export class LocalTerminal implements TerminalBackend {
 
   async readyCheck(): Promise<void> {
     // Always ready — we're the host.
+  }
+
+  async start(req: TerminalRunRequest): Promise<TerminalRunResult> {
+    req.signal?.throwIfAborted();
+    const started=Date.now(),directory=path.join(req.cwd??process.cwd(),'.notch','processes');
+    await fs.mkdir(directory,{recursive:true});
+    const id=randomUUID(),stdoutFile=path.join(directory,id+'.out.log'),stderrFile=path.join(directory,id+'.err.log');
+    await fs.writeFile(stdoutFile,'',{flag:'wx'});await fs.writeFile(stderrFile,'',{flag:'wx'});
+    let child: ReturnType<typeof spawn> | undefined;
+    const abort=()=>{if(child)stopTree(child);};
+    try {
+      req.signal?.throwIfAborted();
+      // Keep the shell attached to a detached Node supervisor: Windows cmd.exe
+      // otherwise replaces redirected standard handles when creating its console.
+      const bootstrap = String.raw`
+const {spawn}=require('node:child_process'),fs=require('node:fs');
+const p=JSON.parse(process.argv[1]),win=process.platform==='win32';
+const child=spawn(win?(process.env.COMSPEC||'cmd.exe'):'/bin/sh',win?['/d','/s','/c','"'+p.command+'"']:['-lc',p.command],{cwd:p.cwd,windowsHide:true,windowsVerbatimArguments:win});
+child.stdin.end();
+child.stdout.on('data',data=>fs.appendFileSync(p.stdoutFile,data));
+child.stderr.on('data',data=>fs.appendFileSync(p.stderrFile,data));
+child.on('error',error=>{fs.appendFileSync(p.stderrFile,error.message);process.exitCode=1;});
+child.on('close',code=>{process.exitCode=code??1;});
+`;
+      child=spawn(process.execPath,['-e',bootstrap,JSON.stringify({command:req.command,cwd:req.cwd,stdoutFile,stderrFile})],{
+        cwd:req.cwd,env:{...process.env,...req.env},windowsHide:true,detached:true,stdio:'ignore',
+      });
+      req.signal?.addEventListener('abort',abort,{once:true});
+      if(req.signal?.aborted)abort();
+      const early=await new Promise<number|null|undefined>((resolve,reject)=>{
+        child!.once('error',reject);child!.once('exit',code=>resolve(code));
+        child!.once('spawn',()=>setTimeout(()=>resolve(undefined),250));
+      });
+      req.signal?.throwIfAborted();
+      child.unref();
+      if(early!==undefined)return {exitCode:early,stdout:(await fs.readFile(stdoutFile,'utf8')).slice(0,DEFAULT_MAX_OUTPUT),stderr:(await fs.readFile(stderrFile,'utf8')).slice(0,DEFAULT_MAX_OUTPUT),durationMs:Date.now()-started};
+      return {exitCode:0,stdout:'',stderr:'',durationMs:Date.now()-started,diagnostics:{background:true,pid:child.pid,stdoutFile,stderrFile}};
+    }finally{req.signal?.removeEventListener('abort',abort);}
   }
 
   run(req: TerminalRunRequest): Promise<TerminalRunResult> {
@@ -51,12 +100,7 @@ export class LocalTerminal implements TerminalBackend {
       const stop = () => {
         if (stopping || !child.pid || child.exitCode !== null) return;
         stopping = true;
-        if (isWin) {
-          const killer = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-          killer.on('error', () => child.kill());
-        } else {
-          try { process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); }
-        }
+        stopTree(child);
       };
 
       const timeout = setTimeout(() => {

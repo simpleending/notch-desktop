@@ -6,7 +6,7 @@
  * Copyright 2026 Driftrail. Apache-2.0.
  */
 
-import { tool } from 'ai';
+import { tool, type ToolExecutionOptions } from 'ai';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { readTool } from './read.js';
 import { writeTool } from './write.js';
@@ -158,17 +158,14 @@ export function buildToolMap(ctx: ToolContext) {
   const map: Record<string, any> = {};
 
   for (const t of getAllTools(ctx)) {
-    map[t.name] = tool({
-      description: t.description,
-      inputSchema: t.parameters,
-      execute: async (params, execution) => {
+    const execute = async (params: unknown, execution: ToolExecutionOptions<unknown>) => {
         ctx.abortSignal?.throwIfAborted();
         const readOnly = isBuiltInReadTool(t.name, BUILTIN_TOOLS.includes(t));
         if (ctx.accessMode === 'read-only' && !readOnly) {
           return { content: `Permission denied: ${t.name} is unavailable in read-only mode.`, isError: true };
         }
         if (ctx.dryRun && !readOnly) {
-          return { content: `[DRY RUN] Would execute ${t.name}:\n${JSON.stringify(params, null, 2).slice(0, 500)}` };
+          return { content: `[DRY RUN] Would execute ${t.name}:\n${JSON.stringify(params, null, 2).slice(0, 500)}`, notExecuted: true };
         }
         // Native SDK calls are validated before execution, but recovered
         // text calls use this wrapper directly. Both paths must enforce the
@@ -331,7 +328,13 @@ export function buildToolMap(ctx: ToolContext) {
         return result;
         };
         return ctx.remoteWorkspace ? execute() : guardedFileAccess(t.name, params as Record<string, unknown>, ctx, execute);
-      },
+    };
+    map[t.name] = tool({
+      description: t.description,
+      inputSchema: t.parameters,
+      execute: (params, execution) => ctx._executeGuard
+        ? ctx._executeGuard(t.name, params as Record<string, unknown>, () => execute(params, execution))
+        : execute(params, execution),
     });
   }
 

@@ -112,10 +112,11 @@ export class NotchQuery {
   emitResult(error, result) {
     if (this.compacting) { this.compacting=false; this.emit(this.envelope('system',{subtype:'status',status:null})); }
     const interrupted = this.active?.controller.signal.aborted;
+    const failed = !!error || (!!result?.status && result.status !== 'completed');
     this.emitState('idle');
     this.emit(this.envelope('result', {
-      subtype: error || result?.status === 'max-iterations' ? 'error_during_execution' : 'success',
-      is_error: !!error || result?.status === 'max-iterations',
+      subtype: failed ? 'error_during_execution' : 'success',
+      is_error: failed,
       ...(interrupted ? { terminal_reason: 'user_interrupted' } : {}),
       ...(error ? { errors: [error.message || String(error)] } : {}),
       result: result?.text || '', num_turns: result?.iterations || 0,

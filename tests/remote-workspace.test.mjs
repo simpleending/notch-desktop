@@ -17,6 +17,12 @@ function fixture() {
   return {files,target,service:{async connectLocalAgent(){},getWorkspaceProvider(){return provider;}}};
 }
 
+test('SSH rejects unsupported background mode before executing a foreground command',async()=>{
+  const {target,service}=fixture(),remote=await createRemoteWorkspace(service,target);
+  const result=await remote.execute('shell',{command:'node server.mjs',background:true});
+  assert.equal(result.isError,true);assert.equal(result.notExecuted,true);assert.match(result.content,/SSH background:true is not supported/);
+});
+
 test('SSH writes require a fresh read; persisted undo checks remote contents and survives restart',async t=>{
   const {files,target,service}=fixture(),remote=await createRemoteWorkspace(service,target);
   assert.equal((await remote.execute('write',{path:'sample.txt',content:'unsafe'})).isError,true);

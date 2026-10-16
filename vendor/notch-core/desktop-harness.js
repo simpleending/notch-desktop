@@ -23,8 +23,8 @@ import {
 } from "./chunk-S5MWOFHZ.js";
 
 // vendor/notch-cli/src/desktop-harness.ts
-import path24 from "path";
-import fs21 from "fs/promises";
+import path25 from "path";
+import fs22 from "fs/promises";
 import os7 from "os";
 
 // vendor/notch-cli/src/config.ts
@@ -2332,10 +2332,128 @@ function toolResultValue(part) {
   return output.type === "execution-denied" ? output.reason : output.value;
 }
 
+// vendor/notch-cli/src/agent/execution-guard.ts
+import { AsyncLocalStorage } from "async_hooks";
+function isVerificationCommand(command) {
+  return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|check|verify|lint|typecheck|validate|smoke|build)[\w:-]*\b|\b(?:vitest|jest|pytest|tsc|eslint|curl|Invoke-WebRequest|Invoke-RestMethod)\b|\b(?:cargo|go|dotnet)\s+test\b|\bnode\s+--check\b|\bnode\s+(?:-e|--eval)\s+.*\b(?:assert|fetch|statusCode)\b|\b[^\s"']*(?:verify|check|test|spec|smoke|qa)[^\s"']*\.(?:[cm]?js|[cm]?ts|py)\b/i.test(command);
+}
+function masksFailure(command) {
+  let quote = "";
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i];
+    if (char === "\\" || char === "^") {
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (char === quote) quote = "";
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+    if (char === "|" && command[i + 1] === "|") return true;
+  }
+  return false;
+}
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, canonical(item)]));
+  return value;
+}
+var ExecutionGuard = class {
+  pending = Promise.resolve();
+  batch = /* @__PURE__ */ new Map();
+  failures = /* @__PURE__ */ new Map();
+  failedSinceChange = 0;
+  ownership = new AsyncLocalStorage();
+  checks = /* @__PURE__ */ new Map();
+  unrunChecks = /* @__PURE__ */ new Set();
+  stopped;
+  constructor(messages = []) {
+    const calls = /* @__PURE__ */ new Map();
+    for (const message of messages) if (Array.isArray(message.content)) for (const part of message.content) {
+      if (part.type === "tool-call" && part.toolName === "shell") calls.set(part.toolCallId, part.input);
+      if (part.type === "tool-result") {
+        const args = calls.get(part.toolCallId), result = toolResultValue(part);
+        if (args && result && typeof result.content === "string") this.recordCheck(args, result);
+        if (part.toolName === "code_exec" && Array.isArray(result?.notchChecks)) for (const check of result.notchChecks) this.checks.set(check.command, check);
+        if (part.toolName === "code_exec" && Array.isArray(result?.notchUnrunChecks)) {
+          this.unrunChecks.clear();
+          for (const command of result.notchUnrunChecks) this.unrunChecks.add(command);
+        }
+      }
+    }
+  }
+  beginStep() {
+    this.batch.clear();
+  }
+  get failedChecks() {
+    return [...this.checks.values()].filter((check) => !check.passed).map((check) => check.command).concat([...this.unrunChecks]);
+  }
+  recordCheck(args, result) {
+    const command = typeof args.command === "string" ? args.command.trim() : "";
+    if (!isVerificationCommand(command)) return;
+    if (result.notExecuted || /^\[DRY RUN\]/.test(result.content) || masksFailure(command)) {
+      this.checks.delete(command);
+      this.unrunChecks.add(command);
+      return;
+    }
+    if (!args.background || result.isError) {
+      this.checks.set(command, { command, passed: !result.isError });
+      if (!result.isError) this.unrunChecks.clear();
+    }
+  }
+  run(name, args, execute2) {
+    const executeGuarded = async () => {
+      if (this.stopped) return { content: this.stopped, isError: true };
+      const input = name === "shell" ? { command: String(args.command ?? "").trim(), background: !!args.background } : args;
+      const key = name + ":" + JSON.stringify(canonical(input));
+      const duplicate = this.batch.get(key);
+      if (duplicate) return { ...duplicate, content: "Duplicate call skipped; previous result:\n" + duplicate.content };
+      if ((this.failures.get(key) ?? 0) >= 2 || this.failedSinceChange >= 5) {
+        this.stopped = "Stopped retrying: " + name + " repeatedly failed without a successful change. Inspect the error and change the approach before continuing.";
+        return { content: this.stopped, isError: true };
+      }
+      const record = (result) => {
+        this.batch.set(key, result);
+        if (name === "shell") this.recordCheck(args, result);
+        if (result.isError) {
+          this.failures.set(key, (this.failures.get(key) ?? 0) + 1);
+          this.failedSinceChange++;
+        } else if (name === "read") {
+          for (const failed of this.failures.keys()) if (/^(?:write|edit|apply_patch):/.test(failed)) this.failures.delete(failed);
+        } else if (name === "shell") {
+          if (this.failures.delete(key)) this.failedSinceChange = 0;
+        } else if (["write", "edit", "apply_patch", "git", "notebook"].includes(name)) {
+          this.failures.clear();
+          this.failedSinceChange = 0;
+        }
+        return name === "code_exec" && (this.checks.size || this.unrunChecks.size) ? { ...result, notchChecks: [...this.checks.values()], notchUnrunChecks: [...this.unrunChecks] } : result;
+      };
+      try {
+        return record(await this.ownership.run(true, execute2));
+      } catch (error) {
+        record({ content: error instanceof Error ? error.message : String(error), isError: true });
+        throw error;
+      }
+    };
+    if (this.ownership.getStore()) return executeGuarded();
+    const operation = this.pending.then(executeGuarded);
+    this.pending = operation.catch(() => {
+    });
+    return operation;
+  }
+  failureReport() {
+    return "Checks have not passed. No successful rerun was recorded for:\n" + this.failedChecks.map((command) => "- " + command).join("\n");
+  }
+};
+
 // vendor/notch-cli/src/agent/loop.ts
 import { isStepCount as isStepCount2, asSchema, jsonSchema } from "ai";
 import { ToolLoopAgent } from "ai";
-import { promises as fs19 } from "fs";
+import { promises as fs20 } from "fs";
 import { execSync } from "child_process";
 
 // vendor/notch-cli/src/tools/index.ts
@@ -2795,17 +2913,78 @@ ${summary.join("\n")}` };
 };
 
 // vendor/notch-cli/src/tools/shell.ts
-import path10 from "path";
+import path11 from "path";
 import { z as z5 } from "zod";
 
 // vendor/notch-cli/src/terminal/local.ts
 import { spawn } from "child_process";
+import { promises as fs10 } from "fs";
+import path10 from "path";
+import { randomUUID as randomUUID3 } from "crypto";
 var DEFAULT_MAX_OUTPUT = 32e3;
 var DEFAULT_TIMEOUT_MS = 6e4;
+function stopTree(child) {
+  if (!child.pid || child.exitCode !== null) return;
+  if (process.platform === "win32") {
+    const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+    killer.on("error", () => child.kill());
+  } else {
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
+  }
+}
 var LocalTerminal = class {
   id = "local";
   description = "Execute on the host via child_process.spawn.";
   async readyCheck() {
+  }
+  async start(req) {
+    req.signal?.throwIfAborted();
+    const started = Date.now(), directory = path10.join(req.cwd ?? process.cwd(), ".notch", "processes");
+    await fs10.mkdir(directory, { recursive: true });
+    const id = randomUUID3(), stdoutFile = path10.join(directory, id + ".out.log"), stderrFile = path10.join(directory, id + ".err.log");
+    await fs10.writeFile(stdoutFile, "", { flag: "wx" });
+    await fs10.writeFile(stderrFile, "", { flag: "wx" });
+    let child;
+    const abort = () => {
+      if (child) stopTree(child);
+    };
+    try {
+      req.signal?.throwIfAborted();
+      const bootstrap = String.raw`
+const {spawn}=require('node:child_process'),fs=require('node:fs');
+const p=JSON.parse(process.argv[1]),win=process.platform==='win32';
+const child=spawn(win?(process.env.COMSPEC||'cmd.exe'):'/bin/sh',win?['/d','/s','/c','"'+p.command+'"']:['-lc',p.command],{cwd:p.cwd,windowsHide:true,windowsVerbatimArguments:win});
+child.stdin.end();
+child.stdout.on('data',data=>fs.appendFileSync(p.stdoutFile,data));
+child.stderr.on('data',data=>fs.appendFileSync(p.stderrFile,data));
+child.on('error',error=>{fs.appendFileSync(p.stderrFile,error.message);process.exitCode=1;});
+child.on('close',code=>{process.exitCode=code??1;});
+`;
+      child = spawn(process.execPath, ["-e", bootstrap, JSON.stringify({ command: req.command, cwd: req.cwd, stdoutFile, stderrFile })], {
+        cwd: req.cwd,
+        env: { ...process.env, ...req.env },
+        windowsHide: true,
+        detached: true,
+        stdio: "ignore"
+      });
+      req.signal?.addEventListener("abort", abort, { once: true });
+      if (req.signal?.aborted) abort();
+      const early = await new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("exit", (code) => resolve(code));
+        child.once("spawn", () => setTimeout(() => resolve(void 0), 250));
+      });
+      req.signal?.throwIfAborted();
+      child.unref();
+      if (early !== void 0) return { exitCode: early, stdout: (await fs10.readFile(stdoutFile, "utf8")).slice(0, DEFAULT_MAX_OUTPUT), stderr: (await fs10.readFile(stderrFile, "utf8")).slice(0, DEFAULT_MAX_OUTPUT), durationMs: Date.now() - started };
+      return { exitCode: 0, stdout: "", stderr: "", durationMs: Date.now() - started, diagnostics: { background: true, pid: child.pid, stdoutFile, stderrFile } };
+    } finally {
+      req.signal?.removeEventListener("abort", abort);
+    }
   }
   run(req) {
     if (req.signal?.aborted) return Promise.resolve({ exitCode: null, stdout: "", stderr: "[aborted]", durationMs: 0 });
@@ -2832,16 +3011,7 @@ var LocalTerminal = class {
       const stop = () => {
         if (stopping || !child.pid || child.exitCode !== null) return;
         stopping = true;
-        if (isWin) {
-          const killer = spawn("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-          killer.on("error", () => child.kill());
-        } else {
-          try {
-            process.kill(-child.pid, "SIGKILL");
-          } catch {
-            child.kill("SIGKILL");
-          }
-        }
+        stopTree(child);
       };
       const timeout = setTimeout(() => {
         timedOut = true;
@@ -2961,9 +3131,10 @@ var DEFAULT_TIMEOUT = 3e4;
 var MAX_TIMEOUT = 6e5;
 var parameters5 = z5.object({
   command: z5.string().describe("Shell command to execute"),
-  timeout: z5.number().optional().describe("Timeout in ms (default 30s, max 10m)")
+  timeout: z5.number().optional().describe("Timeout in ms (default 30s, max 10m)"),
+  background: z5.boolean().optional().describe("Start a long-running server without waiting for it to exit; returns PID and log paths. Then verify readiness separately. Never use for tests.")
 });
-function validateCommand(command, cwd, paths = path10) {
+function validateCommand(command, cwd, paths = path11) {
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(command)) {
       return `Blocked: this command is too dangerous to execute.`;
@@ -3017,7 +3188,7 @@ function isDestructive(command) {
 }
 var shellTool = {
   name: "shell",
-  description: "Execute a shell command in the project directory. Dangerous commands (rm -rf, DROP TABLE, git push --force) require confirmation. Some destructive system commands are blocked entirely.",
+  description: "Execute a shell command in the project directory. Dangerous commands (rm -rf, DROP TABLE, git push --force) require confirmation. Some destructive system commands are blocked entirely. Use background:true for servers, then a separate foreground readiness check. Commands in a batch execute in order.",
   parameters: parameters5,
   async execute(params, ctx) {
     const { command } = params;
@@ -3025,32 +3196,39 @@ var shellTool = {
     const timeout = Math.min(params.timeout ?? DEFAULT_TIMEOUT, maxTimeout);
     const validationError = validateCommand(command, ctx.cwd);
     if (validationError) {
-      return { content: validationError, isError: true };
+      return { content: validationError, isError: true, notExecuted: true };
     }
+    if (process.platform === "win32" && /[^&]&\s*$/.test(command)) return { content: "A trailing & does not detach a server in cmd.exe. Use background:true, then verify readiness with a separate command.", isError: true, notExecuted: true };
+    if (params.background && isVerificationCommand(command)) return { content: "Run checks in the foreground so their exit status can be verified. background:true is for long-running servers, not tests.", isError: true, notExecuted: true };
+    if (isVerificationCommand(command) && masksFailure(command)) return { content: "Check not executed: || would hide its failure exit status. Run the check directly, without a success fallback, so the actual result can be verified.", isError: true, notExecuted: true };
     if (ctx.requireConfirm && isDestructive(command)) {
       const confirmed = await ctx.confirm(
         `\u26A0 Destructive command: ${command}
 Proceed?`
       );
       if (!confirmed) {
-        return { content: "Command cancelled by user.", isError: true };
+        return { content: "Command cancelled by user.", isError: true, notExecuted: true };
       }
     }
     try {
-      const result = await terminal.run({
+      const request = {
         command,
         cwd: ctx.cwd,
         timeoutMs: timeout,
         maxOutputChars: MAX_OUTPUT,
         signal: ctx.abortSignal,
         env: { FORCE_COLOR: "0" }
-      });
+      };
+      const result = await (params.background ? terminal.start(request) : terminal.run(request));
+      if (result.diagnostics?.background) return { content: `Process started (PID ${result.diagnostics.pid}). Readiness is NOT verified. Check the endpoint or logs before reporting success.
+stdout: ${result.diagnostics.stdoutFile}
+stderr: ${result.diagnostics.stderrFile}` };
       const combined = [result.stdout, result.stderr].filter(Boolean).join("\n");
       const trimmed = combined.length > MAX_OUTPUT ? combined.slice(0, MAX_OUTPUT) : combined;
       const suffix = result.truncated || combined.length > MAX_OUTPUT ? "\n... (truncated)" : "";
       return {
         content: result.exitCode === 0 ? (trimmed || "(no output)") + suffix : `Command failed (exit ${result.exitCode ?? "cancelled/timeout"}):
-${trimmed || "(no output)"}${suffix}`,
+${trimmed || "(no output)"}${suffix}${/\[timeout\]/.test(result.stderr) ? "\nIf this is a long-running server, use background:true and verify readiness separately. Do not repeat an unchanged foreground command." : ""}`,
         ...result.exitCode !== 0 ? { isError: true } : {}
       };
     } catch (error) {
@@ -3060,7 +3238,7 @@ ${trimmed || "(no output)"}${suffix}`,
 };
 
 // vendor/notch-cli/src/tools/index.ts
-import path20 from "path";
+import path21 from "path";
 
 // vendor/notch-cli/src/tools/git.ts
 import { simpleGit } from "simple-git";
@@ -3200,8 +3378,8 @@ Proceed?`
 
 // vendor/notch-cli/src/tools/grep.ts
 import { execFile as execFile2 } from "child_process";
-import fs10 from "fs/promises";
-import path11 from "path";
+import fs11 from "fs/promises";
+import path12 from "path";
 import { promisify as promisify2 } from "util";
 import { z as z7 } from "zod";
 var execFileAsync = promisify2(execFile2);
@@ -3217,7 +3395,7 @@ var grepTool = {
   description: "Search file contents by regex pattern. Returns matching lines with file paths and line numbers. Supports glob filtering and context lines.",
   parameters: parameters7,
   async execute(params, ctx) {
-    const searchPath = params.path ? path11.isAbsolute(params.path) ? params.path : path11.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchPath = params.path ? path12.isAbsolute(params.path) ? params.path : path12.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
       ctx.abortSignal?.throwIfAborted();
       if (ctx.workspaceSearch) {
@@ -3259,12 +3437,12 @@ var grepTool = {
       async function searchDir(dir) {
         ctx.abortSignal?.throwIfAborted();
         if (results.length >= (params.max_results ?? 50)) return;
-        const entries = await fs10.readdir(dir, { withFileTypes: true });
+        const entries = await fs11.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
           ctx.abortSignal?.throwIfAborted();
           if (results.length >= (params.max_results ?? 50)) return;
           if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-          const full = path11.join(dir, entry.name);
+          const full = path12.join(dir, entry.name);
           if (entry.isDirectory()) {
             await searchDir(full);
           } else if (entry.isFile()) {
@@ -3273,12 +3451,12 @@ var grepTool = {
               if (ext && !entry.name.endsWith(ext)) continue;
             }
             try {
-              const content = await fs10.readFile(full, "utf-8");
+              const content = await fs11.readFile(full, "utf-8");
               ctx.abortSignal?.throwIfAborted();
               const lines = content.split("\n");
               for (let i = 0; i < lines.length; i++) {
                 if (regex.test(lines[i])) {
-                  const rel = path11.relative(ctx.cwd, full);
+                  const rel = path12.relative(ctx.cwd, full);
                   results.push(`${rel}:${i + 1}:${lines[i]}`);
                   if (results.length >= (params.max_results ?? 50)) return;
                 }
@@ -3289,12 +3467,12 @@ var grepTool = {
           }
         }
       }
-      const stat = await fs10.stat(searchPath);
+      const stat = await fs11.stat(searchPath);
       if (stat.isFile()) {
-        const content = await fs10.readFile(searchPath, "utf-8");
+        const content = await fs11.readFile(searchPath, "utf-8");
         ctx.abortSignal?.throwIfAborted();
         const lines = content.split("\n");
-        const rel = path11.relative(ctx.cwd, searchPath);
+        const rel = path12.relative(ctx.cwd, searchPath);
         for (let i = 0; i < lines.length; i++) {
           if (regex.test(lines[i])) {
             results.push(`${rel}:${i + 1}:${lines[i]}`);
@@ -3313,7 +3491,7 @@ var grepTool = {
 
 // vendor/notch-cli/src/tools/glob.ts
 import { glob as globFn } from "glob";
-import path12 from "path";
+import path13 from "path";
 import { z as z8 } from "zod";
 var parameters8 = z8.object({
   pattern: z8.string().describe('Glob pattern, e.g. "**/*.ts" or "src/**/*.tsx"'),
@@ -3324,7 +3502,7 @@ var globTool = {
   description: "Find files matching a glob pattern. Returns relative paths sorted by modification time. Ignores node_modules and .git by default.",
   parameters: parameters8,
   async execute(params, ctx) {
-    const searchDir = params.path ? path12.isAbsolute(params.path) ? params.path : path12.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchDir = params.path ? path13.isAbsolute(params.path) ? params.path : path13.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
       ctx.abortSignal?.throwIfAborted();
       if (ctx.workspaceSearch) {
@@ -3338,9 +3516,9 @@ var globTool = {
         dot: false
       });
       if (matches.length === 0) {
-        return { content: `No files matching "${params.pattern}" in ${path12.relative(ctx.cwd, searchDir) || "."}` };
+        return { content: `No files matching "${params.pattern}" in ${path13.relative(ctx.cwd, searchDir) || "."}` };
       }
-      const relative = matches.map((m) => path12.relative(ctx.cwd, path12.resolve(searchDir, m)));
+      const relative = matches.map((m) => path13.relative(ctx.cwd, path13.resolve(searchDir, m)));
       return {
         content: `Found ${relative.length} file(s):
 ${relative.join("\n")}`
@@ -3355,9 +3533,9 @@ ${relative.join("\n")}`
 import { z as z10 } from "zod";
 
 // vendor/notch-cli/src/web/settings.ts
-import fs11 from "fs/promises";
-import path13 from "path";
-import { randomUUID as randomUUID3 } from "crypto";
+import fs12 from "fs/promises";
+import path14 from "path";
+import { randomUUID as randomUUID4 } from "crypto";
 import { createRequire } from "module";
 import { spawn as spawn2 } from "child_process";
 import { z as z9 } from "zod";
@@ -3366,12 +3544,12 @@ var webSettingsSchema = z9.object({
   searchProvider: z9.enum(["duckduckgo", "tavily"]).default("duckduckgo"),
   browser: z9.enum(["auto", "msedge", "chrome", "chromium"]).default("auto")
 });
-var file = () => path13.join(getConfigDir(), "web-research.json");
+var file = () => path14.join(getConfigDir(), "web-research.json");
 var validSearchKey = (key) => /^[\x21-\x7e]{12,4096}$/.test(key);
 async function loadWebSettings() {
   let stored = {};
   try {
-    stored = JSON.parse(await fs11.readFile(file(), "utf8"));
+    stored = JSON.parse(await fs12.readFile(file(), "utf8"));
   } catch (error) {
     if (error.code !== "ENOENT") throw new Error("Cannot read web settings. Check web-research.json in your notch configuration folder.");
   }
@@ -3382,7 +3560,7 @@ async function loadWebSettings() {
 async function installResearchBrowser(onOutput = () => {
 }, signal) {
   const require2 = createRequire(import.meta.url);
-  const cli = path13.join(path13.dirname(require2.resolve("playwright-core/package.json")), "cli.js");
+  const cli = path14.join(path14.dirname(require2.resolve("playwright-core/package.json")), "cli.js");
   const interrupted = new AbortController();
   const activeSignal = AbortSignal.any([...signal ? [signal] : [], interrupted.signal, AbortSignal.timeout(15 * 6e4)]);
   const interrupt = () => interrupted.abort();
@@ -3857,7 +4035,7 @@ var GITHUB_API = "https://api.github.com";
 function getToken() {
   return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
 }
-async function ghFetch(path25, opts = {}) {
+async function ghFetch(path26, opts = {}) {
   const token = getToken();
   const headers = {
     "Accept": "application/vnd.github+json",
@@ -3865,7 +4043,7 @@ async function ghFetch(path25, opts = {}) {
     ...opts.headers ?? {}
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  return fetch(`${GITHUB_API}${path25}`, { ...opts, headers });
+  return fetch(`${GITHUB_API}${path26}`, { ...opts, headers });
 }
 var parameters11 = z13.object({
   action: z13.enum([
@@ -4024,8 +4202,8 @@ var githubTool = {
 
 // vendor/notch-cli/src/tools/lsp.ts
 import { execFileSync } from "child_process";
-import fs12 from "fs/promises";
-import path14 from "path";
+import fs13 from "fs/promises";
+import path15 from "path";
 import { z as z14 } from "zod";
 var parameters12 = z14.object({
   action: z14.enum(["definition", "references", "diagnostics", "hover"]).describe("LSP action: definition (go-to-def), references (find usages), diagnostics (type errors), hover (type info)"),
@@ -4035,7 +4213,7 @@ var parameters12 = z14.object({
   symbol: z14.string().optional().describe("Symbol name to search for (alternative to line/character)")
 });
 function detectLanguage(filePath) {
-  const ext = path14.extname(filePath).toLowerCase();
+  const ext = path15.extname(filePath).toLowerCase();
   switch (ext) {
     case ".ts":
     case ".tsx":
@@ -4188,8 +4366,8 @@ ${lines.join("\n")}`;
 }
 async function getHoverInfo(symbol, filePath, line, cwd) {
   try {
-    const absPath = path14.isAbsolute(filePath) ? filePath : path14.resolve(cwd, filePath);
-    const content = await fs12.readFile(absPath, "utf-8");
+    const absPath = path15.isAbsolute(filePath) ? filePath : path15.resolve(cwd, filePath);
+    const content = await fs13.readFile(absPath, "utf-8");
     const lines = content.split("\n");
     const startLine = Math.max(0, line - 3);
     const endLine = Math.min(lines.length, line + 2);
@@ -4207,7 +4385,7 @@ ${def}`;
   }
 }
 async function getDiagnostics(filePath, cwd) {
-  const absPath = path14.isAbsolute(filePath) ? filePath : path14.resolve(cwd, filePath);
+  const absPath = path15.isAbsolute(filePath) ? filePath : path15.resolve(cwd, filePath);
   const { lang } = detectLanguage(absPath);
   switch (lang) {
     case "typescript":
@@ -4271,7 +4449,7 @@ var lspTool = {
   parameters: parameters12,
   async execute(params, ctx) {
     const filePath = params.file;
-    const absPath = path14.isAbsolute(filePath) ? filePath : path14.resolve(ctx.cwd, filePath);
+    const absPath = path15.isAbsolute(filePath) ? filePath : path15.resolve(ctx.cwd, filePath);
     try {
       switch (params.action) {
         case "definition": {
@@ -4313,7 +4491,7 @@ var lspTool = {
 async function extractSymbol(filePath, line, character) {
   if (!line) return null;
   try {
-    const content = await fs12.readFile(filePath, "utf-8");
+    const content = await fs13.readFile(filePath, "utf-8");
     const lines = content.split("\n");
     const lineText = lines[line - 1];
     if (!lineText) return null;
@@ -4335,8 +4513,8 @@ async function extractSymbol(filePath, line, character) {
 }
 
 // vendor/notch-cli/src/tools/notebook.ts
-import fs13 from "fs/promises";
-import path15 from "path";
+import fs14 from "fs/promises";
+import path16 from "path";
 import { z as z15 } from "zod";
 var parameters13 = z15.object({
   action: z15.enum(["read", "edit", "add", "remove"]).describe("Action: read (view cells), edit (modify cell source), add (insert new cell), remove (delete cell)"),
@@ -4348,7 +4526,7 @@ var parameters13 = z15.object({
 });
 function formatNotebook(nb, filePath) {
   const parts = [
-    `# ${path15.basename(filePath)}`,
+    `# ${path16.basename(filePath)}`,
     `# ${nb.cells.length} cells | nbformat ${nb.nbformat}.${nb.nbformat_minor}`,
     ""
   ];
@@ -4379,11 +4557,11 @@ var notebookTool = {
   description: "Read and edit Jupyter .ipynb notebook files. Actions: read (view all cells with outputs), edit (modify a cell), add (insert a new cell), remove (delete a cell).",
   parameters: parameters13,
   async execute(params, ctx) {
-    const filePath = path15.isAbsolute(params.path) ? params.path : path15.resolve(ctx.cwd, params.path);
+    const filePath = path16.isAbsolute(params.path) ? params.path : path16.resolve(ctx.cwd, params.path);
     try {
       switch (params.action) {
         case "read": {
-          const raw = await fs13.readFile(filePath, "utf-8");
+          const raw = await fs14.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           return { content: formatNotebook(nb, filePath) };
         }
@@ -4394,7 +4572,7 @@ var notebookTool = {
           if (params.content === void 0) {
             return { content: "content is required for edit action.", isError: true };
           }
-          const raw = await fs13.readFile(filePath, "utf-8");
+          const raw = await fs14.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           if (params.cell_index < 0 || params.cell_index >= nb.cells.length) {
             return { content: `Cell index ${params.cell_index} out of range (0-${nb.cells.length - 1}).`, isError: true };
@@ -4403,14 +4581,14 @@ var notebookTool = {
             (l, i, arr) => i < arr.length - 1 ? l + "\n" : l
           );
           nb.cells[params.cell_index].source = lines;
-          await fs13.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Cell [${params.cell_index}] updated in ${path15.basename(filePath)}.` };
+          await fs14.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Cell [${params.cell_index}] updated in ${path16.basename(filePath)}.` };
         }
         case "add": {
           if (params.content === void 0) {
             return { content: "content is required for add action.", isError: true };
           }
-          const raw = await fs13.readFile(filePath, "utf-8");
+          const raw = await fs14.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           const cellType = params.cell_type ?? "code";
           const lines = params.content.split("\n").map(
@@ -4424,21 +4602,21 @@ var notebookTool = {
           };
           const insertIdx = params.insert_after !== void 0 ? params.insert_after + 1 : nb.cells.length;
           nb.cells.splice(insertIdx, 0, newCell);
-          await fs13.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path15.basename(filePath)}.` };
+          await fs14.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path16.basename(filePath)}.` };
         }
         case "remove": {
           if (params.cell_index === void 0) {
             return { content: "cell_index is required for remove action.", isError: true };
           }
-          const raw = await fs13.readFile(filePath, "utf-8");
+          const raw = await fs14.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           if (params.cell_index < 0 || params.cell_index >= nb.cells.length) {
             return { content: `Cell index ${params.cell_index} out of range (0-${nb.cells.length - 1}).`, isError: true };
           }
           const removed = nb.cells.splice(params.cell_index, 1)[0];
-          await fs13.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path15.basename(filePath)}. ${nb.cells.length} cells remaining.` };
+          await fs14.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path16.basename(filePath)}. ${nb.cells.length} cells remaining.` };
         }
         default:
           return { content: `Unknown action: ${params.action}`, isError: true };
@@ -4484,7 +4662,7 @@ var taskTool = {
   name: "task",
   description: "Manage tasks within the current session. Use this to break complex work into tracked steps. Actions: create (new task), update (change status), list (show all tasks), get (show one task). Mark tasks as in_progress when starting and completed when done.",
   parameters: parameters14,
-  async execute(params, _ctx) {
+  async execute(params, ctx) {
     switch (params.action) {
       case "create": {
         if (!params.subject) {
@@ -4499,7 +4677,7 @@ var taskTool = {
           updatedAt: Date.now()
         };
         tasks.push(task);
-        console.log(chalk.gray(`  ${formatTask(task)}`));
+        ctx.log(formatTask(task));
         return { content: `Task #${task.id} created: ${task.subject}` };
       }
       case "update": {
@@ -4513,7 +4691,7 @@ var taskTool = {
         if (params.status) task.status = params.status;
         if (params.subject) task.subject = params.subject;
         task.updatedAt = Date.now();
-        console.log(chalk.gray(`  ${formatTask(task)}`));
+        ctx.log(formatTask(task));
         return { content: `Task #${task.id} updated: ${task.subject} [${task.status}]` };
       }
       case "list": {
@@ -5282,12 +5460,12 @@ import { z as z20 } from "zod";
 import { spawn as spawn3 } from "child_process";
 
 // vendor/notch-cli/src/plugins/discovery.ts
-import fs14 from "fs/promises";
-import path16 from "path";
+import fs15 from "fs/promises";
+import path17 from "path";
 import os4 from "os";
 async function discoverPlugins(projectRoot) {
-  const globalDir = path16.join(os4.homedir(), ".notch", "plugins");
-  const projectDir = path16.join(projectRoot, ".notch", "plugins");
+  const globalDir = path17.join(os4.homedir(), ".notch", "plugins");
+  const projectDir = path17.join(projectRoot, ".notch", "plugins");
   const plugins = /* @__PURE__ */ new Map();
   for (const plugin of await scanDirectory(globalDir)) {
     plugins.set(plugin.name, plugin);
@@ -5300,13 +5478,13 @@ async function discoverPlugins(projectRoot) {
 async function scanDirectory(dir) {
   const results = [];
   try {
-    const entries = await fs14.readdir(dir, { withFileTypes: true });
+    const entries = await fs15.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const pluginDir = path16.join(dir, entry.name);
-      const pkgPath = path16.join(pluginDir, "package.json");
+      const pluginDir = path17.join(dir, entry.name);
+      const pkgPath = path17.join(pluginDir, "package.json");
       try {
-        const raw = await fs14.readFile(pkgPath, "utf-8");
+        const raw = await fs15.readFile(pkgPath, "utf-8");
         const pkg = JSON.parse(raw);
         if (pkg["notch-plugin"] && pkg.name) {
           results.push({
@@ -5326,7 +5504,7 @@ async function scanDirectory(dir) {
 }
 
 // vendor/notch-cli/src/plugins/loader.ts
-import path17 from "path";
+import path18 from "path";
 import { pathToFileURL } from "url";
 
 // vendor/notch-cli/src/commands/registry.ts
@@ -5337,7 +5515,7 @@ function registerCommand(name, handler) {
 
 // vendor/notch-cli/src/plugins/loader.ts
 async function loadPlugin(discovered, projectRoot, log) {
-  const entryPath = path17.resolve(discovered.path, discovered.manifest.main);
+  const entryPath = path18.resolve(discovered.path, discovered.manifest.main);
   const tools = [];
   const hooks = [];
   const ctx = {
@@ -5429,9 +5607,9 @@ var PluginManager = class {
 var pluginManager = new PluginManager();
 
 // vendor/notch-cli/src/safety/guardian.ts
-import fs15 from "fs/promises";
+import fs16 from "fs/promises";
 import { fileURLToPath } from "url";
-import path18 from "path";
+import path19 from "path";
 import { generateText } from "ai";
 import { z as z21 } from "zod";
 
@@ -5627,8 +5805,8 @@ async function loadPolicy() {
   if (cachedPolicy) return cachedPolicy;
   try {
     const here = fileURLToPath(import.meta.url);
-    const mdPath = path18.join(path18.dirname(here), "guardian-policy.md");
-    const raw = await fs15.readFile(mdPath, "utf-8");
+    const mdPath = path19.join(path19.dirname(here), "guardian-policy.md");
+    const raw = await fs16.readFile(mdPath, "utf-8");
     if (raw.length > 200) {
       cachedPolicy = raw;
       return raw;
@@ -6664,25 +6842,25 @@ var COORDINATOR_ALLOWED_TOOL_NAMES = /* @__PURE__ */ new Set([
 ]);
 
 // vendor/notch-cli/src/concurrency/file-access.ts
-import fs16 from "fs/promises";
-import path19 from "path";
+import fs17 from "fs/promises";
+import path20 from "path";
 import { createHash as createHash2 } from "crypto";
 import { createReadStream } from "fs";
-async function canonical(file2) {
+async function canonical2(file2) {
   let resolved;
   try {
-    resolved = await fs16.realpath(file2);
+    resolved = await fs17.realpath(file2);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    const parent = path19.dirname(file2);
+    const parent = path20.dirname(file2);
     if (parent === file2) throw error;
-    resolved = path19.join(await canonical(parent), path19.basename(file2));
+    resolved = path20.join(await canonical2(parent), path20.basename(file2));
   }
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 async function fingerprint(file2, signal) {
   try {
-    if (!(await fs16.stat(file2)).isFile()) throw new Error(`Not a regular file: ${file2}`);
+    if (!(await fs17.stat(file2)).isFile()) throw new Error(`Not a regular file: ${file2}`);
     const hash2 = createHash2("sha256");
     for await (const chunk of createReadStream(file2, { signal })) hash2.update(chunk);
     return hash2.digest("hex");
@@ -6701,10 +6879,10 @@ async function guardedFileAccess(name, params, ctx, execute2) {
     let targets = [];
     if (["read", "write", "edit", "notebook"].includes(name)) targets = [params.path];
     if (name === "apply_patch") targets = parsePatch(params.input).flatMap((action) => action.kind === "update" && action.moveTo ? [action.target, action.moveTo] : [action.target]);
-    const files2 = await Promise.all(targets.map((file2) => canonical(path19.resolve(ctx.cwd, file2))));
+    const files2 = await Promise.all(targets.map((file2) => canonical2(path20.resolve(ctx.cwd, file2))));
     if (ctx.taskWorkspace) for (const file2 of files2) {
-      const relative = path19.relative(await canonical(ctx.cwd), file2);
-      if (path19.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path19.sep) || relative.split(path19.sep).some((part) => part.toLowerCase() === ".git")) return { isError: true, content: "Use a path inside this task workspace. Use task_changes to inspect the original project." };
+      const relative = path20.relative(await canonical2(ctx.cwd), file2);
+      if (path20.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path20.sep) || relative.split(path20.sep).some((part) => part.toLowerCase() === ".git")) return { isError: true, content: "Use a path inside this task workspace. Use task_changes to inspect the original project." };
     }
     const before = await Promise.all(files2.map((file2) => fingerprint(file2, ctx.abortSignal)));
     const reading = name === "read" || name === "notebook" && params.action === "read";
@@ -6793,135 +6971,136 @@ function getAllTools(ctx) {
 function buildToolMap(ctx) {
   const map = {};
   for (const t of getAllTools(ctx)) {
+    const execute2 = async (params, execution) => {
+      ctx.abortSignal?.throwIfAborted();
+      const readOnly = isBuiltInReadTool(t.name, BUILTIN_TOOLS.includes(t));
+      if (ctx.accessMode === "read-only" && !readOnly) {
+        return { content: `Permission denied: ${t.name} is unavailable in read-only mode.`, isError: true };
+      }
+      if (ctx.dryRun && !readOnly) {
+        return { content: `[DRY RUN] Would execute ${t.name}:
+${JSON.stringify(params, null, 2).slice(0, 500)}`, notExecuted: true };
+      }
+      const validated = t.parameters.safeParse(params);
+      if (!validated.success) {
+        return { content: `Invalid arguments for ${t.name}: ${validated.error.message}`, isError: true };
+      }
+      params = validated.data;
+      if (ctx.remoteWorkspace && t.name === "shell") {
+        const problem = validateCommand(params.command, ctx.cwd, path21.posix);
+        if (problem) return { content: problem, isError: true };
+      }
+      if (ctx.checkPermission) {
+        await ctx.runHook?.("permission-request", { tool: t.name, args: params });
+        const argRecord = params;
+        const baseLevel = ctx.checkPermission(t.name, argRecord);
+        const surface = ctx.permissionSurface ?? "interactive";
+        const handlerCtx = createHandlerContext({
+          cwd: ctx.cwd,
+          sessionId: ctx.permissionSessionId ?? "session",
+          log: ctx.log,
+          autoConfirm: ctx.autoConfirm,
+          guardianEnabled: !!ctx.guardianModel,
+          subagentId: ctx.subagentId
+        });
+        const decision = await runPermissionCheck(t.name, argRecord, baseLevel, surface, handlerCtx);
+        if (decision.outcome === "deny") {
+          if (surface === "auto-mode") recordAutoModeDenial(decision);
+          await ctx.runHook?.("permission-denied", {
+            tool: t.name,
+            args: params,
+            reason: decision.reason ?? "denied-by-handler",
+            surface
+          });
+          return {
+            content: decision.silent ? `Permission denied: ${decision.reason ?? t.name + " blocked by " + surface + " handler"}` : `Permission denied: ${t.name} \u2014 ${decision.reason ?? "denied by permission handler"}.`,
+            isError: true
+          };
+        }
+        if (decision.outcome === "prompt") {
+          let guardian = null;
+          if (ctx.guardianModel) {
+            try {
+              guardian = await assessRisk(
+                { tool: t.name, args: argRecord },
+                ctx.guardianModel
+              );
+            } catch {
+              guardian = null;
+            }
+            if (guardian?.recommended_action === "deny") {
+              await ctx.runHook?.("permission-denied", {
+                tool: t.name,
+                args: params,
+                reason: "guardian-denied",
+                guardian
+              });
+              return {
+                content: `Guardian blocked this action (${guardian.severity}): ${guardian.justification}`,
+                isError: true
+              };
+            }
+          }
+          const guardianCleared = guardian?.recommended_action === "auto-allow" && guardian.severity === "low";
+          if (!guardianCleared) {
+            if (!ctx.requireConfirm && !ctx.confirmTool) {
+              pushTailNotification(`${surface}: prompt required for ${t.name} but no UI (denied)`);
+              await ctx.runHook?.("permission-denied", {
+                tool: t.name,
+                args: params,
+                reason: "no-ui-to-prompt",
+                surface
+              });
+              return {
+                content: `Permission denied: ${t.name} requires a prompt but no interactive UI is attached.`,
+                isError: true
+              };
+            }
+            const paramSummary = Object.entries(argRecord).map(([k, v]) => `${k}=${String(v).slice(0, 80)}`).join(", ");
+            const basePrompt = `Tool ${t.name}(${paramSummary}) requires approval. Proceed?`;
+            const guardianTag = guardian ? `
+(Guardian: ${guardian.severity} \u2014 ${guardian.justification.slice(0, 200)})` : "";
+            const confirmed = ctx.confirmTool ? await ctx.confirmTool(t.name, argRecord, basePrompt + guardianTag, execution?.toolCallId) : await ctx.confirm(basePrompt + guardianTag);
+            if (!confirmed) {
+              await ctx.runHook?.("permission-denied", { tool: t.name, args: params, reason: "cancelled-by-user" });
+              return { content: "Cancelled by user.", isError: true };
+            }
+            if (surface === "interactive" && !ctx.confirmTool) {
+              recordInteractiveApproval(
+                ctx.permissionSessionId ?? "session",
+                t.name,
+                argRecord
+              );
+            }
+          }
+        }
+      }
+      const execute3 = async () => {
+        await ctx.runHook?.("pre-tool", { tool: t.name, args: params, toolCallId: execution?.toolCallId });
+        ctx.abortSignal?.throwIfAborted();
+        const mayChangeFiles = !["read", "glob", "grep", "web_fetch", "web_search", "browser_read", "browser_interact"].includes(t.name);
+        if (mayChangeFiles) ctx._readCache?.clear();
+        let result;
+        try {
+          result = ctx.remoteWorkspace ? await ctx.remoteWorkspace.execute(t.name, params, ctx.abortSignal) : await t.execute(params, ctx);
+        } finally {
+          if (mayChangeFiles) ctx._readCache?.clear();
+        }
+        await ctx.runHook?.("post-tool", {
+          tool: t.name,
+          args: params,
+          result: result.content.slice(0, 500),
+          isError: result.isError ?? false,
+          toolCallId: execution?.toolCallId
+        });
+        return result;
+      };
+      return ctx.remoteWorkspace ? execute3() : guardedFileAccess(t.name, params, ctx, execute3);
+    };
     map[t.name] = tool2({
       description: t.description,
       inputSchema: t.parameters,
-      execute: async (params, execution) => {
-        ctx.abortSignal?.throwIfAborted();
-        const readOnly = isBuiltInReadTool(t.name, BUILTIN_TOOLS.includes(t));
-        if (ctx.accessMode === "read-only" && !readOnly) {
-          return { content: `Permission denied: ${t.name} is unavailable in read-only mode.`, isError: true };
-        }
-        if (ctx.dryRun && !readOnly) {
-          return { content: `[DRY RUN] Would execute ${t.name}:
-${JSON.stringify(params, null, 2).slice(0, 500)}` };
-        }
-        const validated = t.parameters.safeParse(params);
-        if (!validated.success) {
-          return { content: `Invalid arguments for ${t.name}: ${validated.error.message}`, isError: true };
-        }
-        params = validated.data;
-        if (ctx.remoteWorkspace && t.name === "shell") {
-          const problem = validateCommand(params.command, ctx.cwd, path20.posix);
-          if (problem) return { content: problem, isError: true };
-        }
-        if (ctx.checkPermission) {
-          await ctx.runHook?.("permission-request", { tool: t.name, args: params });
-          const argRecord = params;
-          const baseLevel = ctx.checkPermission(t.name, argRecord);
-          const surface = ctx.permissionSurface ?? "interactive";
-          const handlerCtx = createHandlerContext({
-            cwd: ctx.cwd,
-            sessionId: ctx.permissionSessionId ?? "session",
-            log: ctx.log,
-            autoConfirm: ctx.autoConfirm,
-            guardianEnabled: !!ctx.guardianModel,
-            subagentId: ctx.subagentId
-          });
-          const decision = await runPermissionCheck(t.name, argRecord, baseLevel, surface, handlerCtx);
-          if (decision.outcome === "deny") {
-            if (surface === "auto-mode") recordAutoModeDenial(decision);
-            await ctx.runHook?.("permission-denied", {
-              tool: t.name,
-              args: params,
-              reason: decision.reason ?? "denied-by-handler",
-              surface
-            });
-            return {
-              content: decision.silent ? `Permission denied: ${decision.reason ?? t.name + " blocked by " + surface + " handler"}` : `Permission denied: ${t.name} \u2014 ${decision.reason ?? "denied by permission handler"}.`,
-              isError: true
-            };
-          }
-          if (decision.outcome === "prompt") {
-            let guardian = null;
-            if (ctx.guardianModel) {
-              try {
-                guardian = await assessRisk(
-                  { tool: t.name, args: argRecord },
-                  ctx.guardianModel
-                );
-              } catch {
-                guardian = null;
-              }
-              if (guardian?.recommended_action === "deny") {
-                await ctx.runHook?.("permission-denied", {
-                  tool: t.name,
-                  args: params,
-                  reason: "guardian-denied",
-                  guardian
-                });
-                return {
-                  content: `Guardian blocked this action (${guardian.severity}): ${guardian.justification}`,
-                  isError: true
-                };
-              }
-            }
-            const guardianCleared = guardian?.recommended_action === "auto-allow" && guardian.severity === "low";
-            if (!guardianCleared) {
-              if (!ctx.requireConfirm && !ctx.confirmTool) {
-                pushTailNotification(`${surface}: prompt required for ${t.name} but no UI (denied)`);
-                await ctx.runHook?.("permission-denied", {
-                  tool: t.name,
-                  args: params,
-                  reason: "no-ui-to-prompt",
-                  surface
-                });
-                return {
-                  content: `Permission denied: ${t.name} requires a prompt but no interactive UI is attached.`,
-                  isError: true
-                };
-              }
-              const paramSummary = Object.entries(argRecord).map(([k, v]) => `${k}=${String(v).slice(0, 80)}`).join(", ");
-              const basePrompt = `Tool ${t.name}(${paramSummary}) requires approval. Proceed?`;
-              const guardianTag = guardian ? `
-(Guardian: ${guardian.severity} \u2014 ${guardian.justification.slice(0, 200)})` : "";
-              const confirmed = ctx.confirmTool ? await ctx.confirmTool(t.name, argRecord, basePrompt + guardianTag, execution?.toolCallId) : await ctx.confirm(basePrompt + guardianTag);
-              if (!confirmed) {
-                await ctx.runHook?.("permission-denied", { tool: t.name, args: params, reason: "cancelled-by-user" });
-                return { content: "Cancelled by user.", isError: true };
-              }
-              if (surface === "interactive" && !ctx.confirmTool) {
-                recordInteractiveApproval(
-                  ctx.permissionSessionId ?? "session",
-                  t.name,
-                  argRecord
-                );
-              }
-            }
-          }
-        }
-        const execute2 = async () => {
-          await ctx.runHook?.("pre-tool", { tool: t.name, args: params, toolCallId: execution?.toolCallId });
-          ctx.abortSignal?.throwIfAborted();
-          const mayChangeFiles = !["read", "glob", "grep", "web_fetch", "web_search", "browser_read", "browser_interact"].includes(t.name);
-          if (mayChangeFiles) ctx._readCache?.clear();
-          let result;
-          try {
-            result = ctx.remoteWorkspace ? await ctx.remoteWorkspace.execute(t.name, params, ctx.abortSignal) : await t.execute(params, ctx);
-          } finally {
-            if (mayChangeFiles) ctx._readCache?.clear();
-          }
-          await ctx.runHook?.("post-tool", {
-            tool: t.name,
-            args: params,
-            result: result.content.slice(0, 500),
-            isError: result.isError ?? false,
-            toolCallId: execution?.toolCallId
-          });
-          return result;
-        };
-        return ctx.remoteWorkspace ? execute2() : guardedFileAccess(t.name, params, ctx, execute2);
-      }
+      execute: (params, execution) => ctx._executeGuard ? ctx._executeGuard(t.name, params, () => execute2(params, execution)) : execute2(params, execution)
     });
   }
   return map;
@@ -7274,15 +7453,15 @@ async function autoCompressWithStats(messages, model, contextWindow, signal, his
 }
 
 // vendor/notch-cli/src/context/project-instructions.ts
-import fs17 from "fs/promises";
-import path21 from "path";
+import fs18 from "fs/promises";
+import path22 from "path";
 import os5 from "os";
 var INSTRUCTION_FILES = [".notch.md", "NOTCH.md", ".notch/instructions.md"];
 async function loadProjectInstructions(projectRoot) {
   const sources = [];
   const homeDir = os5.homedir();
   for (const file2 of INSTRUCTION_FILES) {
-    const globalPath = path21.join(homeDir, file2);
+    const globalPath = path22.join(homeDir, file2);
     const content = await safeRead(globalPath);
     if (content) {
       sources.push({ path: globalPath, content, scope: "global" });
@@ -7290,7 +7469,7 @@ async function loadProjectInstructions(projectRoot) {
     }
   }
   for (const file2 of INSTRUCTION_FILES) {
-    const projectPath = path21.join(projectRoot, file2);
+    const projectPath = path22.join(projectRoot, file2);
     const content = await safeRead(projectPath);
     if (content) {
       sources.push({ path: projectPath, content, scope: "project" });
@@ -7312,7 +7491,7 @@ ${sections.join("\n\n")}`;
 }
 async function safeRead(filePath) {
   try {
-    const content = await fs17.readFile(filePath, "utf-8");
+    const content = await fs18.readFile(filePath, "utf-8");
     return content.trim() || null;
   } catch {
     return null;
@@ -7320,28 +7499,28 @@ async function safeRead(filePath) {
 }
 
 // vendor/notch-cli/src/memory/store.ts
-import fs18 from "fs/promises";
-import path22 from "path";
+import fs19 from "fs/promises";
+import path23 from "path";
 import os6 from "os";
 import { generateText as generateText4 } from "ai";
-var MEMORY_DIR = path22.join(os6.homedir(), ".notch", "memory");
-var INDEX_FILE = path22.join(MEMORY_DIR, "MEMORY.md");
-var SUMMARY_FILE = path22.join(MEMORY_DIR, "SUMMARY.md");
-var SUMMARY_FILENAME = path22.basename(SUMMARY_FILE);
+var MEMORY_DIR = path23.join(os6.homedir(), ".notch", "memory");
+var INDEX_FILE = path23.join(MEMORY_DIR, "MEMORY.md");
+var SUMMARY_FILE = path23.join(MEMORY_DIR, "SUMMARY.md");
+var SUMMARY_FILENAME = path23.basename(SUMMARY_FILE);
 var DEFAULT_PROMPT_CHAR_BUDGET = Number(process.env.NOTCH_MEMORY_PROMPT_CHARS ?? 6e3);
 var MAX_SINGLE_MEMORY_CHARS = Number(process.env.NOTCH_MEMORY_ITEM_CHARS ?? 4e3);
 var MAX_COMPACTION_INPUT_CHARS = Number(process.env.NOTCH_MEMORY_COMPACT_INPUT_CHARS ?? 3e4);
 async function ensureDir() {
-  await fs18.mkdir(MEMORY_DIR, { recursive: true });
+  await fs19.mkdir(MEMORY_DIR, { recursive: true });
 }
 async function loadMemories() {
   await ensureDir();
-  const files2 = await fs18.readdir(MEMORY_DIR);
+  const files2 = await fs19.readdir(MEMORY_DIR);
   const memories = [];
   for (const file2 of files2) {
     if (!file2.endsWith(".md") || file2 === "MEMORY.md" || file2 === SUMMARY_FILENAME) continue;
     try {
-      const content = await fs18.readFile(path22.join(MEMORY_DIR, file2), "utf-8");
+      const content = await fs19.readFile(path23.join(MEMORY_DIR, file2), "utf-8");
       const memory = parseMemoryFile(content, file2);
       if (memory) memories.push(memory);
     } catch {
@@ -7412,7 +7591,7 @@ function extractField(frontmatter, field) {
 }
 async function loadMemorySummary() {
   try {
-    const raw = await fs18.readFile(SUMMARY_FILE, "utf-8");
+    const raw = await fs19.readFile(SUMMARY_FILE, "utf-8");
     return raw.replace(/^# Notch Memory Summary\s*/i, "").replace(/^_Updated:.*?_\s*/im, "").trim();
   } catch {
     return "";
@@ -7890,15 +8069,6 @@ function autoDetectPreset(modelId) {
 }
 
 // vendor/notch-cli/src/agent/loop.ts
-function getErrorSignature(toolName, result) {
-  return {
-    toolName,
-    errorPrefix: result.slice(0, 120)
-  };
-}
-function signaturesMatch(a, b) {
-  return a.toolName === b.toolName && a.errorPrefix === b.errorPrefix;
-}
 async function runAgentLoop(messages, config) {
   let delivery;
   const result = await withTaskWorkspace({ ...openRouterTaskContext(config.toolContext, config.model), onWorkspaceResult: (value) => {
@@ -7925,9 +8095,11 @@ Task changes are saved separately because these project files changed: ${deliver
 }
 async function runAgentLoopInternal(messages, config) {
   const readCache = /* @__PURE__ */ new Map();
+  const guard = new ExecutionGuard(messages);
   const toolCtxWithCache = {
     ...config.toolContext,
     _readCache: readCache,
+    _executeGuard: guard.run.bind(guard),
     _fileVersions: /* @__PURE__ */ new Map()
   };
   const feedback = toolValidationFeedback(buildToolMap(toolCtxWithCache));
@@ -7944,8 +8116,7 @@ async function runAgentLoopInternal(messages, config) {
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let wasCompressed = false;
-  const recentErrors = [];
-  const MAX_REPEATED_ERRORS = 3;
+  let verificationReminder = false;
   const correctionCfg = config.correction ?? autoDetectPreset(config.modelId ?? "");
   let totalCorrectionAttempts = 0;
   let intentResult = "unclear";
@@ -7991,6 +8162,8 @@ async function runAgentLoopInternal(messages, config) {
       config.onMicrocompact?.(mc.cleared, mc.savedChars);
     }
     await compact();
+    guard.beginStep();
+    const holdText = totalToolCalls > 0 || guard.failedChecks.length > 0;
     let fullText = "";
     const toolCalls = [];
     const toolResults = [];
@@ -8013,7 +8186,7 @@ async function runAgentLoopInternal(messages, config) {
       }
       if (event.type === "text-delta") {
         fullText += event.text;
-        config.onTextChunk?.(event.text);
+        if (!holdText && !guard.failedChecks.length) config.onTextChunk?.(event.text);
       } else if (event.type === "tool-call") {
         toolCalls.push({
           toolCallId: event.toolCallId,
@@ -8127,19 +8300,6 @@ async function runAgentLoopInternal(messages, config) {
       }
     }
     if (toolCalls.length > 0) {
-      let hasRepeatedError = false;
-      for (const tr of toolResults) {
-        const res = tr.result;
-        if (res?.isError) {
-          const toolName = toolCalls.find((tc) => tc.toolCallId === tr.toolCallId)?.toolName ?? "unknown";
-          const sig = getErrorSignature(toolName, res.content ?? "");
-          const repeated = recentErrors.filter((e) => signaturesMatch(e, sig)).length;
-          recentErrors.push(sig);
-          if (repeated >= MAX_REPEATED_ERRORS - 1) {
-            hasRepeatedError = true;
-          }
-        }
-      }
       if (nativeCallCount === toolCalls.length && nativeAssistantMessages.length) {
         history.push(...nativeAssistantMessages);
       } else history.push({
@@ -8163,22 +8323,40 @@ async function runAgentLoopInternal(messages, config) {
           output: toolOutput(tr.result)
         }))
       });
-      if (hasRepeatedError) {
-        history.push({
-          role: "user",
-          content: "[System: You have repeated the same failing tool call multiple times. Stop and try a different approach. If the tool is unavailable or the command keeps failing, explain the issue to the user instead of retrying.]"
-        });
-        recentErrors.length = 0;
+      if (guard.stopped) {
+        const text2 = guard.stopped + (guard.failedChecks.length ? "\n\n" + guard.failureReport() : "");
+        history.push({ role: "assistant", content: text2 });
+        config.onTextChunk?.(text2);
+        return {
+          status: "stalled",
+          text: text2,
+          messages: history,
+          iterations,
+          toolCallCount: totalToolCalls,
+          compressed: wasCompressed,
+          correctionAttempts: totalCorrectionAttempts,
+          usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens }
+        };
       }
+      if (fullText && !guard.failedChecks.length && holdText) config.onTextChunk?.(fullText);
       continue;
     }
-    if (nativeAssistantMessages.length) history.push(...nativeAssistantMessages);
+    if (guard.failedChecks.length) {
+      if (!verificationReminder) {
+        verificationReminder = true;
+        history.push({ role: "user", content: guard.failureReport() + "\nFix and rerun these checks. If unable, report the failure; do not claim success." });
+        continue;
+      }
+      fullText = guard.failureReport();
+      config.onTextChunk?.(fullText);
+    } else if (holdText && fullText) config.onTextChunk?.(fullText);
+    if (!guard.failedChecks.length && nativeAssistantMessages.length) history.push(...nativeAssistantMessages);
     else history.push({ role: "assistant", content: fullText });
     if (await pollPendingAgents(history)) {
       continue;
     }
     return {
-      status: "completed",
+      status: guard.failedChecks.length ? "verification-failed" : "completed",
       text: fullText,
       messages: history,
       iterations,
@@ -8243,7 +8421,9 @@ async function buildSystemPrompt(projectRoot, _modelId, toolContext) {
         "- If a task is complex, break it into steps.",
         "- When running shell commands, prefer non-destructive operations.",
         "- If you encounter an error, analyze it and suggest a fix.",
-        "- If the same tool call keeps failing, stop retrying and try a different approach."
+        "- If the same tool call keeps failing, stop retrying and try a different approach.",
+        "- Tool calls execute in order. Avoid duplicate calls. Fix a failed check and rerun it successfully before reporting that checks passed.",
+        "- Start long-running servers with shell background:true, then check readiness with a separate foreground command. A started process is not a passed test."
       ].join("\n")
     ),
     safeSection(
@@ -8285,7 +8465,7 @@ async function buildSystemPrompt(projectRoot, _modelId, toolContext) {
         if (process.platform === "win32") lines.push("- The shell tool currently uses cmd.exe. Use portable Node commands or invoke PowerShell explicitly; Unix commands such as cat are not available by default.");
         lines.push(`- Current date (UTC): ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         try {
-          const entries = await fs19.readdir(projectRoot);
+          const entries = await fs20.readdir(projectRoot);
           const preview = entries.filter((e) => !e.startsWith(".")).slice(0, 30).join(", ");
           if (preview) lines.push(`- Top-level entries: ${preview}`);
         } catch {
@@ -8340,13 +8520,13 @@ ${memoryStr}`, {
 }
 
 // vendor/notch-cli/src/agent/checkpoints.ts
-import fs20 from "fs/promises";
-import path23 from "path";
-import { randomUUID as randomUUID4 } from "crypto";
+import fs21 from "fs/promises";
+import path24 from "path";
+import { randomUUID as randomUUID5 } from "crypto";
 var CheckpointManager = class _CheckpointManager {
   remote;
   get paths() {
-    return this.remote ? path23.posix : path23;
+    return this.remote ? path24.posix : path24;
   }
   checkpoints = [];
   nextId = 1;
@@ -8360,12 +8540,12 @@ var CheckpointManager = class _CheckpointManager {
   static async open(cwd, file2, remote) {
     const manager = new _CheckpointManager();
     manager.remote = remote;
-    const realCwd = remote ? path23.posix.normalize(cwd) : await fs20.realpath(cwd);
-    const stat = remote ? void 0 : await fs20.stat(realCwd, { bigint: true });
-    manager.storage = { cwd: realCwd, file: path23.resolve(file2), identity: remote ? remote.identity : `${stat.dev}:${stat.ino}` };
+    const realCwd = remote ? path24.posix.normalize(cwd) : await fs21.realpath(cwd);
+    const stat = remote ? void 0 : await fs21.stat(realCwd, { bigint: true });
+    manager.storage = { cwd: realCwd, file: path24.resolve(file2), identity: remote ? remote.identity : `${stat.dev}:${stat.ino}` };
     let raw;
     try {
-      raw = await fs20.readFile(file2, "utf8");
+      raw = await fs21.readFile(file2, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") return manager;
       throw error;
@@ -8426,26 +8606,26 @@ var CheckpointManager = class _CheckpointManager {
     if (!this.isWithin(file2)) throw new Error("Undo path is outside this workspace.");
     if (this.remote) return this.remote.safePath(file2);
     if (this.storage) {
-      const relative = path23.relative(path23.dirname(this.storage.file), file2);
-      if (path23.resolve(file2) === this.storage.file || this.isWithin(path23.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path23.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
+      const relative = path24.relative(path24.dirname(this.storage.file), file2);
+      if (path24.resolve(file2) === this.storage.file || this.isWithin(path24.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path24.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
     }
     let cursor = file2;
     while (true) {
       try {
-        const stat = await fs20.lstat(cursor);
+        const stat = await fs21.lstat(cursor);
         if (stat.isSymbolicLink() || cursor === file2 && stat.nlink > 1) throw new Error("Undo refuses symbolic links and shared hard links.");
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      if (cursor === this.storage?.cwd || path23.dirname(cursor) === cursor) break;
-      cursor = path23.dirname(cursor);
+      if (cursor === this.storage?.cwd || path24.dirname(cursor) === cursor) break;
+      cursor = path24.dirname(cursor);
     }
   }
   async read(file2) {
     await this.safePath(file2);
     if (this.remote) return this.remote.read(file2);
     try {
-      const bytes = await fs20.readFile(file2), content = bytes.toString("utf8");
+      const bytes = await fs21.readFile(file2), content = bytes.toString("utf8");
       if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${file2}`);
       return content;
     } catch (error) {
@@ -8461,20 +8641,20 @@ var CheckpointManager = class _CheckpointManager {
       identity: this.storage.identity,
       nextId: this.nextId,
       checkpoints: this.checkpoints,
-      pending: [...this.pendingFiles].map(([path25, before]) => ({ path: path25, before, after: this.pendingAfter.get(path25) })),
+      pending: [...this.pendingFiles].map(([path26, before]) => ({ path: path26, before, after: this.pendingAfter.get(path26) })),
       messageId: this.messageId,
       restoring: this.restoring
     });
     if (Buffer.byteLength(data) > 64 * 2 ** 20) throw new Error("Undo history exceeds 64 MiB; no further writes are allowed.");
     const file2 = this.storage.file;
     const save2 = this.saving.then(async () => {
-      await fs20.mkdir(path23.dirname(file2), { recursive: true });
-      const temporary = `${file2}.${randomUUID4()}.tmp`;
+      await fs21.mkdir(path24.dirname(file2), { recursive: true });
+      const temporary = `${file2}.${randomUUID5()}.tmp`;
       try {
-        await fs20.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
-        await fs20.rename(temporary, file2);
+        await fs21.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
+        await fs21.rename(temporary, file2);
       } finally {
-        await fs20.unlink(temporary).catch(() => {
+        await fs21.unlink(temporary).catch(() => {
         });
       }
     });
@@ -8606,19 +8786,19 @@ var CheckpointManager = class _CheckpointManager {
       }
       if (snap.before === null) {
         try {
-          await fs20.unlink(snap.path);
+          await fs21.unlink(snap.path);
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
         }
       } else {
-        await fs20.mkdir(path23.dirname(snap.path), { recursive: true });
-        const temporary = `${snap.path}.${randomUUID4()}.undo-tmp`;
-        const mode = current === null ? 384 : (await fs20.stat(snap.path)).mode & 511;
+        await fs21.mkdir(path24.dirname(snap.path), { recursive: true });
+        const temporary = `${snap.path}.${randomUUID5()}.undo-tmp`;
+        const mode = current === null ? 384 : (await fs21.stat(snap.path)).mode & 511;
         try {
-          await fs20.writeFile(temporary, snap.before, { mode, flag: "wx", flush: true });
-          await fs20.rename(temporary, snap.path);
+          await fs21.writeFile(temporary, snap.before, { mode, flag: "wx", flush: true });
+          await fs21.rename(temporary, snap.path);
         } finally {
-          await fs20.unlink(temporary).catch(() => {
+          await fs21.unlink(temporary).catch(() => {
           });
         }
       }
@@ -8657,8 +8837,8 @@ var CheckpointManager = class _CheckpointManager {
         }
       }
     }
-    return Array.from(fileMap.entries()).map(([path25, { before, after }]) => ({
-      path: path25,
+    return Array.from(fileMap.entries()).map(([path26, { before, after }]) => ({
+      path: path26,
       before,
       after
     }));
@@ -8679,8 +8859,8 @@ function definitionRules(values = [], level) {
   });
 }
 async function runDesktopTurn(turn) {
-  const cwd = turn.remoteWorkspace ? turn.cwd : await fs21.realpath(turn.cwd);
-  if (!turn.remoteWorkspace && !(await fs21.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
+  const cwd = turn.remoteWorkspace ? turn.cwd : await fs22.realpath(turn.cwd);
+  if (!turn.remoteWorkspace && !(await fs22.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
   if (!["approve", "read-only", "full-access"].includes(turn.accessMode)) throw new Error("Invalid desktop access mode.");
   turn.signal.throwIfAborted();
   const configRoot = turn.remoteWorkspace ? os7.homedir() : cwd;
@@ -8758,10 +8938,10 @@ async function runDesktopTurn(turn) {
       if (event === "post-tool") await turn.checkpoints.recordAfter();
       if (event !== "pre-tool") return;
       const args = payload.args;
-      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path24.posix : path24).resolve(cwd, args.path));
+      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path25.posix : path25).resolve(cwd, args.path));
       if (payload.tool === "apply_patch" && typeof args.input === "string") for (const action of parsePatch(args.input)) {
-        await turn.checkpoints.recordBefore(path24.resolve(cwd, action.target));
-        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path24.resolve(cwd, action.moveTo));
+        await turn.checkpoints.recordBefore(path25.resolve(cwd, action.target));
+        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path25.resolve(cwd, action.moveTo));
       }
     }
   };

@@ -10,6 +10,12 @@ test('adapter maps access modes and does not turn automatic/editor modes into fu
   assert.equal(accessForMode('bypassPermissions'), 'full-access'); assert.equal(accessForMode('bypassPermissions', true), 'read-only');
   assert.throws(() => accessForMode('unknown'), /Unsupported/);
 });
+for (const status of ['stalled','verification-failed','max-iterations']) test(`adapter preserves ${status} as a failed result`,async()=>{
+  const f=fixture();const query=new NotchQuery(f.host,{cwd:process.cwd(),prompt:'Verify'},{runTurn:async turn=>({status,text:'Checks have not passed.',messages:turn.messages})});
+  const events=[];for await(const event of query)events.push(event);
+  assert.equal(events.at(-1).subtype,'error_during_execution');assert.equal(events.at(-1).is_error,true);
+  assert.match(events.at(-1).result,/Checks have not passed/);assert.notEqual(events.at(-1).terminal_reason,'user_interrupted');
+});
 test('streamed text and native tool identities drive the existing workbench contract', async () => {
   const f = fixture(); let approved;
   const query = new NotchQuery(f.host, { cwd: process.cwd(), prompt: 'Write a file', sessionId: 'fixture',
