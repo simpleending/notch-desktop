@@ -1,5 +1,11 @@
 # Windows release verification
 
+Version 0.1.13 embeds CLI 0.7.17 and applies the selected OpenRouter model's output ceiling to normal replies, semantic compaction, and background requests. The CLI now reads the ceiling from the provider catalog and refreshes model-specific limits when switching models. The IDE uses its existing catalog limits in the same shared provider wrapper.
+
+The CLI passed 587 tests and the desktop passed 158 tests, with both typechecks passing. An exact packaged-module regression demonstrated the fix: 0.1.12 requested 1,024/2,048 summary tokens from a simulated model limited to 512; 0.1.13 requested 512 for both summarization and streaming. Protocol fixtures make no paid requests. Live OpenRouter testing is deferred until a provider key is configured; this is not an all-model compatibility guarantee.
+
+The packaged UI check exercises successful semantic compaction, a switch from a 512-token model to a 4,000-token model, a forced process restart, the restored model selection, and a new real file-tool round trip. The compacted project decision and all file results remain in the saved transcript. An independent archive audit matched all 44 desktop source files, 18 compiled core files and 139 embedded CLI files, including the pinned provider SDKs. The existing user's open 0.1.12 window was not interrupted; installing 0.1.13 remains a separate update step.
+
 Version 0.1.11 corrects a misleading inherited account warning when a saved task references an unavailable model. It now asks users to choose an installed model or connect its provider. Runtime behavior and CLI 0.7.14 are unchanged from 0.1.10; the source suite has 122 passing tests.
 
 The 0.1.10 [local service audit](local-only-audit.md) retires remaining account-bound features at the main-service boundary and removes their controls: hosted automation/collaboration, marketplace discovery, remote control, speech, managed SSH, cloud privacy/configuration/diagnostics, and the inherited updater. Models settings reuses the existing local/provider manager. The packaged audit opens all remaining settings and local automation/extension dialogs, and direct retired-service IPC fails locally without sign-in. Existing task data and credentials are preserved.

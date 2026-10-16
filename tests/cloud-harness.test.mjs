@@ -76,7 +76,7 @@ for (const contextWindow of [8192, 131072]) test(`OpenRouter ${contextWindow}-to
     if (!body.stream) {
       summaries++;
       assert.match(JSON.stringify(body.messages), new RegExp(decision));
-      assert.ok((body.max_tokens ?? body.max_completion_tokens) <= 1024);
+      assert.ok((body.max_tokens ?? body.max_completion_tokens) <= (contextWindow === 8192 ? 512 : 1024));
       return Response.json({id:'summary', object:'chat.completion', created:1, model:body.model,
         choices:[{index:0, message:{role:'assistant', content:`Project decision: ${decision}. Prior reviews completed.`}, finish_reason:'stop'}],
         usage:{prompt_tokens:1000, completion_tokens:20, total_tokens:1020}});
@@ -87,7 +87,7 @@ for (const contextWindow of [8192, 131072]) test(`OpenRouter ${contextWindow}-to
     assert.match(history, /Original task/);
     assert.match(history, /Continue the current task/);
     assert.equal(body.messages.find(message => message.role === 'tool' && message.tool_call_id === 'current-read')?.content, 'CURRENT_RECEIPT');
-    assert.ok((body.max_tokens ?? body.max_completion_tokens) <= 4096);
+    assert.ok((body.max_tokens ?? body.max_completion_tokens) <= (contextWindow === 8192 ? 512 : 4096));
     const delta = streams === 1
       ? {tool_calls:[{index:0, id:'denied-write', type:'function', function:{name:'write', arguments:JSON.stringify({path:'forbidden.txt', content:'must not write'})}}]}
       : {content:`${decision} COMPACTION_CONTRACT_VERIFIED`};
@@ -95,7 +95,7 @@ for (const contextWindow of [8192, 131072]) test(`OpenRouter ${contextWindow}-to
     const frame = (value, reason = null) => ({id:'compact', object:'chat.completion.chunk', created:1, model:body.model, choices:[{index:0, delta:value, finish_reason:reason}]});
     return new Response(`data: ${JSON.stringify(frame(delta))}\n\ndata: ${JSON.stringify(frame({}, streams === 1 ? 'tool_calls' : 'stop'))}\n\ndata: [DONE]\n\n`, {headers:{'content-type':'text/event-stream'}});
   });
-  const turn = {cwd, model:'openrouter/openai/gpt-4.1', apiKey:'fixture-only', contextWindow, accessMode:'read-only',
+  const turn = {cwd, model:'openrouter/openai/gpt-4.1', apiKey:'fixture-only', contextWindow, maxOutputTokens:contextWindow === 8192 ? 512 : 4096, accessMode:'read-only',
     signal:AbortSignal.timeout(15000), checkpoints:new CheckpointManager(), tools:['Read', 'Write'], approve:async()=>{throw Error('Read-only must reject writes');},
     onCompact:async original=>{archived = JSON.parse(JSON.stringify(original));}};
   const result = await runDesktopTurn({...turn, sessionId:'compact-first', messages});

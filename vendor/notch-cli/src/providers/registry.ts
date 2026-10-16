@@ -211,6 +211,7 @@ export function resolveModel(config: ModelConfig): LanguageModel {
       apiShape: config.byokApiShape,
       contextWindow: config.contextWindow,
       nativeContextWindow: config.nativeContextWindow,
+      maxOutputTokens: config.maxOutputTokens,
       ollamaBatch: config.ollamaBatch,
     });
     firePiAiShadowProbe(config, resolved.model);
@@ -229,6 +230,7 @@ export function resolveModel(config: ModelConfig): LanguageModel {
       apiShape: config.byokApiShape,
       contextWindow: config.contextWindow,
       nativeContextWindow: config.nativeContextWindow,
+      maxOutputTokens: config.maxOutputTokens,
       ollamaBatch: config.ollamaBatch,
     });
     firePiAiShadowProbe(config, resolved.model);

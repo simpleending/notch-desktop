@@ -77,6 +77,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   const selection = { ...(turn.model && turn.model !== 'auto' ? selectModel(config.models.chat, { model: turn.model }) : config.models.chat),
     ...(turn.baseUrl ? { baseUrl: turn.baseUrl } : {}),
     ...(turn.apiKey ? { apiKey: turn.apiKey } : {}),
+    ...(turn.maxOutputTokens ? { maxOutputTokens: turn.maxOutputTokens } : {}),
     ...(turn.contextWindow ? { contextWindow: turn.contextWindow } : {}),
     ...(turn.nativeContextWindow ? { nativeContextWindow: turn.nativeContextWindow } : {}),
     ...(turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}),

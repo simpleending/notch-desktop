@@ -123,7 +123,7 @@ export interface ModelSelection { provider?: string; model?: string; baseUrl?: s
 export function selectModel(current: ModelConfig, selection: ModelSelection): ModelConfig {
   const next = { ...current };
   if (selection.provider || selection.model) {
-    if (selection.model && selection.model !== current.model) { delete next.sourceRepo; delete next.nativeContextWindow; }
+    if (selection.model && selection.model !== current.model) { delete next.sourceRepo; delete next.nativeContextWindow; delete next.maxOutputTokens; }
     const oldProvider = current.byokProvider ?? (isByokRef(current.model) ? parseByokRef(current.model).provider : undefined);
     const provider = selection.provider === 'custom' ? '__custom__' : selection.provider;
     const newProvider = provider ?? (selection.model && isByokRef(selection.model) ? parseByokRef(selection.model).provider : undefined);
@@ -134,6 +134,8 @@ export function selectModel(current: ModelConfig, selection: ModelSelection): Mo
       delete next.headers;
       delete next.byokApiShape;
       delete next.contextWindow;
+      delete next.nativeContextWindow;
+      delete next.maxOutputTokens;
       delete next.ollamaBatch;
       delete next.sourceRepo;
     }

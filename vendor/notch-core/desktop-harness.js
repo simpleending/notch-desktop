@@ -38,6 +38,7 @@ import { createOpenAI as createOpenAI2 } from "@ai-sdk/openai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
+import { wrapLanguageModel } from "ai";
 
 // vendor/notch-cli/src/auth.ts
 import http from "http";
@@ -612,7 +613,14 @@ function resolveByokModel(spec) {
   }
   if (providerInfo.id === "openrouter") {
     const openrouter = createOpenRouter({ apiKey, baseURL: baseUrl, headers });
-    return { model: openrouter.chat(modelId), providerInfo, modelId };
+    const model = openrouter.chat(modelId);
+    return { model: Number.isSafeInteger(spec.maxOutputTokens) && spec.maxOutputTokens > 0 ? wrapLanguageModel({
+      model,
+      middleware: { specificationVersion: "v4", transformParams: async ({ params }) => ({
+        ...params,
+        maxOutputTokens: Math.min(params.maxOutputTokens ?? spec.maxOutputTokens, spec.maxOutputTokens)
+      }) }
+    }) : model, providerInfo, modelId };
   }
   const provider = createOpenAI({
     ...providerInfo.id === "ollama" ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
@@ -890,6 +898,7 @@ function resolveModel(config) {
       apiShape: config.byokApiShape,
       contextWindow: config.contextWindow,
       nativeContextWindow: config.nativeContextWindow,
+      maxOutputTokens: config.maxOutputTokens,
       ollamaBatch: config.ollamaBatch
     });
     firePiAiShadowProbe(config, resolved.model);
@@ -906,6 +915,7 @@ function resolveModel(config) {
       apiShape: config.byokApiShape,
       contextWindow: config.contextWindow,
       nativeContextWindow: config.nativeContextWindow,
+      maxOutputTokens: config.maxOutputTokens,
       ollamaBatch: config.ollamaBatch
     });
     firePiAiShadowProbe(config, resolved.model);
@@ -2126,6 +2136,7 @@ function selectModel(current, selection) {
     if (selection.model && selection.model !== current.model) {
       delete next.sourceRepo;
       delete next.nativeContextWindow;
+      delete next.maxOutputTokens;
     }
     const oldProvider = current.byokProvider ?? (isByokRef(current.model) ? parseByokRef(current.model).provider : void 0);
     const provider = selection.provider === "custom" ? "__custom__" : selection.provider;
@@ -2137,6 +2148,8 @@ function selectModel(current, selection) {
       delete next.headers;
       delete next.byokApiShape;
       delete next.contextWindow;
+      delete next.nativeContextWindow;
+      delete next.maxOutputTokens;
       delete next.ollamaBatch;
       delete next.sourceRepo;
     }
@@ -8676,6 +8689,7 @@ async function runDesktopTurn(turn) {
     ...turn.model && turn.model !== "auto" ? selectModel(config.models.chat, { model: turn.model }) : config.models.chat,
     ...turn.baseUrl ? { baseUrl: turn.baseUrl } : {},
     ...turn.apiKey ? { apiKey: turn.apiKey } : {},
+    ...turn.maxOutputTokens ? { maxOutputTokens: turn.maxOutputTokens } : {},
     ...turn.contextWindow ? { contextWindow: turn.contextWindow } : {},
     ...turn.nativeContextWindow ? { nativeContextWindow: turn.nativeContextWindow } : {},
     ...turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}

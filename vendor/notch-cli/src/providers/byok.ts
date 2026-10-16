@@ -20,7 +20,7 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import type { LanguageModel } from 'ai';
+import { wrapLanguageModel, type LanguageModel } from 'ai';
 import { loadSyncedByokKeysSync } from '../auth.js';
 import { ollamaChatUrl, ollamaRoot } from './ollama-url.js';
 import { ollamaFetch } from './ollama-transport.js';
@@ -347,6 +347,7 @@ export function isByokRef(model: string): boolean {
 
 /** Resolved BYOK model spec from a raw `<provider>:<model>` string. */
 export interface ByokSpec {
+  maxOutputTokens?: number;
   nativeContextWindow?: number;
   contextWindow?: number;
   ollamaBatch?: number;
@@ -524,7 +525,13 @@ export function resolveByokModel(spec: ByokSpec): {
 
   if (providerInfo.id === 'openrouter') {
     const openrouter = createOpenRouter({ apiKey, baseURL: baseUrl, headers });
-    return { model: openrouter.chat(modelId) as LanguageModel, providerInfo, modelId };
+    const model = openrouter.chat(modelId);
+    // Summary and background calls share the selected model's output ceiling.
+    return { model: Number.isSafeInteger(spec.maxOutputTokens) && spec.maxOutputTokens! > 0 ? wrapLanguageModel({ model,
+      middleware: { specificationVersion: 'v4', transformParams: async ({ params }) => ({ ...params,
+        maxOutputTokens: Math.min(params.maxOutputTokens ?? spec.maxOutputTokens!, spec.maxOutputTokens!),
+      }) },
+    }) : model, providerInfo, modelId };
   }
 
   const provider = createOpenAI({
