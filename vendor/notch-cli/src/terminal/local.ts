@@ -30,7 +30,7 @@ export class LocalTerminal implements TerminalBackend {
     const start = Date.now();
     const isWin = process.platform === 'win32';
     const shell = isWin ? (process.env.COMSPEC ?? 'cmd.exe') : '/bin/sh';
-    const shellArgs = isWin ? ['/d', '/s', '/c', req.command] : ['-lc', req.command];
+    const shellArgs = isWin ? ['/d', '/s', '/c', `"${req.command}"`] : ['-lc', req.command];
 
     return new Promise((resolve) => {
       let stdout = '';
@@ -43,6 +43,7 @@ export class LocalTerminal implements TerminalBackend {
         cwd: req.cwd,
         env: { ...process.env, ...req.env },
         windowsHide: true,
+        windowsVerbatimArguments: isWin,
         detached: !isWin,
       });
 

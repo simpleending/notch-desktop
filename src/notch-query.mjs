@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { runDesktopTurn, CheckpointManager } from '../vendor/notch-core/desktop-harness.js';
-const toolNames = { read: 'Read', write: 'Write', edit: 'Edit', shell: 'Bash', glob: 'Glob', grep: 'Grep', git: 'Git', apply_patch: 'ApplyPatch', web_fetch: 'WebFetch' };
+const toolNames = { read: 'Read', task_changes: 'TaskChanges', write: 'Write', edit: 'Edit', shell: 'Bash', glob: 'Glob', grep: 'Grep', git: 'Git', apply_patch: 'ApplyPatch', web_fetch: 'WebFetch' };
 function wireInput(name, args) {
   if (['read', 'write', 'edit'].includes(name) && typeof args.path === 'string') {
     const { path, ...other } = args; return { ...other, file_path: path };
@@ -198,7 +198,7 @@ export class NotchQuery {
           if (!['pre-tool', 'post-tool'].includes(event)) return;
           const hookEvent = event === 'pre-tool' ? 'PreToolUse' : payload.isError ? 'PostToolUseFailure' : 'PostToolUse';
           const name = payload.tool === 'apply_patch' ? 'apply_patch' : toolNames[payload.tool] || payload.tool;
-          for (const group of this.request.hooks?.[hookEvent] || []) {
+          for (const group of payload.isolatedWorkspace ? [] : this.request.hooks?.[hookEvent] || []) {
             if (group.matcher && !new RegExp(group.matcher).test(name)) continue;
             for (const hook of group.hooks || []) {
               if (typeof hook !== 'function') throw new Error('Only workbench callback hooks are supported.');

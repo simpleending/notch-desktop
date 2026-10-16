@@ -45,6 +45,7 @@ import { recordInteractiveApproval } from '../permissions/handlers/interactive.j
 
 import { isBuiltInReadTool } from '../permissions/access.js';
 import { guardedFileAccess } from '../concurrency/file-access.js';
+import { taskChangesTool } from './task-changes.js';
 export type { ToolContext, ToolResult, NotchTool, PermissionLevel } from './types.js';
 
 /** All built-in tools */
@@ -67,6 +68,7 @@ const BUILTIN_TOOLS: NotchTool<any>[] = [
   codeModeWaitTool,
   skillManageTool,
   eventsTool,
+  taskChangesTool,
 ];
 
 /** MCP clients (kept alive for the session) */
@@ -137,8 +139,8 @@ function getAllTools(ctx?: ToolContext): NotchTool<any>[] {
   // Non-coordinator mode: full built-in set + MCP + plugins, and the
   // coordinator-only tools are excluded entirely so the model never sees
   // agent_spawn / agent_send_message / agent_stop outside coordinator mode.
-  const all = [...BUILTIN_TOOLS, ...mcpTools, ...pluginManager.getTools()];
-  return ctx?.onlyTools ? all.filter(tool => ctx.onlyTools!.includes(tool.name)) : all;
+  const all = ctx?.taskWorkspace ? BUILTIN_TOOLS : [...BUILTIN_TOOLS.filter(t => t !== taskChangesTool), ...mcpTools, ...pluginManager.getTools()];
+  return ctx?.onlyTools ? all.filter(tool => ctx.onlyTools!.includes(tool.name) || (ctx.taskWorkspace && tool === taskChangesTool && ctx.onlyTools!.includes('read'))) : all;
 }
 
 /**

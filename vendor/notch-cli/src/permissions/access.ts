@@ -4,7 +4,7 @@ import { checkPermission } from './index.js';
 /** Shared by the CLI and future IDE; approval policy is distinct from OS isolation. */
 export const ACCESS_MODES = ['approve', 'read-only', 'full-access'] as const;
 export type AccessMode = typeof ACCESS_MODES[number];
-const READ_TOOLS = new Set(['read', 'grep', 'glob', 'web_fetch', 'web_search']);
+const READ_TOOLS = new Set(['read', 'task_changes', 'grep', 'glob', 'web_fetch', 'web_search']);
 
 export function parseAccessMode(value: unknown): AccessMode {
   if (typeof value !== 'string' || !ACCESS_MODES.includes(value as AccessMode)) {

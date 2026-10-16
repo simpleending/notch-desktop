@@ -1,5 +1,6 @@
 import { toolOutput } from '../messages.js';
 import { executionContext } from '../concurrency/local-inference.js';
+import { withTaskWorkspace, openRouterTaskContext } from '../concurrency/task-workspace.js';
 import { isStepCount, asSchema } from 'ai';
 /**
  * Notch CLI — Agent Loop
@@ -72,6 +73,7 @@ export interface AgentConfig {
 }
 
 export interface AgentResponse {
+  workspace?: Parameters<NonNullable<ToolContext['onWorkspaceResult']>>[0];
   status?: 'completed' | 'max-iterations';
   /** Final assistant text (after all tool rounds complete) */
   text: string;
@@ -128,7 +130,18 @@ export async function runAgentLoop(
   messages: ModelMessage[],
   config: AgentConfig,
 ): Promise<AgentResponse> {
-  return executionContext.run(config.toolContext, () => runAgentLoopInternal(messages, config));
+  let delivery: Parameters<NonNullable<ToolContext['onWorkspaceResult']>>[0] | undefined;
+  const result = await withTaskWorkspace({ ...openRouterTaskContext(config.toolContext, config.model), onWorkspaceResult: value => { delivery = value; config.toolContext.onWorkspaceResult?.(value); } }, ctx => executionContext.run(ctx, () => runAgentLoopInternal(messages, {
+    ...config, toolContext: ctx,
+    systemPrompt: config.systemPrompt + (ctx.taskWorkspace ? `\n\n## Private task workspace\nRun every file operation and shell command in ${ctx.cwd}. Earlier workspace paths refer to this checkout. Do not change the source project directly. Changes return automatically if the source has not changed. Use task_changes to inspect conflicts and read the latest source before reconciling them in this checkout. Shared plugin and MCP tools are unavailable here.` : ''),
+  })));
+  if (delivery && !delivery.applied) {
+    const notice = `\n\nTask changes are saved separately because these project files changed: ${delivery.conflicts.join(', ')}. Ask notch to reconcile them; no project files were overwritten.`;
+    config.onTextChunk?.(notice); result.text += notice;
+    result.messages.push({ role: 'user', content: `Task delivery status: ${notice.trim()} The next turn will resume the saved private checkout. Use task_changes read_source on each conflicting file and reconcile its current source contents before finishing.` });
+  }
+  if (delivery) result.workspace = delivery;
+  return result;
 }
 
 async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfig): Promise<AgentResponse> {

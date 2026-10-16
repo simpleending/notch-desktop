@@ -6,13 +6,15 @@ import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { verifyPluginCatalog } from '../src/plugin-integrity.mjs';
 import { verifyRecovery, verifyInterruptedUndo } from './verify-recovery.mjs';
-const args=process.argv.slice(2).filter(arg=>arg!=='--recovery');
+import { cloudModelRows } from '../src/model-policy.mjs';
+const cloudRow=cloudModelRows([{id:'fixture/chat',name:'Cloud verification',context_length:8192,architecture:{input_modalities:['text'],output_modalities:['text']},supported_parameters:['tools'],pricing:{prompt:'0',completion:'0'}}],true)[0];
+const args=process.argv.slice(2).filter(arg=>!['--recovery','--cloud-worktrees'].includes(arg));
 const executable=path.resolve(args[0]);
 const reportFile=path.resolve(args[1]||'release/stable-undo-plugins.json');
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'notch-stable-undo-'));const profile=path.join(root,'profile'),workspace=path.join(root,'project');await fs.mkdir(profile);await fs.mkdir(workspace);await fs.writeFile(path.join(workspace,'file.txt'),'original');
 const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|ELECTRON_RUN_AS_NODE/i.test(key)));
 let app,page,sessionId;const checks={},errors=[];checks.errors=errors;
-async function launch(){app=await _electron.launch({executablePath:executable,args:['--lang=en-US',`--user-data-dir=${profile}`],env,timeout:45000});app.on('window',w=>w.on('pageerror',e=>errors.push(e.stack||e.message)));if(process.argv.includes('--recovery'))await app.evaluate(()=>{globalThis.__notchRecoveryFixture=true;});await probe();page=await app.firstWindow();}
+async function launch(){app=await _electron.launch({executablePath:executable,args:['--lang=en-US',`--user-data-dir=${profile}`],env,timeout:45000});app.on('window',w=>w.on('pageerror',e=>errors.push(e.stack||e.message)));await app.evaluate((_electron,flags)=>{globalThis.__notchRecoveryFixture=flags.recovery;globalThis.__notchCloudWorkspaceFixture=flags.cloud;globalThis.__notchCloudWorkspaceRow=flags.row;if(flags.cloud){process.env.HOME=flags.home;process.env.USERPROFILE=flags.home;}},{recovery:process.argv.includes('--recovery'),cloud:process.argv.includes('--cloud-worktrees'),home:root,row:cloudRow});await probe();page=await app.firstWindow();}
 async function openSavedSession(){
  const restored=await page.evaluate(id=>window.notchDesktop.openChatSession(id),sessionId);
  await page.getByText(restored.summary.title,{exact:true}).first().click();
@@ -24,14 +26,18 @@ async function probe(){await app.evaluate(()=>{
  const textOf=value=>typeof value==='string'?value:Array.isArray(value)?value.map(block=>block.text||'').join('\n'):'';
  const isFixture=value=>/^Undo check (one|two|three)$/.test(textOf(value).trim());
  // Inference is mocked: recovery QA must not depend on memory available to a real model.
- if(globalThis.__notchRecoveryFixture)host.resolveModelChoice=()=>{
+ if(globalThis.__notchCloudWorkspaceFixture){
+  const row=globalThis.__notchCloudWorkspaceRow,key=row.key;row.isDefault=true;
+  host.listModels=async()=>[row];host.getCachedModels=()=>[row];host.getDefaultModel=()=>key;host.resolveModelChoice=()=>key;
+  host.modelManager.key=async()=>'fixture-only';
+ }else if(globalThis.__notchRecoveryFixture)host.resolveModelChoice=()=>{
   const row=host.getCachedModels().find(row=>row.provider==='ollama'&&row.key!=='auto');
   if(!row)throw Error('Recovery fixture needs local model metadata');
   return row.key;
  };
  globalThis.__undoTrace={results:[],inputs:[]};
  host.query=request=>{const prompt=request.prompt;let fixtureInput=isFixture(prompt);async function* wrapped(){for await(const input of prompt){if(isFixture(input.message?.content)){fixtureInput=true;globalThis.__undoTrace.inputs.push({uuid:input.uuid,keys:Object.keys(input)});}yield input;}}
- const result=query({...request,tools:['Read','Write','Edit','ApplyPatch'],prompt:typeof prompt==='string'?prompt:wrapped()}),emit=result.emit.bind(result);result.emit=e=>{if(e.type==='result'&&fixtureInput)globalThis.__undoTrace.results.push(e);return emit(e)};return result;};
+ const result=query({...request,tools:['Read','Write','Edit','ApplyPatch','Bash'],prompt:typeof prompt==='string'?prompt:wrapped()}),emit=result.emit.bind(result);result.emit=e=>{if(e.type==='result'&&fixtureInput)globalThis.__undoTrace.results.push(e);return emit(e)};return result;};
  globalThis.fetch=async(url,options)=>{
   const target=typeof url==='string'?url:url.url||String(url);if(!target.endsWith('/api/chat')&&!target.endsWith('/v1/chat/completions'))return original(url,options);
   const body=JSON.parse(options.body);const userIndex=body.messages.map(m=>m.role==='user').lastIndexOf(true),user=body.messages[userIndex]?.content,prompt=textOf(user);
@@ -39,6 +45,7 @@ async function probe(){await app.evaluate(()=>{
   const third=prompt.includes('Undo check three'),content=prompt.includes('Undo check two')?'two':'one',file=third?'created.txt':'file.txt';
   const done=!fixture||toolResults.length>=(third?1:2);
   const call=!third&&!toolResults.length?{id:'read-before-change',function:{name:'read',arguments:{path:file}}}:{id:'change-'+(third?'third':content),function:third?{name:'apply_patch',arguments:{input:'*** Begin Patch\n*** Add File: created.txt\n+new\n*** End Patch'}}:content==='two'?{name:'edit',arguments:{path:file,old_string:'one',new_string:'two'}}:{name:'write',arguments:{path:file,content}}};
+  if(globalThis.__notchCloudWorkspaceFixture&&call.function.name!=='read')call.function={name:'shell',arguments:{command:`node -e "require('fs').writeFileSync('${file}','${third?'new':content}')"`}};
   if(target.endsWith('/api/chat'))return new Response(JSON.stringify({model:body.model,message:{role:'assistant',content:done?reply:'',...(done?{}:{tool_calls:[call]})},done:true,done_reason:'stop',prompt_eval_count:1500,eval_count:30})+'\n',{headers:{'Content-Type':'application/x-ndjson'}});
   const delta=done?{content:reply}:{tool_calls:[{index:0,id:call.id,type:'function',function:{name:call.function.name,arguments:JSON.stringify(call.function.arguments)}}]};
   const chunk={id:'undo-fixture',model:body.model,choices:[{index:0,delta,finish_reason:null}]};const end={...chunk,choices:[{index:0,delta:{},finish_reason:done?'stop':'tool_calls'}],usage:{prompt_tokens:1500,completion_tokens:30,total_tokens:1530}};

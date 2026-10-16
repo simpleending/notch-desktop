@@ -165,9 +165,13 @@ export class CheckpointManager {
     try { await read; } finally { this.pendingReads.delete(filePath); }
   }
 
-  async recordAfter(): Promise<void> {
+  async recordAfter(filePath?: string): Promise<void> {
     await Promise.all(this.pendingReads.values());
-    for (const filePath of this.pendingFiles.keys()) if (!this.pendingAfter.has(filePath)) this.pendingAfter.set(filePath, await this.read(filePath));
+    if (filePath !== undefined) {
+      filePath = path.resolve(filePath);
+      if (!this.pendingFiles.has(filePath)) throw new Error('Capture the file before recording its completed write.');
+      this.pendingAfter.set(filePath, await this.read(filePath));
+    } else for (const filePath of this.pendingFiles.keys()) if (!this.pendingAfter.has(filePath)) this.pendingAfter.set(filePath, await this.read(filePath));
     await this.persist();
   }
 

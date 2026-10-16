@@ -49,7 +49,7 @@ export interface DesktopTurn {
   onLifecycle?: (event: string, payload: Record<string, unknown>) => Promise<void>;
 }
 
-const desktopToolNames: Record<string, string> = { Read: 'read', Write: 'write', Edit: 'edit', Bash: 'shell', Glob: 'glob', Grep: 'grep', Git: 'git', ApplyPatch: 'apply_patch', WebFetch: 'web_fetch', Agent: 'task' };
+const desktopToolNames: Record<string, string> = { Read: 'read', TaskChanges: 'task_changes', Write: 'write', Edit: 'edit', Bash: 'shell', Glob: 'glob', Grep: 'grep', Git: 'git', ApplyPatch: 'apply_patch', WebFetch: 'web_fetch', Agent: 'task' };
 export function desktopToolName(name: string): string { return desktopToolNames[name] ?? name; }
 export function definitionRules(values: string[] = [], level: 'allow' | 'deny'): PermissionRule[] {
   return values.map(value => {
@@ -74,11 +74,11 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     ...(turn.nativeContextWindow ? { nativeContextWindow: turn.nativeContextWindow } : {}),
     ...(turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}),
   };
-  if (selection.model.startsWith('openrouter/')) {
+  const provider = selection.byokProvider || (isByokRef(selection.model) ? parseByokRef(selection.model).provider : undefined);
+  if (provider === 'openrouter') {
     selection.baseUrl = 'https://openrouter.ai/api/v1';
     delete selection.headers; delete selection.byokHeaders; delete selection.byokApiShape;
   }
-  const provider = selection.byokProvider || (isByokRef(selection.model) ? parseByokRef(selection.model).provider : undefined);
   if (provider === 'ollama' && selection.baseUrl?.replace(/\/v1\/?$/, '') === 'http://127.0.0.1:11436') {
     const { managedOllama } = await import('./providers/ollama-runtime.js');
     await managedOllama('0.40.3', turn.signal);
@@ -89,8 +89,20 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   }
   if (provider === 'ollama' || provider === 'ollama-anthropic') selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
   const permissions = await loadPermissions(cwd);
+  const delivered = new Set<string>();
   const allowed = definitionRules(turn.allowedTools, 'allow'), denied = definitionRules(turn.disallowedTools, 'deny');
   const ctx: ToolContext = {
+    isolateTasks: () => provider === 'openrouter',
+    workspaceCheckpoints: {
+      recordBefore: async file => {
+        await turn.checkpoints.recordBefore(file); delivered.add(file);
+        await turn.onLifecycle?.('pre-tool', { tool: 'write', args: { path: file }, toolCallId: `delivery:${file}` });
+      },
+      recordAfter: async file => {
+        await turn.checkpoints.recordAfter(file);
+        for (const target of file ? [file] : delivered) await turn.onLifecycle?.('post-tool', { tool: 'write', args: { path: target }, toolCallId: `delivery:${target}`, result: 'Task changes applied.', isError: false });
+      },
+    },
     workspaceSearch: turn.workspaceSearch, ripgrepPath: turn.ripgrepPath,
     cwd, abortSignal: turn.signal, accessMode: turn.accessMode,
     requireConfirm: false, confirm: async () => false, confirmTool: turn.approve,
@@ -99,11 +111,13 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     log: turn.onLog || (() => {}), onQueue: turn.onQueue,
     checkPermission: (name, args) => {
       if (checkPermission({ default: 'allow', rules: denied }, name, args) === 'deny') return 'deny';
-      if (allowed.length && checkPermission({ default: 'deny', rules: allowed }, name, args) !== 'allow') return 'deny';
+      if (name === 'task_changes' && checkPermission({ default: 'allow', rules: denied }, 'read', args) === 'deny') return 'deny';
+      if (allowed.length && checkPermission({ default: 'deny', rules: allowed }, name, args) !== 'allow' && !(name === 'task_changes' && checkPermission({ default: 'deny', rules: allowed }, 'read', args) === 'allow')) return 'deny';
       return checkAccess(turn.accessMode, permissions, name, args);
     },
     runHook: async (event, payload) => {
       await turn.onLifecycle?.(event, payload);
+      if (payload.isolatedWorkspace) return;
       if (event === 'post-tool') await turn.checkpoints.recordAfter();
       if (event !== 'pre-tool') return;
       const args = payload.args as Record<string, unknown>;

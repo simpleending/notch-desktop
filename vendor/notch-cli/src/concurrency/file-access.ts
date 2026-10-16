@@ -26,12 +26,12 @@ async function fingerprint(file: string, signal?: AbortSignal) {
   }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
-const orchestration = new Set(['task', 'events', 'code_exec', 'code_wait', 'agent_spawn', 'agent_send_message', 'agent_stop', 'web_fetch', 'web_search', 'glob', 'grep']);
+const orchestration = new Set(['task', 'task_changes', 'events', 'code_exec', 'code_wait', 'agent_spawn', 'agent_send_message', 'agent_stop', 'web_fetch', 'web_search', 'glob', 'grep']);
 
 /** Serialize cooperating file operations, and reject writes based on an unread or stale file. */
 export async function guardedFileAccess(name: string, params: Record<string, any>, ctx: ToolContext, execute: () => Promise<ToolResult>): Promise<ToolResult> {
   if (orchestration.has(name)) return execute();
-  const release = await acquireLease('file-mutations', ctx.abortSignal, waiting => ctx.onQueue?.(waiting ? 'Waiting for file access…' : null));
+  const release = await acquireLease(ctx.taskWorkspace ? 'task-files:' + ctx.cwd : 'file-mutations', ctx.abortSignal, waiting => ctx.onQueue?.(waiting ? 'Waiting for file access…' : null));
   try {
     ctx.abortSignal?.throwIfAborted();
     const versions = ctx._fileVersions ??= new Map();
@@ -39,6 +39,10 @@ export async function guardedFileAccess(name: string, params: Record<string, any
     if (['read', 'write', 'edit', 'notebook'].includes(name)) targets = [params.path];
     if (name === 'apply_patch') targets = parsePatch(params.input).flatMap(action => action.kind === 'update' && action.moveTo ? [action.target, action.moveTo] : [action.target]);
     const files = await Promise.all(targets.map(file => canonical(path.resolve(ctx.cwd, file))));
+    if (ctx.taskWorkspace) for (const file of files) {
+      const relative = path.relative(await canonical(ctx.cwd), file);
+      if (path.isAbsolute(relative) || relative === '..' || relative.startsWith('..' + path.sep) || relative.split(path.sep).some(part => part.toLowerCase() === '.git')) return { isError: true, content: 'Use a path inside this task workspace. Use task_changes to inspect the original project.' };
+    }
     const before = await Promise.all(files.map(file => fingerprint(file, ctx.abortSignal)));
     const reading = name === 'read' || (name === 'notebook' && params.action === 'read');
     // Opaque commands cannot declare targets; reject them if any observed input became stale.

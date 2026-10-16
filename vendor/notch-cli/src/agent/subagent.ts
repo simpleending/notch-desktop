@@ -17,6 +17,7 @@ import { buildToolMap, describeToolSchemas, type ToolContext } from '../tools/in
 import { getBuiltinAgent, type BuiltinAgent } from './builtins/index.js';
 import { Rollout } from '../session/rollout.js';
 import { toolValidationFeedback, missingToolCallFeedback } from './tool-feedback.js';
+import { withTaskWorkspace, openRouterTaskContext } from '../concurrency/task-workspace.js';
 
 export type SubagentType = 'explore' | 'plan' | 'general' | 'builtin';
 
@@ -175,10 +176,34 @@ const PLAN_TOOL_FILTER = new Set(['read', 'grep', 'glob', 'git', 'web_fetch']);
 
 let subagentCounter = 0;
 
+async function isolatedWorker(ctx: ToolContext, id: string, run: (ctx: ToolContext) => Promise<SubagentResult>) {
+  let delivery: Parameters<NonNullable<ToolContext['onWorkspaceResult']>>[0] | undefined;
+  let workerCwd: string | undefined;
+  try {
+    const result = await withTaskWorkspace({ ...ctx, taskWorkspace: undefined, workspaceCheckpoints: undefined,
+      permissionSessionId: `${ctx.permissionSessionId}/${id}`, onWorkspaceResult: value => { delivery = value; } },
+    child => { workerCwd = child.cwd; return run(child); });
+    if (delivery && !delivery.applied) {
+      result.error = `Worker changes need reconciliation: ${delivery.conflicts.join(', ')}. Files are preserved in ${delivery.cwd}.`;
+      result.text += '\n' + result.error;
+    }
+    if (result.error) { await ctx.taskWorkspace?.retainForWorkers(); result.text += `\nUnfinished worker files: ${workerCwd}`; }
+    return result;
+  } catch (error) { await ctx.taskWorkspace?.retainForWorkers(); throw error; }
+}
+
 /**
  * Spawn a subagent that runs to completion and returns its result.
  */
 export async function spawnSubagent(config: SubagentConfig): Promise<SubagentResult> {
+  config = { ...config, toolContext: openRouterTaskContext(config.toolContext, config.model) };
+  if (config.type === 'general' && config.toolContext.isolateTasks?.()) {
+    return isolatedWorker(config.toolContext, config.id, toolContext => spawnSubagentInternal({ ...config, toolContext }));
+  }
+  return spawnSubagentInternal(config);
+}
+
+async function spawnSubagentInternal(config: SubagentConfig): Promise<SubagentResult> {
   const { id, type, prompt, model, toolContext, maxIterations = 15 } = config;
 
   // 'builtin' agents go through spawnBuiltinAgent; reject here defensively so
@@ -329,6 +354,7 @@ ${describeToolSchemas(subagentCtx, { includeNames: Object.keys(tools) })}`;
       id,
       type,
       text: '[Subagent reached max iterations]',
+      error: 'Worker reached the iteration limit; its private files were preserved.',
       toolCalls: totalToolCalls,
       iterations,
     };
@@ -390,6 +416,14 @@ export interface BuiltinSpawnConfig {
  * as the system prompt.
  */
 export async function spawnBuiltinAgent(config: BuiltinSpawnConfig): Promise<SubagentResult> {
+  config = { ...config, toolContext: openRouterTaskContext(config.toolContext, config.model) };
+  if (config.toolContext.isolateTasks?.()) {
+    return isolatedWorker(config.toolContext, config.id ?? config.agentName, toolContext => spawnBuiltinAgentInternal({ ...config, toolContext }));
+  }
+  return spawnBuiltinAgentInternal(config);
+}
+
+async function spawnBuiltinAgentInternal(config: BuiltinSpawnConfig): Promise<SubagentResult> {
   const { agentName, prompt, model, toolContext } = config;
   const agent = getBuiltinAgent(agentName);
   const id = config.id ?? `${agentName.toLowerCase()}-${++subagentCounter}`;
@@ -517,6 +551,7 @@ ${describeToolSchemas(subagentCtx, { includeNames: Object.keys(tools) })}`;
       id,
       type: 'builtin',
       text: '[Built-in agent reached max iterations]',
+      error: 'Worker reached the iteration limit; its private files were preserved.',
       toolCalls: totalToolCalls,
       iterations,
     };

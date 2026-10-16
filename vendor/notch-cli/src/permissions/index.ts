@@ -92,6 +92,7 @@ const DEFAULT_PERMISSIONS: PermissionConfig = {
   rules: [
     // Safe read-only tools auto-allowed
     { tool: 'read', level: 'allow' },
+    { tool: 'task_changes', level: 'allow' },
     { tool: 'grep', level: 'allow' },
     { tool: 'glob', level: 'allow' },
     { tool: 'web_fetch', level: 'allow' },
@@ -152,6 +153,7 @@ export async function loadPermissions(projectRoot: string): Promise<PermissionCo
  * in this map and are unaffected by deny-glob checks.
  */
 const TOOL_PATH_ACCESS: Record<string, 'read' | 'write' | 'both'> = {
+  task_changes: 'read',
   read: 'read',
   grep: 'read',
   glob: 'read',
