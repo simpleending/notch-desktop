@@ -1,5 +1,7 @@
 # Windows release verification
 
+Version 0.1.11 corrects a misleading inherited account warning when a saved task references an unavailable model. It now asks users to choose an installed model or connect its provider. Runtime behavior and CLI 0.7.14 are unchanged from 0.1.10; the source suite has 122 passing tests.
+
 The 0.1.10 [local service audit](local-only-audit.md) retires remaining account-bound features at the main-service boundary and removes their controls: hosted automation/collaboration, marketplace discovery, remote control, speech, managed SSH, cloud privacy/configuration/diagnostics, and the inherited updater. Models settings reuses the existing local/provider manager. The packaged audit opens all remaining settings and local automation/extension dialogs, and direct retired-service IPC fails locally without sign-in. Existing task data and credentials are preserved.
 
 Version 0.1.10 embeds CLI 0.7.14. DuckDuckGo is the default web search provider and needs no API key or browser installation. Settings offer explicit DuckDuckGo/Tavily selection in both products; saved or environment Tavily keys never switch providers automatically. DuckDuckGo domain filters are checked against result hosts, source links remain complete, and blocked/challenged, oversized or unrecognized pages produce actionable errors. A transient Windows ticket read sharing violation now uses the existing bounded file-operation retry.

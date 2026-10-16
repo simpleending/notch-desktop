@@ -108,6 +108,8 @@ export function patchWorkbench(source) {
   return { source, changes: changes.map(([className, method]) => `${className}.${method}`) };
 }
 export function rebrandWorkbenchText(source) {
+  source = source.replaceAll('This account cannot use the model for this task. Switch models first.', 'This model is unavailable for this task. Choose an installed model or connect its provider.')
+    .replaceAll('当前账号无法使用这个任务的模型，请先切换模型。', '此任务的模型当前不可用。请选择已安装的模型或连接其提供商。');
   // Disabled upstream endpoints must never turn into requests to unrelated domains.
   source = source.replace(/https?:\/\/(?:[a-z0-9-]+\.)*qoder\.(?:com\.cn|com|ai|sh)(?=[:/"'`\s]|$)/gi, 'https://disabled.notch.invalid');
   source = source.replace(/https:\/\/btardsb9ml-default-sea\.rum\.aliyuncs\.com\/rum\/web\/v2\?[^"'`\s]+/g, 'https://disabled.notch.invalid/telemetry');

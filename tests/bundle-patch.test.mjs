@@ -39,6 +39,11 @@ test('removed cloud URLs use a reserved disabled host rather than an unrelated n
   assert.equal(rebrandWorkbenchText('https://api.qoder.com/path'), 'https://disabled.notch.invalid/path');
   assert.equal(rebrandWorkbenchText('"https://btardsb9ml-default-sea.rum.aliyuncs.com/rum/web/v2?workspace=legacy&service_id=legacy"'),'"https://disabled.notch.invalid/telemetry"');
 });
+
+test('a missing saved model asks for model selection rather than implying a Notch account requirement',()=>{
+  const result=rebrandWorkbenchText('This account cannot use the model for this task. Switch models first. 当前账号无法使用这个任务的模型，请先切换模型。');
+  assert.doesNotMatch(result,/account|账号/);assert.match(result,/Choose an installed model or connect its provider/);assert.equal(rebrandWorkbenchText(result),result);
+});
 test('lowercase product error identifiers remain valid in the startup error catalog', () => {
   const source = rebrandWorkbenchText('/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/u');
   const expression = new Function(`return ${source}`)();
