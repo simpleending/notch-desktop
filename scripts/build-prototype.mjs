@@ -11,6 +11,7 @@ import { rebrandTree } from '../src/rebrand-tree.mjs';
 import { installSetupRenderer } from '../src/renderer-patch.mjs';
 import { rebuildPluginCatalog, verifyPluginCatalog } from '../src/plugin-integrity.mjs';
 import { installLocalFeatures } from '../src/local-feature-bundles.mjs';
+import { patchLocalOnlyMain } from '../src/local-only-patch.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { values } = parseArgs({ options: { installation: { type: 'string' }, output: { type: 'string' } } });
@@ -39,7 +40,7 @@ for (const [name] of Object.entries(JSON.parse(await readFile(path.join(root, 'p
 await cp(path.join(root, 'node_modules'), path.join(application, 'notch/node_modules'), { recursive: true,
   filter: source => !/[/\\](?:electron|electron-qa|@electron|typescript|tsup|esbuild|@esbuild)(?:[/\\]|$)/.test(source) });
 const mainFile = path.join(application, 'out/main/index.js');
-const patched = patchWorkbench(await readFile(mainFile, 'utf8')); await writeFile(mainFile, patchWebToolCatalog(patched.source));
+const patched = patchWorkbench(await readFile(mainFile, 'utf8')); await writeFile(mainFile, patchLocalOnlyMain(patchWebToolCatalog(patched.source)));
 async function rebrandDirectory(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const file = path.join(directory, entry.name);

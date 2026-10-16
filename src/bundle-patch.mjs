@@ -21,7 +21,7 @@ export function patchClassMethod(source, className, methodName, body) {
     if (kind === 'eof') break;
     if (kind === '{' || kind === '${') depth++;
     else if (kind === '}') depth--;
-    if (depth !== 1 || token.value !== methodName) continue;
+    if (depth !== 1 || token.value !== methodName || kind === 'string') continue;
     if (scanner.getToken().type.label !== '(') throw new Error(`Unsupported ${className}.${methodName} signature.`);
     let parameters = 1;
     while (parameters) { const part = scanner.getToken().type.label; if (part === '(') parameters++; else if (part === ')') parameters--; else if (part === 'eof') throw new Error('Unclosed parameters.'); }
@@ -110,6 +110,7 @@ export function patchWorkbench(source) {
 export function rebrandWorkbenchText(source) {
   // Disabled upstream endpoints must never turn into requests to unrelated domains.
   source = source.replace(/https?:\/\/(?:[a-z0-9-]+\.)*qoder\.(?:com\.cn|com|ai|sh)(?=[:/"'`\s]|$)/gi, 'https://disabled.notch.invalid');
+  source = source.replace(/https:\/\/btardsb9ml-default-sea\.rum\.aliyuncs\.com\/rum\/web\/v2\?[^"'`\s]+/g, 'https://disabled.notch.invalid/telemetry');
   return source.replace(/qoder/gi, 'notch').replace(/Notch/g, 'notch')
     .replace(/\bQoduck\b|Q\s?达鸭/g,'notch')
     .replaceAll('/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/u', '/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/iu');

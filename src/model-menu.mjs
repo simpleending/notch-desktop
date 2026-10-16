@@ -69,7 +69,8 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const job = state?.job;
     const inputId = `${id}-key`;
     const connectForm = (tab==='cloud' && !connected) || (tab==='hub' && !connected && optional);
-    const select = row => { if(!isModelSelectable(row,props.options,props.loading) || busy)return; props.onSelect(row.key); changeOpen(false); };
+    const selectable = row => props.manageOnly ? row.enabled && !props.loading : isModelSelectable(row,props.options,props.loading);
+    const select = row => { if(!selectable(row) || busy)return; props.onSelect(row.key); if(!props.manageOnly)changeOpen(false); };
     const keyboard = event => {
       if (!['ArrowDown','ArrowUp','Home','End'].includes(event.key)) return;
       if (!list.current || list.current.hidden) return;
@@ -111,7 +112,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
             ...filtered.map(row=>tab==='hub'?h('button',{type:'button',key:row.repo,role:'option','aria-label':`Download ${row.repo}`,title:row.fits?'Review download and runtime requirements':'Review memory requirements',className:'notch-hub-model','aria-selected':confirm?.repo===row.repo,disabled:busy || hubLoading || job?.state==='running',onClick:()=>setConfirm(row)},
               h('span',{className:'notch-hub-model-info'},h('strong',null,row.repo),h('small',null,`${formatSize(row.bytes)} download · ${formatSize(row.required)} estimated memory${row.fits?'':' · exceeds available memory'}`)),
               h('svg',{'aria-hidden':true,width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round',className:'notch-model-download-icon'},h('path',{d:'M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4'}))):
-              h('button',{type:'button',key:row.key,title:row.key,role:'option','aria-selected':row.key===current?.key,disabled:!isModelSelectable(row,props.options,props.loading) || busy || (tab==='cloud'&&cloudLoading),onClick:()=>select(row)},
+              h('button',{type:'button',key:row.key,title:row.key,role:'option','aria-selected':row.key===current?.key,disabled:!selectable(row) || busy || (tab==='cloud'&&cloudLoading),onClick:()=>select(row)},
                 h('strong',null,row.displayName),h('small',null,tab==='cloud'?`${formatContext(row.defaultContextWindow)} context · ${Number.isFinite(row.pricing?.input)&&Number.isFinite(row.pricing?.output)?`$${row.pricing.input.toFixed(2)} in / $${row.pricing.output.toFixed(2)} out per 1M tokens`:'see provider pricing'}${row.enabled?'':` · ${row.description}`}`:`${formatSize(row.bytes)} weights · ${formatContext(row.defaultContextWindow)} context · ${row.enabled?'local':row.description}`))),
             !filtered.length?h('p',{className:'notch-model-note'},busy || hubLoading || cloudLoading || !state?'Loading models…':tab==='hub'?'No compatible weights on this page. Try another search or load more.':'No matching models.'):null),
           tab==='hub' && !confirm && hub?.query?.toLowerCase()===search.trim().toLowerCase() && Number.isSafeInteger(hub.nextPage)?h('button',{type:'button',className:'notch-model-link',disabled:hubLoading || busy,onClick:()=>void loadHub(hub.nextPage)},hubLoading?'Loading…':'Load more models'):null,

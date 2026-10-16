@@ -43,6 +43,8 @@ Local models need enough memory to run. Cloud models use your provider’s prici
 
 No notch account or sign-in is required. Knowledge Center and Sites use local storage in place of the inherited hosted services. Hosted knowledge processing and site publishing are not included; exported sites can be opened locally or deployed with a host of your choice. Using a note in a new task sends that note to the model you selected.
 
+The local edition also retires the account marketplace, hosted collaboration/remote control, speech services, and managed SSH runtime. Their controls are removed or explain that the feature is unavailable. Local automations, model management and custom MCP configuration remain available. See the [local service audit](docs/local-only-audit.md) for the exact scope and verification command.
+
 Undo covers built-in file edits and changes returned from an isolated OpenRouter task, including terminal-created files. Commands in the shared project folder and external tools can still make changes outside that history. Keep projects in version control. The Windows installer is unsigned; see the [download notes](docs/windows-preview.md).
 
 Optional worktree isolation needs Git installed. Your branch, staged edits and untracked files stay intact; folders without Git use a private database. Shared MCP tools, plugins and command hooks are disabled for isolated tasks because they can hold paths to a shared project. Dependencies are private to each task. Interrupted chats retain their files; completed copies are cleaned up. Symbolic-link/submodule inputs and binary outputs that Undo cannot record require review. This separation is not an OS sandbox: arbitrary commands with explicit external paths can still access your account’s files.

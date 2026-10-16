@@ -54,7 +54,7 @@ test('knowledge, sites, and index services activate without authentication or ne
 test('packaging replaces all account-backed plugin entrypoints and permissions repeatably', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-local-bundles-'));
   try {
-    for (const id of ['notch.knowledge.center', 'notch.sites', 'notch.index-settings']) {
+    for (const id of ['notch.knowledge.center', 'notch.sites', 'notch.index-settings','notch.find-extensions','notch.desktop-pet-skill','notch.security']) {
       const folder = path.join(root, id);
       for (const directory of ['.notch-app-plugin', 'dist/node', 'dist/browser']) await fs.mkdir(path.join(folder, directory), { recursive: true });
       await fs.writeFile(path.join(folder, '.notch-app-plugin/plugin.json'), JSON.stringify({ id, main: 'old.cjs', permissions: ['auth.readState','auth.readUserToken'], contributes: { views: [{ id: 'view', entry: 'old.cjs' }], notchAgentSdk: { plugins: ['cloud-cli'] }, filePreviewers: ['cloud'] } }));
@@ -67,6 +67,10 @@ test('packaging replaces all account-backed plugin entrypoints and permissions r
       assert.equal(manifest.contributes.views[0].entry, 'dist/browser/local-view.cjs');
       assert.equal(manifest.contributes.notchAgentSdk, undefined);
       assert.equal(manifest.contributes.filePreviewers, undefined);
+    }
+    for (const id of ['notch.find-extensions','notch.desktop-pet-skill','notch.security']) {
+      const manifest = JSON.parse(await fs.readFile(path.join(root,id,'.notch-app-plugin/plugin.json'),'utf8'));
+      assert.deepEqual(manifest.contributes,{}); assert.deepEqual(manifest.activationEvents,[]); assert.deepEqual(manifest.permissions,[]);
     }
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

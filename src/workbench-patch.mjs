@@ -3,6 +3,7 @@ import path from 'node:path';
 import { patchFunction } from './bundle-patch.mjs';
 import { readFileSync } from 'node:fs';
 import { parse } from 'acorn';
+import { patchLocalOnlyRenderer } from './local-only-patch.mjs';
 
 const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
 export function patchSecondaryArtwork(source) {
@@ -44,6 +45,7 @@ function replaceOnce(source, before, after) {
   return source.replace(before, after);
 }
 export function patchWorkbenchRenderer(source) {
+  source = patchLocalOnlyRenderer(source);
   // Keep extension management on its existing local installer, away from the retired account marketplace.
   if (source.includes('function ExtensionsView(')) source = patchFunction(source, 'ExtensionsView', 'function ExtensionsView({initialKind="plugin"}){return jsxRuntimeExports.jsx(InstalledExtensionsSettings,{initialKind});}');
   if (source.includes('/* notch workbench skin */')) return patchSecondaryArtwork(source);

@@ -7,6 +7,8 @@ import { rebrandTree } from '../src/rebrand-tree.mjs';
 import { installSetupRenderer } from '../src/renderer-patch.mjs';
 import { rebuildPluginCatalog, verifyPluginCatalog } from '../src/plugin-integrity.mjs';
 import { fileURLToPath } from 'node:url';
+import { patchLocalOnlyMain } from '../src/local-only-patch.mjs';
+import { installLocalFeatures } from '../src/local-feature-bundles.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = path.resolve(process.argv[2] || 'release/Notch-prototype');
 const marker = JSON.parse(await readFile(path.join(output, 'prototype-build.json'), 'utf8'));
@@ -15,7 +17,7 @@ const installation = process.argv[3]; if (!installation) throw new Error('Provid
 if ((await inspectInstallation(installation)).archiveSha256 !== marker.baseline) throw new Error('The upstream installation changed; inspect it before refreshing.');
 const application = path.join(output, 'build-app');
 const original = extractFile(path.join(path.resolve(installation), 'resources/app.asar'), path.join('out','main','index.js')).toString('utf8');
-const patched = patchWorkbench(original); await writeFile(path.join(application, 'out/main/index.js'), patched.source);
+const patched = patchWorkbench(original); await writeFile(path.join(application, 'out/main/index.js'), patchLocalOnlyMain(patched.source));
 const rendererFile = path.join('out', 'renderer', 'assets', 'index-nRmb_3VI.js');
 await writeFile(path.join(application, rendererFile), extractFile(path.join(path.resolve(installation), 'resources/app.asar'), rendererFile));
 async function rebrand(directory) {
@@ -33,7 +35,7 @@ await cp('src', path.join(application, 'notch/src'), { recursive: true });
 await writeFile(path.join(application, 'notch-bootstrap.mjs'), "await import('./notch/src/app-bootstrap.mjs');\n");
 await cp('vendor/notch-core', path.join(application, 'notch/vendor/notch-core'), { recursive: true });
 await cp(path.join(root, 'node_modules'), path.join(application, 'notch/node_modules'), { recursive: true,
-  filter: source => !/[/\\](?:electron|@electron|typescript|tsup|esbuild|@esbuild)(?:[/\\]|$)/.test(source) });
+  filter: source => !/[/\\](?:electron|electron-qa|@electron|typescript|tsup|esbuild|@esbuild)(?:[/\\]|$)/.test(source) });
 await rebrandTree(application);
 await installSetupRenderer(application, root);
 const productFile = path.join(output, 'resources/product.json');
@@ -43,6 +45,7 @@ await writeFile(path.join(output, 'resources/build-manifest.json'), rebrandWorkb
 for (const name of ['extensions','dynamic-text','bundled-resources','application-icons']) {
   await rebrandTree(path.join(output, 'resources', name));
 }
+await installLocalFeatures(path.join(output, 'resources/extensions'));
 await rebuildPluginCatalog(path.join(output, 'resources/extensions'));
 await verifyPluginCatalog(path.join(output, 'resources/extensions'));
 await createPackageWithOptions(application, path.join(output, 'resources/app.asar'), { unpack: '**/*.{node,dll,exe,so,dylib}', unpackDir: '**/{@ff-labs,ffi-rs,@yuuang}' });

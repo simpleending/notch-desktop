@@ -19,4 +19,11 @@ export async function installLocalFeatures(extensions) {
     await fs.copyFile(path.join(source, 'local-features-view.cjs'), path.join(folder, 'dist/browser/local-view.cjs'));
     await fs.writeFile(manifestFile, JSON.stringify(manifest, null, 2));
   }
+  // These contributions require the retired marketplace, pet service, or proprietary scanning runtime.
+  for (const id of ['notch.find-extensions', 'notch.desktop-pet-skill', 'notch.security']) {
+    const manifestFile = path.join(extensions, id, '.notch-app-plugin/plugin.json');
+    const manifest = JSON.parse(await fs.readFile(manifestFile, 'utf8'));
+    manifest.activationEvents = []; manifest.permissions = []; manifest.contributes = {};
+    await fs.writeFile(manifestFile, JSON.stringify(manifest, null, 2));
+  }
 }
