@@ -22,6 +22,7 @@ The Windows release supports x64 PCs running Windows 10 or 11. Check the release
 - **Review and undo changes.** Restore a selected agent turn and its later tracked file changes, even after restarting. Undo previews protect later manual edits and never change files themselves.
 - **Use the memory you have.** notch adjusts conversation size to your available memory. You can choose a limit yourself when you need more room.
 - **Work your way.** Choose dark or light mode, adjust the text, and search your project’s files.
+- **Keep knowledge and sites locally.** Knowledge Center saves searchable text notes and imports Markdown, text, CSV and JSON files. Sites saves HTML drafts with an offline static preview and HTML export. Both work without an account, keep drafts across restarts, and store their data in your device’s notch profile. Extensions opens the local extension manager; Workspace Index describes the automatic local file search.
 
 ## Start a project
 
@@ -31,6 +32,8 @@ The Windows release supports x64 PCs running Windows 10 or 11. Check the release
 4. Try “Explain how this project works,” then review any changes before approving them.
 
 Local models need enough memory to run. Cloud models use your provider’s pricing and receive the project content included in your request. Your API keys are kept out of saved conversations.
+
+No notch account or sign-in is required. Knowledge Center and Sites use local storage in place of the inherited hosted services. Hosted knowledge processing and site publishing are not included; exported sites can be opened locally or deployed with a host of your choice. Using a note in a new task sends that note to the model you selected.
 
 Undo covers built-in file edits and changes returned from an isolated OpenRouter task, including terminal-created files. Commands in the shared project folder and external tools can still make changes outside that history. Keep projects in version control. The Windows installer is unsigned; see the [download notes](docs/windows-preview.md).
 

@@ -12,6 +12,7 @@ import { verifyRendererBranding } from '../src/branding-verification.mjs';
 import { rebrandTree } from '../src/rebrand-tree.mjs';
 import { patchDirectStartup, patchUndoIntegration, patchPersistedContextUsage, patchStartupShutdown } from '../src/bundle-patch.mjs';
 import { rebuildPluginCatalog, verifyPluginCatalog } from '../src/plugin-integrity.mjs';
+import { installLocalFeatures } from '../src/local-feature-bundles.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url)), version=process.argv[2] || '0.1.0-preview.1';
 if(process.platform!=='win32' || process.arch!=='x64')throw new Error('Build this installer on Windows x64.');
@@ -38,6 +39,7 @@ await promisify(execFile)(path.join(process.env.SystemRoot,'System32/WindowsPowe
 const ripgrepSource=path.join(ripgrepExtracted,ripgrepName);
 assert.equal(createHash('sha256').update(await fs.readFile(path.join(ripgrepSource,'rg.exe'))).digest('hex'),'14231169855ec5205cf5a1b6f1db358ff4aed4247c86b69ce8aae647c77f6680','Extracted ripgrep executable checksum mismatch.');
 await fs.cp(source,app,{recursive:true,filter:file=>!path.relative(source,file).split(path.sep).some(name=>name==='build-app' || name==='prototype-build.json' || name.startsWith('app-feedback-'))});
+await installLocalFeatures(path.join(app, 'resources/extensions'));
 await rebuildPluginCatalog(path.join(app, 'resources/extensions'));
 console.log(JSON.stringify({ pluginIntegrity: await verifyPluginCatalog(path.join(app, 'resources/extensions')) }));
 await fs.mkdir(path.join(app,'resources/bin'),{recursive:true});

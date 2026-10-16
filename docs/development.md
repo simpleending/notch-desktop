@@ -6,6 +6,10 @@ Local generations share the CLI's filesystem ticket queue under the OS user's `~
 
 Public development repository for a free desktop coding workbench, with local open models first and optional OpenRouter, OpenAI and Anthropic API keys.
 
+Knowledge Center, Sites and Workspace Index use the source-controlled `src/local-features.cjs` services and `src/local-features-view.cjs` views. Packaging replaces the inherited account-backed entrypoints and removes their auth, telemetry and cloud CLI permissions before rebuilding the existing integrity catalog. Knowledge and HTML drafts are stored per OS user in `app-plugin-data/<plugin-id>/local-library.sqlite`; unfinished editor drafts use the profile’s Chromium local storage. SQLite commits use full synchronization, and revision checks protect edits from stale windows. Existing inherited plugin data is left untouched. Static site previews use an opaque sandbox and a network-blocking CSP; scripts and external assets remain in an exported HTML file but do not run in the preview. Local imports are text-only, up to 2 MiB per document. Hosted knowledge processing, hosted deployment and automatic migration of remote data are outside this local implementation.
+
+`node scripts/verify-local-features.mjs <packaged-executable> <report.json>` checks real note CRUD/search/import, HTML export, preview isolation, draft recovery and restart persistence without accounts or inference. The export file location is selected by the test, so it does not verify the OS save dialog. Plugin storage/permission tests are included in `npm test`. Extensions reuses the existing local extension manager rather than the retired account marketplace.
+
 The session adapter runs the CLI provider/tool loop, streams assistant/tool messages, requests exact tool approvals, cancels active work and saves conversation and undo state. The Windows x64 release uses an Electron workbench with notch's dark/light interface. Other platforms, signing, paid-inference coverage and performance parity remain outside the verified Windows scope.
 
 ```sh

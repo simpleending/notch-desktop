@@ -44,6 +44,8 @@ function replaceOnce(source, before, after) {
   return source.replace(before, after);
 }
 export function patchWorkbenchRenderer(source) {
+  // Keep extension management on its existing local installer, away from the retired account marketplace.
+  if (source.includes('function ExtensionsView(')) source = patchFunction(source, 'ExtensionsView', 'function ExtensionsView({initialKind="plugin"}){return jsxRuntimeExports.jsx(InstalledExtensionsSettings,{initialKind});}');
   if (source.includes('/* notch workbench skin */')) return patchSecondaryArtwork(source);
   source = patchFunction(source, 'preloadDoodleAssets', 'function preloadDoodleAssets(){}');
   for (const name of ['AgentGreetingMark', 'AppleTreeDoodle', 'ImageDoodle', 'PartnerPlanGreetingMark', 'MobileAppDownloadPromo', 'NewChatCursorGrid', 'FeedbackFloatingButton', 'FeedbackDialog']) {

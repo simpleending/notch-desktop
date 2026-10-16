@@ -22,6 +22,14 @@ test('all secondary illustrations use the canonical notch symbol and patching is
   const render=new Function(`${profile};return ProfileStickerExperience;`)();
   assert.equal(render({children:'profile'}),'profile');
 });
+
+test('extension route uses the existing local manager without initializing the account marketplace', () => {
+  const source = '/* notch workbench skin */\nfunction ExtensionsView(){startAccountMarketplace();}';
+  const patched = patchWorkbenchRenderer(source);
+  assert.doesNotMatch(patched, /startAccountMarketplace/);
+  assert.match(patched, /InstalledExtensionsSettings,\{initialKind\}/);
+  assert.equal(patchWorkbenchRenderer(patched), patched);
+});
 test('appearance controls forward explicit choices to the existing preferences', () => {
   const choices = [], theme = { resolvedTheme: 'forest-dark', themeMode: 'dark', setThemeMode: value => choices.push(value) };
   const { ThemeControls, Appearance, QuickStart, ModeSwitch, PanelLauncher } = createNotchWorkbench(React, () => theme);
