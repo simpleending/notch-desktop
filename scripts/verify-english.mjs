@@ -6,12 +6,14 @@ import assert from 'node:assert/strict';
 
 const executable=path.resolve(process.argv[2]),reportFile=path.resolve(process.argv[3]);
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'notch-english-')),profile=path.join(root,'profile'),workspace=path.join(root,'project');
-await fs.mkdir(workspace);const checks=[],errors=[];let app,page,passed=false,failure,title,card;
+await fs.mkdir(workspace);const checks=[],errors=[];let app,page,passed=false,failure,title,card,decisions;
 try{
  app=await _electron.launch({executablePath:executable,args:['--lang=en-US',`--user-data-dir=${profile}`],env:{...Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|ELECTRON_RUN_AS_NODE/i.test(key))),NOTCH_AUTO_DREAM:'0',NOTCH_AUTO_UPDATE:'0'},timeout:45000});
  app.on('window',window=>window.on('pageerror',error=>errors.push(error.message)));
  await app.evaluate(()=>{
-  const original=globalThis.fetch;globalThis.__englishQaRequests=0;
+  const original=globalThis.fetch;globalThis.__englishQaRequests=0;globalThis.__englishQaDecisions=[];
+  const host=globalThis.__notchHost,query=host.query.bind(host);
+  host.query=request=>query({...request,canUseTool:async(...args)=>{const decision=await request.canUseTool(...args);globalThis.__englishQaDecisions.push(decision.behavior);return decision;}});
   globalThis.fetch=async(url,init)=>{
    if(!String(url).endsWith('/api/chat'))return original(url,init);
    const body=JSON.parse(init.body),messages=body.messages,tool=messages.some(message=>message.role==='tool');
@@ -36,9 +38,12 @@ try{
  checks.push('real native BrowserInteract approval title, description, and controls are English');
  const png=await app.evaluate(async({BrowserWindow},url)=>(await BrowserWindow.getAllWindows().find(window=>window.webContents.getURL()===url).webContents.capturePage()).toPNG().toString('base64'),page.url());
  await fs.writeFile(reportFile.replace(/\.json$/,'-permission.png'),Buffer.from(png,'base64'));
- await page.getByRole('button',{name:'Deny',exact:true}).click();await heading.waitFor({state:'hidden'});checks.push('Deny still resolves the native permission and prevents the browser action');
+ await page.getByRole('button',{name:'Deny',exact:true}).click();await heading.waitFor({state:'hidden'});
+ for(let i=0;i<50;i++){decisions=await app.evaluate(()=>globalThis.__englishQaDecisions);if(decisions.length)break;await new Promise(resolve=>setTimeout(resolve,100));}
+ assert.deepEqual(decisions,['deny']);checks.push('Deny still resolves the native permission and prevents the browser action');
  assert.ok(await app.evaluate(()=>globalThis.__englishQaRequests)>0);assert.deepEqual(errors,[]);passed=true;
 }catch(error){failure=error.stack;if(page){console.log('English QA state',await page.evaluate(async()=>({text:document.body.innerText.slice(-5500),models:await window.notchModels.state()})).catch(error=>error.message));}}finally{
- if(app)await app.close().catch(()=>{});await fs.writeFile(reportFile,JSON.stringify({passed,executable,profile,checks,title,card,errors,failure,inference:'Provider response fixture; the permission UI, decision path, and packaged app are real.'},null,2));
+ if(app){const closing=app.close().catch(()=>{});if(page)await page.getByRole('button',{name:'Stop tasks and quit',exact:true}).waitFor({timeout:5000}).then(()=>page.getByRole('button',{name:'Stop tasks and quit',exact:true}).click()).catch(()=>{});await closing;}
+ await fs.writeFile(reportFile,JSON.stringify({passed,executable,profile,checks,title,card,decisions,errors,failure,inference:'Provider response fixture; the permission UI, decision path, and packaged app are real.'},null,2));
 }
 console.log(JSON.stringify({passed,checks,reportFile,failure}));if(!passed)process.exitCode=1;
