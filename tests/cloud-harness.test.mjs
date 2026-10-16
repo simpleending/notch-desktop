@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, writeFile, access } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { runDesktopTurn, CheckpointManager, inspectHubModel } from '../vendor/notch-core/desktop-harness.js';
@@ -55,6 +55,57 @@ test('OpenRouter preserves encrypted reasoning across the desktop tool loop and 
     const restored=JSON.parse(JSON.stringify(result.messages));
     await runDesktopTurn({...turn,sessionId:'reasoning-resume',messages:[...restored,{role:'user',content:'Continue'}]});assert.equal(calls,3);
   }finally{globalThis.fetch=previous;}
+});
+
+for (const contextWindow of [8192, 131072]) test(`OpenRouter ${contextWindow}-token compaction summarizes successfully and retains tool permissions on resume`, async t => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'notch-cloud-compact-'));
+  const decision = 'MIDDLE_DECISION_USE_SQLITE';
+  const messages = [{role:'user', content:'Original task: maintain the project.'}, {role:'assistant', content:'Ready.'}];
+  for (let i = 0; i < 24; i++) messages.push(
+    {role:'user', content:(i === 0 ? decision : `Completed task ${i}`) + (contextWindow > 8192 ? ' Earlier project requirement.'.repeat(500) : '')},
+    {role:'assistant', content:'Completed review. '.repeat(contextWindow === 8192 ? 150 : 1500)},
+  );
+  messages.push({role:'user', content:'Continue the current task.'},
+    {role:'assistant', content:[{type:'tool-call', toolName:'read', toolCallId:'current-read', input:{path:'receipt.txt'}}]},
+    {role:'tool', content:[{type:'tool-result', toolName:'read', toolCallId:'current-read', output:{type:'text', value:'CURRENT_RECEIPT'}}]});
+  let summaries = 0, streams = 0, archived;
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(String(url), 'https://openrouter.ai/api/v1/chat/completions');
+    const body = JSON.parse(options.body);
+    assert.equal(new Headers(options.headers).get('authorization'), 'Bearer fixture-only');
+    if (!body.stream) {
+      summaries++;
+      assert.match(JSON.stringify(body.messages), new RegExp(decision));
+      assert.ok((body.max_tokens ?? body.max_completion_tokens) <= 1024);
+      return Response.json({id:'summary', object:'chat.completion', created:1, model:body.model,
+        choices:[{index:0, message:{role:'assistant', content:`Project decision: ${decision}. Prior reviews completed.`}, finish_reason:'stop'}],
+        usage:{prompt_tokens:1000, completion_tokens:20, total_tokens:1020}});
+    }
+    streams++;
+    const history = JSON.stringify(body.messages);
+    assert.match(history, new RegExp(decision));
+    assert.match(history, /Original task/);
+    assert.match(history, /Continue the current task/);
+    assert.equal(body.messages.find(message => message.role === 'tool' && message.tool_call_id === 'current-read')?.content, 'CURRENT_RECEIPT');
+    assert.ok((body.max_tokens ?? body.max_completion_tokens) <= 4096);
+    const delta = streams === 1
+      ? {tool_calls:[{index:0, id:'denied-write', type:'function', function:{name:'write', arguments:JSON.stringify({path:'forbidden.txt', content:'must not write'})}}]}
+      : {content:`${decision} COMPACTION_CONTRACT_VERIFIED`};
+    if (streams > 1) assert.match(body.messages.find(message => message.role === 'tool' && message.tool_call_id === 'denied-write')?.content ?? '', /denied|read.only|not allowed|permission/i);
+    const frame = (value, reason = null) => ({id:'compact', object:'chat.completion.chunk', created:1, model:body.model, choices:[{index:0, delta:value, finish_reason:reason}]});
+    return new Response(`data: ${JSON.stringify(frame(delta))}\n\ndata: ${JSON.stringify(frame({}, streams === 1 ? 'tool_calls' : 'stop'))}\n\ndata: [DONE]\n\n`, {headers:{'content-type':'text/event-stream'}});
+  });
+  const turn = {cwd, model:'openrouter/openai/gpt-4.1', apiKey:'fixture-only', contextWindow, accessMode:'read-only',
+    signal:AbortSignal.timeout(15000), checkpoints:new CheckpointManager(), tools:['Read', 'Write'], approve:async()=>{throw Error('Read-only must reject writes');},
+    onCompact:async original=>{archived = JSON.parse(JSON.stringify(original));}};
+  const result = await runDesktopTurn({...turn, sessionId:'compact-first', messages});
+  assert.equal(summaries, 1, 'The semantic summarizer must succeed rather than use fallback');
+  assert.deepEqual(archived, messages);
+  assert.equal(result.text, `${decision} COMPACTION_CONTRACT_VERIFIED`);
+  await assert.rejects(access(path.join(cwd, 'forbidden.txt')));
+  const resumed = await runDesktopTurn({...turn, sessionId:'compact-resume', messages:[...JSON.parse(JSON.stringify(result.messages)), {role:'user', content:'Continue after restart.'}]});
+  assert.equal(resumed.text, result.text);
+  assert.equal(summaries, 1, 'A compacted short history must not immediately compact again');
 });
 
 for(const partial of [false,true])test(`OpenRouter HTTP 200 stream errors fail the desktop turn${partial?' after partial text':''}`,async()=>{

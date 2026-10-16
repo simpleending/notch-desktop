@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline';
 
 const executable=path.resolve(process.argv[2]),reportFile=path.resolve(process.argv[3]||'analysis/local-ssh-verification.json');
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'notch-ssh-')),profile=path.join(root,'profile'),identity=path.join(root,'identity'),config=path.join(root,'ssh-config');
-const remotePath='/tmp/notch-ssh-'+path.basename(root),exec=promisify(execFile),checks=[],errors=[],requests=[];let app,server,keepAlive,passed=false,failure;
+const remotePath='/tmp/notch-ssh-'+path.basename(root),exec=promisify(execFile),checks=[],errors=[],requests=[];let app,page,server,keepAlive,passed=false,failure;
 const distro=process.env.NOTCH_QA_WSL_DISTRO||'Strix-Ubuntu-24.04';
 const linux=command=>exec('wsl.exe',['-d',distro,'--exec','/bin/sh','-c',command],{windowsHide:true,timeout:30000});
 try{
@@ -33,7 +33,7 @@ try{
  },config);
  let setup;for(let i=0;i<300;i++){setup=app.windows().find(page=>page.url().includes('first-launch-onboarding-overlay'));if(setup)break;await new Promise(resolve=>setTimeout(resolve,100));}
  if(setup){await setup.getByRole('button',{name:/^Continue/}).click();const closed=setup.waitForEvent('close');await setup.getByRole('button',{name:/^Open notch/}).click();await closed;}
- const page=await app.firstWindow();await page.locator('.notch-welcome').waitFor();
+ page=await app.firstWindow();page.on('pageerror',error=>errors.push(error.message));await page.locator('.notch-welcome').waitFor();
  assert.deepEqual(await page.evaluate(()=>window.notchDesktop.getRemoteSshAvailability()),{supported:true});
  const host=await page.evaluate(()=>window.notchDesktop.registerRemoteSshHost({alias:'notch-local-test',label:'Local SSH test'}));
  const connection=await page.evaluate(hostId=>window.notchDesktop.connectRemoteSshHost({hostId}),host.id);
@@ -65,7 +65,7 @@ try{
  const reconnected=await page.evaluate(hostId=>window.notchDesktop.connectRemoteSshHost({hostId}),host.id);assert.equal(reconnected.ok,true);checks.push('disconnect and reconnect preserve the registered host');
  await page.getByRole('button',{name:'Open user menu',exact:true}).first().click();await page.getByRole('menuitem',{name:'Settings',exact:true}).click();await page.getByRole('navigation',{name:'Settings',exact:true}).getByRole('button',{name:'Connections',exact:true}).click();await page.getByText('Local SSH test',{exact:true}).waitFor();assert.doesNotMatch(await page.locator('body').innerText(),/sign[ -]?in|log[ -]?in|unavailable in this local build/i);checks.push('Connections settings shows local SSH profiles without an account gate');
  requests.push(...await app.evaluate(()=>globalThis.__sshQaRequests));assert.equal(requests.some(url=>/disabled\.notch\.invalid|qoder\./.test(url)),false);assert.deepEqual(errors,[]);passed=true;
-}catch(error){failure=error.stack;if(app)console.log('SSH trace',await app.evaluate(()=>globalThis.__sshQaRemoteTrace).catch(()=>null));throw error;}finally{
+}catch(error){failure=error.stack;if(app)console.log('SSH diagnostics',{ui:await page?.locator('body').innerText().catch(()=>null),windows:app.windows().map(window=>window.url()),failedCommands:await app.evaluate(()=>globalThis.__sshQaRemoteTrace.filter(row=>row.exitCode!==0).slice(-6)).catch(()=>null)});throw error;}finally{
  if(app)await app.close().catch(()=>{});server?.kill();await linux(`rm -rf -- '${remotePath}'`).catch(()=>{});keepAlive?.stdin.end();
  await fs.writeFile(reportFile,JSON.stringify({passed,executable,root,remotePath,checks,errors,requests,failure},null,2));console.log(JSON.stringify({passed,reportFile,checks,failure}));
 }
