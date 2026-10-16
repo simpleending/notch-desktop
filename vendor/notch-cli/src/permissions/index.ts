@@ -96,6 +96,9 @@ const DEFAULT_PERMISSIONS: PermissionConfig = {
     { tool: 'grep', level: 'allow' },
     { tool: 'glob', level: 'allow' },
     { tool: 'web_fetch', level: 'allow' },
+    { tool: 'web_search', level: 'allow' },
+    { tool: 'browser_read', level: 'allow' },
+    { tool: 'browser_interact', level: 'prompt' },
     // Write tools prompt by default
     { tool: 'write', level: 'prompt' },
     { tool: 'edit', level: 'prompt' },

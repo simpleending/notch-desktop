@@ -17,6 +17,8 @@ import { gitTool } from './git.js';
 import { grepTool } from './grep.js';
 import { globTool } from './glob.js';
 import { webFetchTool } from './web-fetch.js';
+import { webSearchTool } from './web-search.js';
+import { browserReadTool, browserInteractTool } from './browser.js';
 import { githubTool } from './github.js';
 import { lspTool } from './lsp.js';
 import { notebookTool } from './notebook.js';
@@ -61,6 +63,9 @@ const BUILTIN_TOOLS: NotchTool<any>[] = [
   grepTool,
   globTool,
   webFetchTool,
+  webSearchTool,
+  browserReadTool,
+  browserInteractTool,
   lspTool,
   notebookTool,
   taskTool,
@@ -300,7 +305,7 @@ export function buildToolMap(ctx: ToolContext) {
         // Execute the tool
         // Shell, git, MCP and file tools can change files. Never serve a stale
         // cached read after an action (including a partially failed action).
-        const mayChangeFiles = !['read', 'glob', 'grep', 'web_fetch', 'web_search'].includes(t.name);
+        const mayChangeFiles = !['read', 'glob', 'grep', 'web_fetch', 'web_search', 'browser_read', 'browser_interact'].includes(t.name);
         if (mayChangeFiles) ctx._readCache?.clear();
         let result;
         try {

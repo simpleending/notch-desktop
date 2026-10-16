@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { runDesktopTurn, CheckpointManager } from '../vendor/notch-core/desktop-harness.js';
-const toolNames = { read: 'Read', task_changes: 'TaskChanges', write: 'Write', edit: 'Edit', shell: 'Bash', glob: 'Glob', grep: 'Grep', git: 'Git', apply_patch: 'ApplyPatch', web_fetch: 'WebFetch' };
+const toolNames = { read: 'Read', task_changes: 'TaskChanges', write: 'Write', edit: 'Edit', shell: 'Bash', glob: 'Glob', grep: 'Grep', git: 'Git', apply_patch: 'ApplyPatch', web_fetch: 'WebFetch', web_search: 'WebSearch', browser_read: 'BrowserRead', browser_interact: 'BrowserInteract' };
 function wireInput(name, args) {
   if (['read', 'write', 'edit'].includes(name) && typeof args.path === 'string') {
     const { path, ...other } = args; return { ...other, file_path: path };

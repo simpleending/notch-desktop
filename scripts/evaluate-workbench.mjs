@@ -1,4 +1,4 @@
-import { _electron } from 'playwright-core';
+import { _electron } from 'electron-qa';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';

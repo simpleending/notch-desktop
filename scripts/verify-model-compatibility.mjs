@@ -1,4 +1,4 @@
-import {_electron} from 'playwright-core';
+import {_electron} from 'electron-qa';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';

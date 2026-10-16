@@ -1,4 +1,4 @@
-import { _electron } from 'playwright-core';
+import { _electron } from 'electron-qa';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { mkdtemp, writeFile, readFile, readdir } from 'node:fs/promises';

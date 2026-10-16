@@ -4,6 +4,7 @@ import { writeFileSync, existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { migrateBrandDatabase } from './brand-migration.mjs';
 import { createHost } from './notch-host.mjs';
+import { createWebResearch } from './web-research.mjs';
 import { createModelManager } from './model-manager.mjs';
 import { registerModelIpc } from './model-ipc.mjs';
 import { createStartupDiscovery } from './startup-discovery.mjs';
@@ -19,6 +20,7 @@ if (existsSync(databasePath)) { const database = new DatabaseSync(databasePath);
 app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest({ urls: ['*://disabled.notch.invalid/*'] }, (_details, callback) => callback({ cancel: true })));
 app.whenReady().then(() => {
   globalThis.__notchHost.modelManager = createModelManager(app.getPath('userData'), { safeStorage });
+  globalThis.__notchHost.webResearch = createWebResearch(app.getPath('userData'), { safeStorage, signal: globalThis.__notchDiscovery.signal });
   registerModelIpc(ipcMain,globalThis.__notchHost);
 });
 globalThis.__notchHost.listModels().catch(() => {});

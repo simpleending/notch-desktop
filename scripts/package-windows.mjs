@@ -1,3 +1,4 @@
+import { patchWebToolCatalog } from '../src/web-tools-patch.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,9 +48,10 @@ await fs.copyFile(path.join(ripgrepSource,'rg.exe'),path.join(app,'resources/bin
 assert.match((await promisify(execFile)(path.join(app,'resources/bin/notch-rg.exe'),['--version'],{windowsHide:true})).stdout,/^ripgrep 15\.2\.0[\s\S]*PCRE2 10\.45 is available/,'Packaged ripgrep must support the pinned PCRE2 engine.');
 extractAll(path.join(app,'resources/app.asar'),unpacked);
 const mainFile=path.join(unpacked,'out/main/index.js');
-await fs.writeFile(mainFile,patchStartupShutdown(patchPersistedContextUsage(patchUndoIntegration(patchDirectStartup(await fs.readFile(mainFile,'utf8'))))));
+await fs.writeFile(mainFile,patchStartupShutdown(patchPersistedContextUsage(patchUndoIntegration(patchWebToolCatalog(patchDirectStartup(await fs.readFile(mainFile,'utf8')))))));
 await fs.cp(path.join(root,'src'),path.join(unpacked,'notch/src'),{recursive:true});
 await fs.cp(path.join(root,'vendor/notch-core'),path.join(unpacked,'notch/vendor/notch-core'),{recursive:true});
+await fs.cp(path.join(root,'node_modules/playwright-core'),path.join(unpacked,'notch/node_modules/playwright-core'),{recursive:true});
 const openrouterTarget=path.join(unpacked,'notch/node_modules/@openrouter/ai-sdk-provider');
 await fs.cp(path.join(root,'node_modules/@openrouter/ai-sdk-provider'),openrouterTarget,{recursive:true});
 assert.equal(JSON.parse(await fs.readFile(path.join(openrouterTarget,'package.json'),'utf8')).version,'3.1.0','The packaged OpenRouter adapter must match the tested version.');

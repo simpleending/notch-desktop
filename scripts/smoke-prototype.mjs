@@ -1,4 +1,4 @@
-import { _electron } from 'playwright-core';
+import { _electron } from 'electron-qa';
 import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 const executable = path.resolve(process.argv[2] || 'release/Notch-prototype/Notch.exe');

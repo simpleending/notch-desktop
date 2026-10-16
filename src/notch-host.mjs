@@ -172,7 +172,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
           if(unverifiedModels.has(model))throw new Error('Could not verify the local model. Start Ollama or refresh to retry.');
           const apiKey = model.startsWith('openrouter/') ? await host.modelManager?.key('openrouter') : undefined;
           if (model.startsWith('openrouter/') && !apiKey) throw new Error('Connect an OpenRouter API key in the model picker.');
-          return runTurn({ ...turn, model, apiKey, workspaceMode: await host.modelManager?.getWorkspaceMode?.() ?? 'shared', workspaceSearch: (operation, params, cwd, signal) => host.workspaceSearch.tool(operation, cwd, params, signal),
+          return runTurn({ ...turn, model, apiKey, webSettings: async () => await host.webResearch?.configuration() ?? { enabled: true, browser: 'auto' }, workspaceMode: await host.modelManager?.getWorkspaceMode?.() ?? 'shared', workspaceSearch: (operation, params, cwd, signal) => host.workspaceSearch.tool(operation, cwd, params, signal),
             onLifecycle: async (event, payload) => {
               if (event === 'pre-tool' && !['read', 'grep', 'glob'].includes(payload.tool)) host.workspaceSearch.invalidate(turn.cwd);
               if (event === 'post-tool' && !['read', 'grep', 'glob'].includes(payload.tool)) host.workspaceSearch.invalidate(turn.cwd);

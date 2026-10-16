@@ -1,0 +1,35 @@
+export function createWebSettings(React) {
+  const h = React.createElement;
+  return function WebSettings() {
+    const [state, setState] = React.useState(null), [key, setKey] = React.useState(''), [busy, setBusy] = React.useState(false), [message, setMessage] = React.useState('');
+    React.useEffect(() => { let alive = true; window.notchModels?.web?.().then(value => { if (alive) setState(value); }).catch(error => { if (alive) setMessage(error.message); }); return () => { alive = false; }; }, []);
+    const update = async (patch, success = '') => {
+      setBusy(true); setMessage('');
+      try { setState(await window.notchModels.web(patch)); setKey(''); setMessage(success); }
+      catch (error) { setMessage(error.message); }
+      finally { setBusy(false); }
+    };
+    const install = async () => {
+      setBusy(true); setMessage('Downloading Chromium. This may take a few minutes.');
+      try { await window.notchModels.webInstall(); setState(await window.notchModels.web()); setMessage('Chromium is ready.'); }
+      catch (error) { setMessage(error.message); }
+      finally { setBusy(false); }
+    };
+    return h('section', { className: 'notch-web-settings', 'aria-labelledby': 'notch-web-title' },
+      h('h3', { id: 'notch-web-title' }, 'Web research'),
+      h('p', null, 'Search for sources and read pages with a temporary browser. Queries and visited URLs go to external services. Browser actions follow your task access mode.'),
+      h('label', { className: 'notch-setting-row' }, h('span', null, h('strong', null, 'Web access'), h('small', null, 'Applies to new tool calls.')),
+        h('select', { 'aria-label': 'Web access', value: String(state?.enabled ?? true), disabled: busy || !state, onChange: e => update({ enabled: e.target.value === 'true' }) }, h('option', { value: 'true' }, 'Enabled'), h('option', { value: 'false' }, 'Disabled'))),
+      h('form', { onSubmit: e => { e.preventDefault(); if (key.trim()) void update({ key: key.trim() }, 'Key saved. Your next search will use it.'); } },
+        h('label', null, 'Tavily API key', h('input', { type: 'password', autoComplete: 'off', 'aria-label': 'Tavily API key', placeholder: state?.hasKey ? 'Key configured' : 'Enter a search API key', value: key, maxLength: 4096, disabled: busy || !state, onChange: e => setKey(e.target.value) })),
+        h('button', { type: 'submit', disabled: busy || !state || !key.trim() }, 'Save key'),
+        h('button', { type: 'button', disabled: busy || !state?.hasKey, onClick: () => update({ key: null }, state?.environmentKey ? 'Saved key removed. An environment key is still active.' : 'Saved key removed.') }, 'Remove key'),
+        h('a', { href: 'https://app.tavily.com/', target: '_blank', rel: 'noopener noreferrer' }, 'Get a Tavily key')),
+      state ? h('p', null, `Search: ${state.hasKey ? 'key configured' : 'add a key to search'}. ${state.persistentKey ? 'Saved keys use system encryption.' : 'System encryption unavailable: keys last only for this app session.'} Known URLs can be read without a search key.`) : null,
+      h('label', { className: 'notch-setting-row' }, h('span', null, h('strong', null, 'Research browser'), h('small', null, 'A fresh private session opens for each operation and closes afterward.')),
+        h('select', { 'aria-label': 'Research browser', value: state?.browser || 'auto', disabled: busy || !state, onChange: e => update({ browser: e.target.value }) },
+          ...[['auto','Automatic'],['msedge','Microsoft Edge'],['chrome','Google Chrome'],['chromium','Chromium']].map(([value, label]) => h('option', { key: value, value }, label)))),
+      h('button', { type: 'button', disabled: busy || !state, onClick: install }, 'Install Chromium'),
+      h('p', { role: 'status', 'aria-live': 'polite' }, message));
+  };
+}

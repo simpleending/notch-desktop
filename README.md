@@ -24,6 +24,14 @@ The Windows release supports x64 PCs running Windows 10 or 11. Check the release
 - **Work your way.** Choose dark or light mode, adjust the text, and search your project’s files.
 - **Keep knowledge and sites locally.** Knowledge Center saves searchable text notes and imports Markdown, text, CSV and JSON files. Sites saves HTML drafts with an offline static preview and HTML export. Both work without an account, keep drafts across restarts, and store their data in your device’s notch profile. Extensions opens the local extension manager; Workspace Index describes the automatic local file search.
 
+## Web research
+
+Ask notch to search current documentation and cite its sources. In **Settings → Appearance → Web research**, add a [Tavily API key](https://app.tavily.com/) for search, select your browser, or turn off web access. Search keys use system encryption when available; otherwise they last only for the current session. Environment variable `TAVILY_API_KEY` takes precedence. No notch account is required.
+
+Known URLs can be read without a search key. JavaScript pages use an installed Chrome or Edge, or optional Chromium installed from the same settings. Each browser operation uses a fresh private session and closes afterward; browser actions follow your approval mode and are unavailable in read-only mode. Source links in the conversation open when clicked. Search queries and page requests go to external services even when your model is local.
+
+See [web research details](docs/web-research.md) for setup and browser limitations.
+
 ## Start a project
 
 1. Download the Windows installer from the [latest release](https://github.com/simpleending/notch-desktop/releases/latest), then open **notch** from your Start menu.

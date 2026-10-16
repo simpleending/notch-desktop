@@ -10,6 +10,8 @@ export function registerModelIpc(ipcMain, host) {
     return { ...status, models, defaultModel: host.getDefaultModel(), discoveryWarning:host.getModelDiscoveryWarning(), hardware: await detectLocalHardware() };
   };
   const handlers = {
+    web: patch => patch === undefined ? host.webResearch.status() : host.webResearch.update(patch),
+    webInstall: () => host.webResearch.install(),
     workspace: async mode => mode === undefined ? manager.getWorkspaceMode() : manager.setWorkspaceMode(mode),
     state: refresh => state(refresh === true),
     connect: async (provider,key) => { await manager.connect(provider,key); return state(false,true); },
@@ -43,6 +45,8 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
   cancel:()=>ipcRenderer.invoke('notch-models:cancel'),
   status:()=>ipcRenderer.invoke('notch-models:status'),
   queue:()=>ipcRenderer.invoke('notch-models:queue'),
+  web:patch=>ipcRenderer.invoke('notch-models:web',patch),
+  webInstall:()=>ipcRenderer.invoke('notch-models:webInstall'),
   workspace:mode=>ipcRenderer.invoke('notch-models:workspace',mode)
  }));
 }\n`;
@@ -59,5 +63,6 @@ export function patchModelPreload(source) {
   const queue="queue:()=>ipcRenderer.invoke('notch-models:queue')";
   if(!source.includes(queue))source=source.replace("status:()=>ipcRenderer.invoke('notch-models:status')","status:()=>ipcRenderer.invoke('notch-models:status'),\n  "+queue);
   if(!source.includes("workspace:mode=>"))source=source.replace(queue,queue+",\n  workspace:mode=>ipcRenderer.invoke('notch-models:workspace',mode)");
+  if(!source.includes("web:patch=>"))source=source.replace("workspace:mode=>", "web:patch=>ipcRenderer.invoke('notch-models:web',patch),\n  webInstall:()=>ipcRenderer.invoke('notch-models:webInstall'),\n  workspace:mode=>");
   return source;
 }

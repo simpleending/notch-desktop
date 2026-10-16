@@ -1,3 +1,4 @@
+import { patchWebToolCatalog } from '../src/web-tools-patch.mjs';
 import { parseArgs } from 'node:util';
 import { cp, mkdir, writeFile, readFile, access, rename } from 'node:fs/promises';
 import path from 'node:path';
@@ -36,9 +37,9 @@ for (const [name] of Object.entries(JSON.parse(await readFile(path.join(root, 'p
 }
 // Include transitive runtime packages used by the shared CLI dependencies.
 await cp(path.join(root, 'node_modules'), path.join(application, 'notch/node_modules'), { recursive: true,
-  filter: source => !/[/\\](?:electron|@electron|typescript|tsup|esbuild|@esbuild)(?:[/\\]|$)/.test(source) });
+  filter: source => !/[/\\](?:electron|electron-qa|@electron|typescript|tsup|esbuild|@esbuild)(?:[/\\]|$)/.test(source) });
 const mainFile = path.join(application, 'out/main/index.js');
-const patched = patchWorkbench(await readFile(mainFile, 'utf8')); await writeFile(mainFile, patched.source);
+const patched = patchWorkbench(await readFile(mainFile, 'utf8')); await writeFile(mainFile, patchWebToolCatalog(patched.source));
 async function rebrandDirectory(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const file = path.join(directory, entry.name);

@@ -1,4 +1,4 @@
-import { _electron } from 'playwright-core';
+import { _electron } from 'electron-qa';
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api_key|ELECTRON_RUN_AS_NODE/i.test(key)));

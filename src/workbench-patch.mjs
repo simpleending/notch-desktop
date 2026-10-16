@@ -106,9 +106,22 @@ export function patchWorkbenchRenderer(source) {
   return patchSecondaryArtwork('/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench} from "./workbench-skin.mjs";\n' + source);
 }
 
+export async function verifyWorkbenchImports(assets) {
+  const visited = new Set();
+  async function visit(file) {
+    if (visited.has(file)) return; visited.add(file);
+    const source = await readFile(file, 'utf8');
+    for (const node of parse(source, { ecmaVersion: 'latest', sourceType: 'module' }).body) {
+      if (node.type === 'ImportDeclaration' && node.source.value.startsWith('.')) await visit(path.resolve(path.dirname(file), node.source.value));
+    }
+  }
+  await visit(path.join(assets, 'workbench-skin.mjs')); await visit(path.join(assets, 'model-menu.mjs'));
+}
+
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'web-settings-view.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  await verifyWorkbenchImports(assets);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root, 'assets/fonts'), path.join(assets, 'fonts'), { recursive: true });
   await cp(path.join(root, 'assets/notices'), path.join(assets, 'notices'), { recursive: true });

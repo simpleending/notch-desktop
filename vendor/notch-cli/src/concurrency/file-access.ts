@@ -26,7 +26,7 @@ async function fingerprint(file: string, signal?: AbortSignal) {
   }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
 }
-const orchestration = new Set(['task', 'task_changes', 'events', 'code_exec', 'code_wait', 'agent_spawn', 'agent_send_message', 'agent_stop', 'web_fetch', 'web_search', 'glob', 'grep']);
+const orchestration = new Set(['task', 'task_changes', 'events', 'code_exec', 'code_wait', 'agent_spawn', 'agent_send_message', 'agent_stop', 'web_fetch', 'web_search', 'browser_read', 'browser_interact', 'glob', 'grep']);
 
 /** Serialize cooperating file operations, and reject writes based on an unread or stale file. */
 export async function guardedFileAccess(name: string, params: Record<string, any>, ctx: ToolContext, execute: () => Promise<ToolResult>): Promise<ToolResult> {

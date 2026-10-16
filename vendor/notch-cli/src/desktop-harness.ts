@@ -18,6 +18,7 @@ export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
 export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };
 export interface DesktopTurn {
+  webSettings?: ToolContext['webSettings'];
   workspaceSearch?: ToolContext['workspaceSearch'];
   ripgrepPath?: string;
   cwd: string;
@@ -50,7 +51,7 @@ export interface DesktopTurn {
   onLifecycle?: (event: string, payload: Record<string, unknown>) => Promise<void>;
 }
 
-const desktopToolNames: Record<string, string> = { Read: 'read', TaskChanges: 'task_changes', Write: 'write', Edit: 'edit', Bash: 'shell', Glob: 'glob', Grep: 'grep', Git: 'git', ApplyPatch: 'apply_patch', WebFetch: 'web_fetch', Agent: 'task' };
+const desktopToolNames: Record<string, string> = { Read: 'read', TaskChanges: 'task_changes', Write: 'write', Edit: 'edit', Bash: 'shell', Glob: 'glob', Grep: 'grep', Git: 'git', ApplyPatch: 'apply_patch', WebFetch: 'web_fetch', WebSearch: 'web_search', BrowserRead: 'browser_read', BrowserInteract: 'browser_interact', Agent: 'task' };
 export function desktopToolName(name: string): string { return desktopToolNames[name] ?? name; }
 export function definitionRules(values: string[] = [], level: 'allow' | 'deny'): PermissionRule[] {
   return values.map(value => {
@@ -93,6 +94,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   const delivered = new Set<string>();
   const allowed = definitionRules(turn.allowedTools, 'allow'), denied = definitionRules(turn.disallowedTools, 'deny');
   const ctx: ToolContext = {
+    webSettings: turn.webSettings ?? (async () => ({ enabled: true, browser: 'auto' })),
     workspaceMode: () => turn.workspaceMode ?? config.workspaceMode ?? 'shared',
     isolateTasks: () => provider === 'openrouter' && (turn.workspaceMode ?? config.workspaceMode) === 'isolated',
     workspaceCheckpoints: {
@@ -142,3 +144,5 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     });
   } finally { await turn.checkpoints.commit('Desktop turn'); }
 }
+
+export { webSettingsSchema, validSearchKey, installResearchBrowser } from './web/settings.js';

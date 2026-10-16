@@ -28,6 +28,7 @@ export interface NotchTool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
 
 /** Shared context available to all tools during execution */
 export interface ToolContext {
+  webSettings?: () => Promise<import('../web/settings.js').WebSettings>;
   workspaceMode?: () => 'shared' | 'isolated';
   /** Internal ownership token, inherited only by workers of an active shared task. */
   sharedTask?: string;
