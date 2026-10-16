@@ -19,6 +19,7 @@ export function registerModelIpc(ipcMain, host) {
     install: (repo,runner) => manager.startInstall(repo,runner),
     cancel: () => manager.cancelInstall(),
     status: () => manager.status(),
+    queue: () => host.getQueueStatus(),
   };
   for (const [method,handle] of Object.entries(handlers)) ipcMain.handle(`notch-models:${method}`, (event,...args) => {
     if (!isPrimaryModelSender(event)) throw new Error('Model settings are available only in the primary notch window.');
@@ -39,7 +40,8 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
   cloud:force=>ipcRenderer.invoke('notch-models:cloud',force),
   install:(repo,runner)=>ipcRenderer.invoke('notch-models:install',repo,runner),
   cancel:()=>ipcRenderer.invoke('notch-models:cancel'),
-  status:()=>ipcRenderer.invoke('notch-models:status')
+  status:()=>ipcRenderer.invoke('notch-models:status'),
+  queue:()=>ipcRenderer.invoke('notch-models:queue')
  }));
 }\n`;
 
@@ -52,5 +54,7 @@ export function patchModelPreload(source) {
   }
   const cloud="cloud:force=>ipcRenderer.invoke('notch-models:cloud',force)";
   if(!source.includes(cloud))source=source.replace(current,current+",\n  "+cloud);
+  const queue="queue:()=>ipcRenderer.invoke('notch-models:queue')";
+  if(!source.includes(queue))source=source.replace("status:()=>ipcRenderer.invoke('notch-models:status')","status:()=>ipcRenderer.invoke('notch-models:status'),\n  "+queue);
   return source;
 }

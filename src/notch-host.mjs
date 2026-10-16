@@ -26,6 +26,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     getCachedModels: () => models,
     getDefaultModel: () => defaultModel,
     getModelDiscoveryWarning: () => discoveryWarning,
+    getQueueStatus: () => [...queries.values()].filter(query => query.queueMessage).map(query => ({ sessionId: query.id, message: query.queueMessage })),
     resolveModelChoice(model) {
       const chosen = !model || model === 'auto' ? defaultModel : model;
       if (!chosen || !models.some(row => row.key === chosen && row.enabled)) throw new Error('The selected model is unavailable or does not fit current memory. Choose a model in the composer.');

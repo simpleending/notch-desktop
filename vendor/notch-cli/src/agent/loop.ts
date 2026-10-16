@@ -1,4 +1,5 @@
 import { toolOutput } from '../messages.js';
+import { executionContext } from '../concurrency/local-inference.js';
 import { isStepCount, asSchema } from 'ai';
 /**
  * Notch CLI — Agent Loop
@@ -127,11 +128,16 @@ export async function runAgentLoop(
   messages: ModelMessage[],
   config: AgentConfig,
 ): Promise<AgentResponse> {
+  return executionContext.run(config.toolContext, () => runAgentLoopInternal(messages, config));
+}
+
+async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfig): Promise<AgentResponse> {
   // Build tools with read cache for this turn (prevents redundant file reads)
   const readCache = new Map<string, string>();
   const toolCtxWithCache = {
     ...config.toolContext,
     _readCache: readCache,
+    _fileVersions: new Map<string, string | null>(),
   };
   const feedback = toolValidationFeedback(buildToolMap(toolCtxWithCache));
   const tools = feedback.tools;

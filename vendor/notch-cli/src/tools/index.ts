@@ -44,6 +44,7 @@ import {
 import { recordInteractiveApproval } from '../permissions/handlers/interactive.js';
 
 import { isBuiltInReadTool } from '../permissions/access.js';
+import { guardedFileAccess } from '../concurrency/file-access.js';
 export type { ToolContext, ToolResult, NotchTool, PermissionLevel } from './types.js';
 
 /** All built-in tools */
@@ -289,6 +290,7 @@ export function buildToolMap(ctx: ToolContext) {
           }
         }
 
+        return guardedFileAccess(t.name, params as Record<string, unknown>, ctx, async () => {
         // Fire pre-tool hook
         await ctx.runHook?.('pre-tool', { tool: t.name, args: params, toolCallId: execution?.toolCallId });
         ctx.abortSignal?.throwIfAborted();
@@ -315,6 +317,7 @@ export function buildToolMap(ctx: ToolContext) {
         });
 
         return result;
+        });
       },
     });
   }

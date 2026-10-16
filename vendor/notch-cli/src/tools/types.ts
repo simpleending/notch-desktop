@@ -45,6 +45,9 @@ export interface ToolContext {
   onlyTools?: string[];
   /** Callback to print status messages to the terminal */
   log: (message: string) => void;
+  /** Transient queue status; never added to model conversation history. */
+  onQueue?: (message: string | null) => void;
+  _fileVersions?: Map<string, string | null>;
   /** Permission checker — returns whether a tool call is allowed, denied, or needs prompting */
   checkPermission?: (toolName: string, args: Record<string, unknown>) => PermissionLevel;
   /** Hook runner — fires lifecycle events (pre-tool, post-tool, session-start, etc.) */

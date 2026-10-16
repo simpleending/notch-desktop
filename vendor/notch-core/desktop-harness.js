@@ -1,24 +1,27 @@
 import {
-  Rollout
-} from "./chunk-S5MWOFHZ.js";
-import {
   LOCAL_MODEL_CATALOG,
+  acquireLease,
   detectLocalHardware,
+  executionContext,
   inspectHubModel,
   linuxGpuMemory,
   modelFit,
-  parseNvidiaMemory
-} from "./chunk-VNTSJMDJ.js";
+  parseNvidiaMemory,
+  queuedLocalFetch
+} from "./chunk-LAUV4DIC.js";
 import {
   listModels,
   ollamaChatUrl,
   ollamaRoot,
   showModel
 } from "./chunk-JALSGEWB.js";
+import {
+  Rollout
+} from "./chunk-S5MWOFHZ.js";
 
 // vendor/notch-cli/src/desktop-harness.ts
-import path20 from "path";
-import fs18 from "fs/promises";
+import path21 from "path";
+import fs19 from "fs/promises";
 
 // vendor/notch-cli/src/config.ts
 import fs4 from "fs/promises";
@@ -592,6 +595,7 @@ function resolveByokModel(spec) {
   };
   if (shape === "anthropic") {
     const anthropic = createAnthropic({
+      ...isLocalOllama ? { fetch: queuedLocalFetch(fetch) } : {},
       apiKey,
       baseURL: baseUrl,
       headers
@@ -607,7 +611,12 @@ function resolveByokModel(spec) {
     return { model: openrouter.chat(modelId), providerInfo, modelId };
   }
   const provider = createOpenAI({
-    ...providerInfo.id === "ollama" ? { fetch: ollamaFetch(baseUrl, spec) } : {},
+    ...providerInfo.id === "ollama" ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
+      const { startMlx } = await import("./local-runner-PEHIEBJ7.js");
+      const ready = await startMlx(modelId, init?.signal ?? void 0);
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
+    }) } : {},
     apiKey,
     baseURL: baseUrl,
     headers
@@ -1858,7 +1867,7 @@ function toolResultValue(part) {
 // vendor/notch-cli/src/agent/loop.ts
 import { isStepCount as isStepCount2, asSchema } from "ai";
 import { ToolLoopAgent } from "ai";
-import { promises as fs16 } from "fs";
+import { promises as fs17 } from "fs";
 import { execSync } from "child_process";
 
 // vendor/notch-cli/src/tools/index.ts
@@ -2945,7 +2954,7 @@ var GITHUB_API = "https://api.github.com";
 function getToken() {
   return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
 }
-async function ghFetch(path21, opts = {}) {
+async function ghFetch(path22, opts = {}) {
   const token = getToken();
   const headers = {
     "Accept": "application/vnd.github+json",
@@ -2953,7 +2962,7 @@ async function ghFetch(path21, opts = {}) {
     ...opts.headers ?? {}
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  return fetch(`${GITHUB_API}${path21}`, { ...opts, headers });
+  return fetch(`${GITHUB_API}${path22}`, { ...opts, headers });
 }
 var parameters10 = z10.object({
   action: z10.enum([
@@ -5743,6 +5752,70 @@ var COORDINATOR_ALLOWED_TOOL_NAMES = /* @__PURE__ */ new Set([
   "glob"
 ]);
 
+// vendor/notch-cli/src/concurrency/file-access.ts
+import fs14 from "fs/promises";
+import path17 from "path";
+import { createHash } from "crypto";
+import { createReadStream } from "fs";
+async function canonical(file) {
+  let resolved;
+  try {
+    resolved = await fs14.realpath(file);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    const parent = path17.dirname(file);
+    if (parent === file) throw error;
+    resolved = path17.join(await canonical(parent), path17.basename(file));
+  }
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
+}
+async function fingerprint(file, signal) {
+  try {
+    if (!(await fs14.stat(file)).isFile()) throw new Error(`Not a regular file: ${file}`);
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(file, { signal })) hash.update(chunk);
+    return hash.digest("hex");
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+var orchestration = /* @__PURE__ */ new Set(["task", "events", "code_exec", "code_wait", "agent_spawn", "agent_send_message", "agent_stop", "web_fetch", "web_search", "glob", "grep"]);
+async function guardedFileAccess(name, params, ctx, execute2) {
+  if (orchestration.has(name)) return execute2();
+  const release = await acquireLease("file-mutations", ctx.abortSignal, (waiting) => ctx.onQueue?.(waiting ? "Waiting for file access\u2026" : null));
+  try {
+    ctx.abortSignal?.throwIfAborted();
+    const versions = ctx._fileVersions ??= /* @__PURE__ */ new Map();
+    let targets = [];
+    if (["read", "write", "edit", "notebook"].includes(name)) targets = [params.path];
+    if (name === "apply_patch") targets = parsePatch(params.input).flatMap((action) => action.kind === "update" && action.moveTo ? [action.target, action.moveTo] : [action.target]);
+    const files = await Promise.all(targets.map((file) => canonical(path17.resolve(ctx.cwd, file))));
+    const before = await Promise.all(files.map((file) => fingerprint(file, ctx.abortSignal)));
+    const reading = name === "read" || name === "notebook" && params.action === "read";
+    if (!files.length) for (const [file, observed] of versions) {
+      if (await fingerprint(file, ctx.abortSignal) !== observed) return { isError: true, content: `File conflict: ${file} changed since this task read it. Read it again before running ${name}.` };
+    }
+    for (let i = 0; i < files.length; i++) {
+      if (reading) {
+        if (versions.get(files[i]) !== before[i]) ctx._readCache?.clear();
+      } else if (before[i] !== null && !versions.has(files[i])) {
+        return { isError: true, content: `File conflict: read ${files[i]} before changing it. Existing contents were preserved.` };
+      } else if (versions.has(files[i]) && versions.get(files[i]) !== before[i]) {
+        return { isError: true, content: `File conflict: ${files[i]} changed since this task read it. Read it again and reconcile the changes before retrying. Existing contents were preserved.` };
+      }
+    }
+    const result = await execute2();
+    for (let i = 0; i < files.length; i++) {
+      if (result.isError) versions.delete(files[i]);
+      else versions.set(files[i], reading ? before[i] : await fingerprint(files[i], ctx.abortSignal));
+    }
+    return result;
+  } finally {
+    await release();
+  }
+}
+
 // vendor/notch-cli/src/tools/index.ts
 var BUILTIN_TOOLS = [
   readTool,
@@ -5888,24 +5961,26 @@ ${JSON.stringify(params, null, 2).slice(0, 500)}` };
             }
           }
         }
-        await ctx.runHook?.("pre-tool", { tool: t.name, args: params, toolCallId: execution?.toolCallId });
-        ctx.abortSignal?.throwIfAborted();
-        const mayChangeFiles = !["read", "glob", "grep", "web_fetch", "web_search"].includes(t.name);
-        if (mayChangeFiles) ctx._readCache?.clear();
-        let result;
-        try {
-          result = await t.execute(params, ctx);
-        } finally {
+        return guardedFileAccess(t.name, params, ctx, async () => {
+          await ctx.runHook?.("pre-tool", { tool: t.name, args: params, toolCallId: execution?.toolCallId });
+          ctx.abortSignal?.throwIfAborted();
+          const mayChangeFiles = !["read", "glob", "grep", "web_fetch", "web_search"].includes(t.name);
           if (mayChangeFiles) ctx._readCache?.clear();
-        }
-        await ctx.runHook?.("post-tool", {
-          tool: t.name,
-          args: params,
-          result: result.content.slice(0, 500),
-          isError: result.isError ?? false,
-          toolCallId: execution?.toolCallId
+          let result;
+          try {
+            result = await t.execute(params, ctx);
+          } finally {
+            if (mayChangeFiles) ctx._readCache?.clear();
+          }
+          await ctx.runHook?.("post-tool", {
+            tool: t.name,
+            args: params,
+            result: result.content.slice(0, 500),
+            isError: result.isError ?? false,
+            toolCallId: execution?.toolCallId
+          });
+          return result;
         });
-        return result;
       }
     });
   }
@@ -5969,7 +6044,7 @@ function contextBudget(window, overhead = 0, outputLimit) {
 }
 
 // vendor/notch-cli/src/agent/compression.ts
-import { createHash } from "crypto";
+import { createHash as createHash2 } from "crypto";
 function estimateTokens(messages) {
   return estimateTextTokens(messages.map((message) => JSON.stringify(message)).join("\n"));
 }
@@ -5988,7 +6063,7 @@ var InMemoryArtifactStore = class {
 var globalArtifactStore = new InMemoryArtifactStore();
 var ARTIFACT_URI_PREFIX = "notch-artifact://";
 function artifactKey(content) {
-  return createHash("sha1").update(content).digest("hex").slice(0, 16);
+  return createHash2("sha1").update(content).digest("hex").slice(0, 16);
 }
 function makeArtifactUri(key) {
   return `${ARTIFACT_URI_PREFIX}${key}`;
@@ -6254,15 +6329,15 @@ async function autoCompressWithStats(messages, model, contextWindow, signal, his
 }
 
 // vendor/notch-cli/src/context/project-instructions.ts
-import fs14 from "fs/promises";
-import path17 from "path";
+import fs15 from "fs/promises";
+import path18 from "path";
 import os4 from "os";
 var INSTRUCTION_FILES = [".notch.md", "NOTCH.md", ".notch/instructions.md"];
 async function loadProjectInstructions(projectRoot) {
   const sources = [];
   const homeDir = os4.homedir();
   for (const file of INSTRUCTION_FILES) {
-    const globalPath = path17.join(homeDir, file);
+    const globalPath = path18.join(homeDir, file);
     const content = await safeRead(globalPath);
     if (content) {
       sources.push({ path: globalPath, content, scope: "global" });
@@ -6270,7 +6345,7 @@ async function loadProjectInstructions(projectRoot) {
     }
   }
   for (const file of INSTRUCTION_FILES) {
-    const projectPath = path17.join(projectRoot, file);
+    const projectPath = path18.join(projectRoot, file);
     const content = await safeRead(projectPath);
     if (content) {
       sources.push({ path: projectPath, content, scope: "project" });
@@ -6292,7 +6367,7 @@ ${sections.join("\n\n")}`;
 }
 async function safeRead(filePath) {
   try {
-    const content = await fs14.readFile(filePath, "utf-8");
+    const content = await fs15.readFile(filePath, "utf-8");
     return content.trim() || null;
   } catch {
     return null;
@@ -6300,28 +6375,28 @@ async function safeRead(filePath) {
 }
 
 // vendor/notch-cli/src/memory/store.ts
-import fs15 from "fs/promises";
-import path18 from "path";
+import fs16 from "fs/promises";
+import path19 from "path";
 import os5 from "os";
 import { generateText as generateText4 } from "ai";
-var MEMORY_DIR = path18.join(os5.homedir(), ".notch", "memory");
-var INDEX_FILE = path18.join(MEMORY_DIR, "MEMORY.md");
-var SUMMARY_FILE = path18.join(MEMORY_DIR, "SUMMARY.md");
-var SUMMARY_FILENAME = path18.basename(SUMMARY_FILE);
+var MEMORY_DIR = path19.join(os5.homedir(), ".notch", "memory");
+var INDEX_FILE = path19.join(MEMORY_DIR, "MEMORY.md");
+var SUMMARY_FILE = path19.join(MEMORY_DIR, "SUMMARY.md");
+var SUMMARY_FILENAME = path19.basename(SUMMARY_FILE);
 var DEFAULT_PROMPT_CHAR_BUDGET = Number(process.env.NOTCH_MEMORY_PROMPT_CHARS ?? 6e3);
 var MAX_SINGLE_MEMORY_CHARS = Number(process.env.NOTCH_MEMORY_ITEM_CHARS ?? 4e3);
 var MAX_COMPACTION_INPUT_CHARS = Number(process.env.NOTCH_MEMORY_COMPACT_INPUT_CHARS ?? 3e4);
 async function ensureDir() {
-  await fs15.mkdir(MEMORY_DIR, { recursive: true });
+  await fs16.mkdir(MEMORY_DIR, { recursive: true });
 }
 async function loadMemories() {
   await ensureDir();
-  const files = await fs15.readdir(MEMORY_DIR);
+  const files = await fs16.readdir(MEMORY_DIR);
   const memories = [];
   for (const file of files) {
     if (!file.endsWith(".md") || file === "MEMORY.md" || file === SUMMARY_FILENAME) continue;
     try {
-      const content = await fs15.readFile(path18.join(MEMORY_DIR, file), "utf-8");
+      const content = await fs16.readFile(path19.join(MEMORY_DIR, file), "utf-8");
       const memory = parseMemoryFile(content, file);
       if (memory) memories.push(memory);
     } catch {
@@ -6392,7 +6467,7 @@ function extractField(frontmatter, field) {
 }
 async function loadMemorySummary() {
   try {
-    const raw = await fs15.readFile(SUMMARY_FILE, "utf-8");
+    const raw = await fs16.readFile(SUMMARY_FILE, "utf-8");
     return raw.replace(/^# Notch Memory Summary\s*/i, "").replace(/^_Updated:.*?_\s*/im, "").trim();
   } catch {
     return "";
@@ -6880,10 +6955,14 @@ function signaturesMatch(a, b) {
   return a.toolName === b.toolName && a.errorPrefix === b.errorPrefix;
 }
 async function runAgentLoop(messages, config) {
+  return executionContext.run(config.toolContext, () => runAgentLoopInternal(messages, config));
+}
+async function runAgentLoopInternal(messages, config) {
   const readCache = /* @__PURE__ */ new Map();
   const toolCtxWithCache = {
     ...config.toolContext,
-    _readCache: readCache
+    _readCache: readCache,
+    _fileVersions: /* @__PURE__ */ new Map()
   };
   const feedback = toolValidationFeedback(buildToolMap(toolCtxWithCache));
   const tools = feedback.tools;
@@ -7228,7 +7307,7 @@ async function buildSystemPrompt(projectRoot, _modelId, toolContext) {
         if (process.platform === "win32") lines.push("- The shell tool currently uses cmd.exe. Use portable Node commands or invoke PowerShell explicitly; Unix commands such as cat are not available by default.");
         lines.push(`- Current date (UTC): ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         try {
-          const entries = await fs16.readdir(projectRoot);
+          const entries = await fs17.readdir(projectRoot);
           const preview = entries.filter((e) => !e.startsWith(".")).slice(0, 30).join(", ");
           if (preview) lines.push(`- Top-level entries: ${preview}`);
         } catch {
@@ -7283,8 +7362,8 @@ ${memoryStr}`, {
 }
 
 // vendor/notch-cli/src/agent/checkpoints.ts
-import fs17 from "fs/promises";
-import path19 from "path";
+import fs18 from "fs/promises";
+import path20 from "path";
 import { randomUUID as randomUUID2 } from "crypto";
 var CheckpointManager = class _CheckpointManager {
   checkpoints = [];
@@ -7298,11 +7377,11 @@ var CheckpointManager = class _CheckpointManager {
   restoring;
   static async open(cwd, file) {
     const manager = new _CheckpointManager();
-    const realCwd = await fs17.realpath(cwd), stat = await fs17.stat(realCwd, { bigint: true });
-    manager.storage = { cwd: realCwd, file: path19.resolve(file), identity: `${stat.dev}:${stat.ino}` };
+    const realCwd = await fs18.realpath(cwd), stat = await fs18.stat(realCwd, { bigint: true });
+    manager.storage = { cwd: realCwd, file: path20.resolve(file), identity: `${stat.dev}:${stat.ino}` };
     let raw;
     try {
-      raw = await fs17.readFile(file, "utf8");
+      raw = await fs18.readFile(file, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") return manager;
       throw error;
@@ -7311,7 +7390,7 @@ var CheckpointManager = class _CheckpointManager {
     const state = JSON.parse(raw);
     if (state.version !== 1 || state.cwd !== manager.storage.cwd || state.identity !== manager.storage.identity || !Array.isArray(state.checkpoints) || !Array.isArray(state.pending)) throw new Error("Invalid undo history or workspace mismatch; history was preserved.");
     const snapshot = (row, pending = false) => {
-      if (!row || typeof row.path !== "string" || !path19.isAbsolute(row.path) || !manager.isWithin(row.path) || !(row.before === null || typeof row.before === "string") || !(row.after === null || typeof row.after === "string" || pending && row.after === void 0) || row.uncertain !== void 0 && typeof row.uncertain !== "boolean") throw new Error("Invalid undo snapshot; history was preserved.");
+      if (!row || typeof row.path !== "string" || !path20.isAbsolute(row.path) || !manager.isWithin(row.path) || !(row.before === null || typeof row.before === "string") || !(row.after === null || typeof row.after === "string" || pending && row.after === void 0) || row.uncertain !== void 0 && typeof row.uncertain !== "boolean") throw new Error("Invalid undo snapshot; history was preserved.");
     };
     let previous = 0;
     for (const row of state.checkpoints) {
@@ -7356,31 +7435,31 @@ var CheckpointManager = class _CheckpointManager {
   }
   isWithin(file) {
     if (!this.storage) return true;
-    const relative = path19.relative(this.storage.cwd, file);
-    return !!relative && relative !== ".." && !relative.startsWith(".." + path19.sep) && !path19.isAbsolute(relative) && (process.platform !== "win32" || !relative.includes(":"));
+    const relative = path20.relative(this.storage.cwd, file);
+    return !!relative && relative !== ".." && !relative.startsWith(".." + path20.sep) && !path20.isAbsolute(relative) && (process.platform !== "win32" || !relative.includes(":"));
   }
   async safePath(file) {
     if (!this.isWithin(file)) throw new Error("Undo path is outside this workspace.");
     if (this.storage) {
-      const relative = path19.relative(path19.dirname(this.storage.file), file);
-      if (path19.resolve(file) === this.storage.file || this.isWithin(path19.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path19.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
+      const relative = path20.relative(path20.dirname(this.storage.file), file);
+      if (path20.resolve(file) === this.storage.file || this.isWithin(path20.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path20.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
     }
     let cursor = file;
     while (true) {
       try {
-        const stat = await fs17.lstat(cursor);
+        const stat = await fs18.lstat(cursor);
         if (stat.isSymbolicLink() || cursor === file && stat.nlink > 1) throw new Error("Undo refuses symbolic links and shared hard links.");
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      if (cursor === this.storage?.cwd || path19.dirname(cursor) === cursor) break;
-      cursor = path19.dirname(cursor);
+      if (cursor === this.storage?.cwd || path20.dirname(cursor) === cursor) break;
+      cursor = path20.dirname(cursor);
     }
   }
   async read(file) {
     await this.safePath(file);
     try {
-      const bytes = await fs17.readFile(file), content = bytes.toString("utf8");
+      const bytes = await fs18.readFile(file), content = bytes.toString("utf8");
       if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${file}`);
       return content;
     } catch (error) {
@@ -7396,20 +7475,20 @@ var CheckpointManager = class _CheckpointManager {
       identity: this.storage.identity,
       nextId: this.nextId,
       checkpoints: this.checkpoints,
-      pending: [...this.pendingFiles].map(([path21, before]) => ({ path: path21, before, after: this.pendingAfter.get(path21) })),
+      pending: [...this.pendingFiles].map(([path22, before]) => ({ path: path22, before, after: this.pendingAfter.get(path22) })),
       messageId: this.messageId,
       restoring: this.restoring
     });
     if (Buffer.byteLength(data) > 64 * 2 ** 20) throw new Error("Undo history exceeds 64 MiB; no further writes are allowed.");
     const file = this.storage.file;
     const save = this.saving.then(async () => {
-      await fs17.mkdir(path19.dirname(file), { recursive: true });
+      await fs18.mkdir(path20.dirname(file), { recursive: true });
       const temporary = `${file}.${randomUUID2()}.tmp`;
       try {
-        await fs17.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
-        await fs17.rename(temporary, file);
+        await fs18.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
+        await fs18.rename(temporary, file);
       } finally {
-        await fs17.unlink(temporary).catch(() => {
+        await fs18.unlink(temporary).catch(() => {
         });
       }
     });
@@ -7425,7 +7504,7 @@ var CheckpointManager = class _CheckpointManager {
   }
   /** Call before a file is modified — records its current content */
   async recordBefore(filePath) {
-    filePath = path19.resolve(filePath);
+    filePath = path20.resolve(filePath);
     const existing = this.pendingReads.get(filePath);
     if (existing) return existing;
     const read = (async () => {
@@ -7438,7 +7517,7 @@ var CheckpointManager = class _CheckpointManager {
         return;
       }
       try {
-        const bytes = await fs17.readFile(filePath);
+        const bytes = await fs18.readFile(filePath);
         const content = bytes.toString("utf8");
         if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${filePath}`);
         this.pendingFiles.set(filePath, content);
@@ -7512,6 +7591,14 @@ var CheckpointManager = class _CheckpointManager {
     return { canRewind: true, filesChanged: selected.files.map((row) => row.path), insertions: 0, deletions: 0 };
   }
   async undo(messageId) {
+    const release = await acquireLease("file-mutations");
+    try {
+      return await this.undoLocked(messageId);
+    } finally {
+      await release();
+    }
+  }
+  async undoLocked(messageId) {
     const selected = this.selection(messageId);
     if (!selected) return null;
     await this.preview(messageId);
@@ -7528,19 +7615,19 @@ var CheckpointManager = class _CheckpointManager {
       if (current === snap.before) continue;
       if (snap.before === null) {
         try {
-          await fs17.unlink(snap.path);
+          await fs18.unlink(snap.path);
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
         }
       } else {
-        await fs17.mkdir(path19.dirname(snap.path), { recursive: true });
+        await fs18.mkdir(path20.dirname(snap.path), { recursive: true });
         const temporary = `${snap.path}.${randomUUID2()}.undo-tmp`;
-        const mode = current === null ? 384 : (await fs17.stat(snap.path)).mode & 511;
+        const mode = current === null ? 384 : (await fs18.stat(snap.path)).mode & 511;
         try {
-          await fs17.writeFile(temporary, snap.before, { mode, flag: "wx", flush: true });
-          await fs17.rename(temporary, snap.path);
+          await fs18.writeFile(temporary, snap.before, { mode, flag: "wx", flush: true });
+          await fs18.rename(temporary, snap.path);
         } finally {
-          await fs17.unlink(temporary).catch(() => {
+          await fs18.unlink(temporary).catch(() => {
           });
         }
       }
@@ -7579,8 +7666,8 @@ var CheckpointManager = class _CheckpointManager {
         }
       }
     }
-    return Array.from(fileMap.entries()).map(([path21, { before, after }]) => ({
-      path: path21,
+    return Array.from(fileMap.entries()).map(([path22, { before, after }]) => ({
+      path: path22,
       before,
       after
     }));
@@ -7601,8 +7688,8 @@ function definitionRules(values = [], level) {
   });
 }
 async function runDesktopTurn(turn) {
-  const cwd = await fs18.realpath(turn.cwd);
-  if (!(await fs18.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
+  const cwd = await fs19.realpath(turn.cwd);
+  if (!(await fs19.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
   if (!["approve", "read-only", "full-access"].includes(turn.accessMode)) throw new Error("Invalid desktop access mode.");
   turn.signal.throwIfAborted();
   const config = await loadConfig({ projectRoot: cwd });
@@ -7626,7 +7713,7 @@ async function runDesktopTurn(turn) {
     await managedOllama("0.40.3", turn.signal);
   }
   if (provider === "mlx") {
-    const { startMlx } = await import("./local-runner-O7HGXIPQ.js");
+    const { startMlx } = await import("./local-runner-PEHIEBJ7.js");
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
@@ -7646,6 +7733,7 @@ async function runDesktopTurn(turn) {
     permissionSessionId: turn.sessionId,
     log: turn.onLog || (() => {
     }),
+    onQueue: turn.onQueue,
     checkPermission: (name, args) => {
       if (checkPermission({ default: "allow", rules: denied }, name, args) === "deny") return "deny";
       if (allowed.length && checkPermission({ default: "deny", rules: allowed }, name, args) !== "allow") return "deny";
@@ -7656,10 +7744,10 @@ async function runDesktopTurn(turn) {
       if (event === "post-tool") await turn.checkpoints.recordAfter();
       if (event !== "pre-tool") return;
       const args = payload.args;
-      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore(path20.resolve(cwd, args.path));
+      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore(path21.resolve(cwd, args.path));
       if (payload.tool === "apply_patch" && typeof args.input === "string") for (const action of parsePatch(args.input)) {
-        await turn.checkpoints.recordBefore(path20.resolve(cwd, action.target));
-        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path20.resolve(cwd, action.moveTo));
+        await turn.checkpoints.recordBefore(path21.resolve(cwd, action.target));
+        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path21.resolve(cwd, action.moveTo));
       }
     }
   };

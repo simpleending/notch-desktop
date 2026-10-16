@@ -1,6 +1,7 @@
 import {
-  detectLocalHardware
-} from "./chunk-VNTSJMDJ.js";
+  detectLocalHardware,
+  withLocalInference
+} from "./chunk-LAUV4DIC.js";
 import {
   detectDaemon,
   ollamaRoot,
@@ -118,6 +119,9 @@ async function downloadMlx(repo, signal) {
   await runPython(python, ["-c", 'from huggingface_hub import snapshot_download; import sys; snapshot_download(repo_id=sys.argv[1], allow_patterns=["*.safetensors","*.json","*.model","*.tiktoken","*.txt","*.jinja"])', repo], signal);
 }
 async function stopMlx() {
+  return withLocalInference(stopMlxInternal);
+}
+async function stopMlxInternal() {
   const child = mlxChild;
   mlxChild = void 0;
   mlxModel = void 0;
@@ -135,6 +139,9 @@ async function stopMlx() {
   return true;
 }
 async function startMlx(repo, signal) {
+  return withLocalInference(() => startMlxInternal(repo, signal), signal);
+}
+async function startMlxInternal(repo, signal) {
   if (mlxChild && mlxModel === repo && mlxChild.exitCode === null) return mlxBaseUrl;
   await stopMlx();
   const python = await prepareMlx(signal);
@@ -175,6 +182,9 @@ async function startMlx(repo, signal) {
   }
 }
 async function unloadOllama(model, host) {
+  return withLocalInference(() => unloadOllamaInternal(model, host));
+}
+async function unloadOllamaInternal(model, host) {
   const response = await fetch(`${ollamaRoot(host)}/api/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

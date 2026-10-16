@@ -35,9 +35,10 @@ async function probe(){await app.evaluate(()=>{
  globalThis.fetch=async(url,options)=>{
   const target=typeof url==='string'?url:url.url||String(url);if(!target.endsWith('/api/chat')&&!target.endsWith('/v1/chat/completions'))return original(url,options);
   const body=JSON.parse(options.body);const userIndex=body.messages.map(m=>m.role==='user').lastIndexOf(true),user=body.messages[userIndex]?.content,prompt=textOf(user);
-  const fixture=isFixture(user),done=!fixture||body.messages.slice(userIndex+1).some(m=>m.role==='tool'),reply=fixture?'File change complete.':'{"recap":"Recovery verification in progress."}';
+  const fixture=isFixture(user),toolResults=body.messages.slice(userIndex+1).filter(m=>m.role==='tool'),reply=fixture?'File change complete.':'{"recap":"Recovery verification in progress."}';
   const third=prompt.includes('Undo check three'),content=prompt.includes('Undo check two')?'two':'one',file=third?'created.txt':'file.txt';
-  const call={id:'change-'+(third?'third':content),function:third?{name:'apply_patch',arguments:{input:'*** Begin Patch\n*** Add File: created.txt\n+new\n*** End Patch'}}:content==='two'?{name:'edit',arguments:{path:file,old_string:'one',new_string:'two'}}:{name:'write',arguments:{path:file,content}}};
+  const done=!fixture||toolResults.length>=(third?1:2);
+  const call=!third&&!toolResults.length?{id:'read-before-change',function:{name:'read',arguments:{path:file}}}:{id:'change-'+(third?'third':content),function:third?{name:'apply_patch',arguments:{input:'*** Begin Patch\n*** Add File: created.txt\n+new\n*** End Patch'}}:content==='two'?{name:'edit',arguments:{path:file,old_string:'one',new_string:'two'}}:{name:'write',arguments:{path:file,content}}};
   if(target.endsWith('/api/chat'))return new Response(JSON.stringify({model:body.model,message:{role:'assistant',content:done?reply:'',...(done?{}:{tool_calls:[call]})},done:true,done_reason:'stop',prompt_eval_count:1500,eval_count:30})+'\n',{headers:{'Content-Type':'application/x-ndjson'}});
   const delta=done?{content:reply}:{tool_calls:[{index:0,id:call.id,type:'function',function:{name:call.function.name,arguments:JSON.stringify(call.function.arguments)}}]};
   const chunk={id:'undo-fixture',model:body.model,choices:[{index:0,delta,finish_reason:null}]};const end={...chunk,choices:[{index:0,delta:{},finish_reason:done?'stop':'tool_calls'}],usage:{prompt_tokens:1500,completion_tokens:30,total_tokens:1530}};

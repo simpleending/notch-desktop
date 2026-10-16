@@ -4,7 +4,16 @@ export function createNotchWorkbench(React, useTheme) {
   const h = React.createElement;
   function Brand() {
     const { resolvedTheme } = useTheme();
-    return h('span', { className: 'notch-window-brand' }, h('img', { src: resolvedTheme.endsWith('-dark') ? darkWordmark : lightWordmark, alt: 'notch', width: 82, height: 25 }));
+    const [queued, setQueued] = React.useState([]);
+    React.useEffect(() => {
+      if (!window.notchModels?.queue) return;
+      let alive = true;
+      const update = () => window.notchModels.queue().then(rows => { if (alive) setQueued(rows); }).catch(() => {});
+      update(); const timer = setInterval(update, 700);
+      return () => { alive = false; clearInterval(timer); };
+    }, []);
+    return h('span', { className: 'notch-window-brand' }, h('img', { src: resolvedTheme.endsWith('-dark') ? darkWordmark : lightWordmark, alt: 'notch', width: 82, height: 25 }),
+      queued.length ? h('span', { role: 'status', className: 'notch-queue-status', title: 'Stop a waiting task from its chat.' }, `${queued.length} waiting · ${queued[0].message}`) : null);
   }
   function ThemeControls() {
     const { resolvedTheme, setThemeMode } = useTheme();

@@ -24,6 +24,7 @@ import type { LanguageModel } from 'ai';
 import { loadSyncedByokKeysSync } from '../auth.js';
 import { ollamaChatUrl, ollamaRoot } from './ollama-url.js';
 import { ollamaFetch } from './ollama-transport.js';
+import { queuedLocalFetch } from '../concurrency/local-inference.js';
 
 /** Which API shape does this provider speak at its base URL? */
 export type ApiShape = 'openai' | 'anthropic';
@@ -509,6 +510,7 @@ export function resolveByokModel(spec: ByokSpec): {
 
   if (shape === 'anthropic') {
     const anthropic = createAnthropic({
+      ...(isLocalOllama ? { fetch: queuedLocalFetch(fetch) } : {}),
       apiKey,
       baseURL: baseUrl,
       headers,
@@ -526,7 +528,13 @@ export function resolveByokModel(spec: ByokSpec): {
   }
 
   const provider = createOpenAI({
-    ...(providerInfo.id === 'ollama' ? { fetch: ollamaFetch(baseUrl, spec) } : {}),
+    ...(providerInfo.id === 'ollama' ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) }
+      : providerInfo.id === 'mlx' ? { fetch: queuedLocalFetch(async (input, init) => {
+        const { startMlx } = await import('./local-runner.js');
+        const ready = await startMlx(modelId, init?.signal ?? undefined);
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        return fetch(ready + url.pathname.replace(/^\/v1/, '') + url.search, init);
+      }) } : {}),
     apiKey,
     baseURL: baseUrl,
     headers,

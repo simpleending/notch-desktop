@@ -7,6 +7,7 @@ import { detectDaemon, showModel, type OllamaShowResult } from './ollama.js';
 import { ollamaRoot } from './ollama-url.js';
 import { detectLocalHardware } from './local-models.js';
 import { createServer } from 'node:net';
+import { withLocalInference } from '../concurrency/local-inference.js';
 
 const exec = promisify(execFile);
 const mlxDir = () => path.join(os.homedir(), '.notch', 'runtimes', 'mlx');
@@ -93,6 +94,9 @@ export async function downloadMlx(repo: string, signal?: AbortSignal): Promise<v
 }
 
 export async function stopMlx(): Promise<boolean> {
+  return withLocalInference(stopMlxInternal);
+}
+async function stopMlxInternal(): Promise<boolean> {
   const child = mlxChild;
   mlxChild = undefined; mlxModel = undefined;
   if (!child || child.exitCode !== null) return false;
@@ -105,6 +109,9 @@ export async function stopMlx(): Promise<boolean> {
 }
 
 export async function startMlx(repo: string, signal?: AbortSignal): Promise<string> {
+  return withLocalInference(() => startMlxInternal(repo, signal), signal);
+}
+async function startMlxInternal(repo: string, signal?: AbortSignal): Promise<string> {
   if (mlxChild && mlxModel === repo && mlxChild.exitCode === null) return mlxBaseUrl;
   await stopMlx();
   const python = await prepareMlx(signal);
@@ -135,6 +142,9 @@ export async function startMlx(repo: string, signal?: AbortSignal): Promise<stri
 }
 
 export async function unloadOllama(model: string, host?: string): Promise<void> {
+  return withLocalInference(() => unloadOllamaInternal(model, host));
+}
+async function unloadOllamaInternal(model: string, host?: string): Promise<void> {
   const response = await fetch(`${ollamaRoot(host)}/api/generate`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model, stream: false, keep_alive: 0 }), signal: AbortSignal.timeout(15000) });
   if (!response.ok) throw new Error(`Could not unload model (HTTP ${response.status}).`);

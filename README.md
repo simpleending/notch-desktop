@@ -17,6 +17,7 @@ The Windows release supports x64 PCs running Windows 10 or 11. Check the release
 - **Bring your own model.** Choose an installed model or search Hugging Face by name, including Gemma and DeepSeek, with newest results first and more pages available. Public guided downloads need no account. Downloads use compatible Q4_K_M GGUF or MLX weights; memory fit and tool support are checked before use.
 - **Browse before connecting.** Search OpenRouter's chat and coding catalog without a key. Connect your own key to use models with coding tools; chat-only models are shown with their limitation.
 - **Stay in control.** Review file changes and commands before approving them, or choose the access level that suits your project.
+- **Keep tasks separate.** Local generations take turns across notch chats and CLI processes; OpenRouter can run in parallel. Waiting tasks remain cancellable. File tools refuse stale edits, and undo waits for file operations. For parallel tasks using arbitrary terminal commands or plugins, use separate Git worktrees: those commands can change files they have not read.
 - **Pick up where you left off.** Reopen saved conversations and keep working as longer chats are summarized.
 - **Review and undo changes.** Restore a selected agent turn and its later tracked file changes, even after restarting. Undo previews protect later manual edits and never change files themselves.
 - **Use the memory you have.** notch adjusts conversation size to your available memory. You can choose a limit yourself when you need more room.

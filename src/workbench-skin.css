@@ -26,6 +26,7 @@ html[data-notch-workbench=true] .profile-settings-header-texture-surface{display
 html[data-notch-workbench=true] button:focus-visible,html[data-notch-workbench=true] a:focus-visible,html[data-notch-workbench=true] select:focus-visible{outline:2px solid var(--notch-accent)!important;outline-offset:2px}
 .notch-window-brand{display:inline-flex;align-items:center;padding-right:18px;margin-right:12px;border-right:1px solid var(--notch-line);-webkit-app-region:no-drag}
 .notch-window-brand img{display:block;width:82px;height:25px;object-fit:contain}
+.notch-queue-status{margin-left:12px;max-width:min(28vw,260px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:400;color:var(--notch-muted);-webkit-app-region:no-drag}
 .notch-theme-toggle{display:inline-flex;align-items:center;gap:7px;font:12px/1.5 "Manrope",system-ui,sans-serif;color:var(--notch-secondary);padding:5px 10px;margin-right:18px;background:var(--notch-panel);border:1px solid var(--notch-line);border-radius:8px;cursor:pointer;-webkit-app-region:no-drag;white-space:nowrap}
 .notch-theme-toggle:hover{color:var(--notch-ink);background:var(--notch-elevated)}
 .notch-eyebrow{font:10px/1.5 ui-monospace,"Cascadia Code",monospace;letter-spacing:1.8px;color:var(--notch-accent);margin:0;overflow-wrap:anywhere}

@@ -1,5 +1,9 @@
 # Developing notch desktop
 
+Local generations share the CLI's filesystem ticket queue under the OS user's `~/.notch/coordination`; cancellation removes a waiter, and dead process tickets are reclaimed. The slot ends with stream completion/cancellation, before tools and approval. Runtime changes use the same slot. File operations and undo use a separate shared lease; file fingerprints reject unread overwrites and stale revisions. This protects cooperating built-in tools, not arbitrary shell/plugin writes or external editors. Use isolated worktrees for those parallel tasks.
+
+`node scripts/verify-task-queue.mjs <packaged-executable> <installed-cli-entry> <report.json>` verifies a real packaged IDE and separate CLI share the queue, checks cancellation before inference and captures the medium-window waiting indicator in both themes. It uses an isolated profile/home and loopback fixtures. The CLI checkout's `node scripts/verify-concurrency.mjs <installed-cli-entry> <report.json>` adds multiple actual CLI processes, parallel OpenRouter fixtures, forced-owner exit and stale concurrent writes. Neither check uses paid inference. Source tests also cover queue ordering, active stream cancellation, transport/stream failures, runtime-change serialization, malformed tickets, stale reads, multi-file preflight, cache refresh and undo/write coordination.
+
 Public development repository for a free desktop coding workbench, with local open models first and optional OpenRouter, OpenAI and Anthropic API keys.
 
 The session adapter runs the CLI provider/tool loop, streams assistant/tool messages, requests exact tool approvals, cancels active work and saves conversation and undo state. The Windows x64 release uses an Electron workbench with notch's dark/light interface. Other platforms, signing, paid-inference coverage and performance parity remain outside the verified Windows scope.

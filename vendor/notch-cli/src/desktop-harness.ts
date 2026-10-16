@@ -45,6 +45,7 @@ export interface DesktopTurn {
   onUsage?: AgentConfig['onUsage'];
   onCompact?: AgentConfig['onCompact'];
   onLog?: (message: string) => void;
+  onQueue?: (message: string | null) => void;
   onLifecycle?: (event: string, payload: Record<string, unknown>) => Promise<void>;
 }
 
@@ -95,7 +96,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     requireConfirm: false, confirm: async () => false, confirmTool: turn.approve,
     onlyTools: turn.tools?.map(desktopToolName),
     permissionSurface: 'interactive', permissionSessionId: turn.sessionId,
-    log: turn.onLog || (() => {}),
+    log: turn.onLog || (() => {}), onQueue: turn.onQueue,
     checkPermission: (name, args) => {
       if (checkPermission({ default: 'allow', rules: denied }, name, args) === 'deny') return 'deny';
       if (allowed.length && checkPermission({ default: 'deny', rules: allowed }, name, args) !== 'allow') return 'deny';
