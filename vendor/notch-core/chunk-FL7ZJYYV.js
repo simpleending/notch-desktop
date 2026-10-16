@@ -29,7 +29,7 @@ async function acquireLease(key, signal, onWait, directory = path.join(os.homedi
   await fs.writeFile(file, "", { flag: "wx", mode: 384 });
   const readNumber = async (ticket) => {
     try {
-      const raw = await fs.readFile(path.join(folder, ticket), "utf8"), value = Number(raw);
+      const raw = await retryFileOperation(() => fs.readFile(path.join(folder, ticket), "utf8")), value = Number(raw);
       return raw && Number.isSafeInteger(value) && value > 0 ? value : void 0;
     } catch (error) {
       if (error.code === "ENOENT") return 0;

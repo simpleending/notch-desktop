@@ -13,13 +13,16 @@ test('web settings keep keys encrypted, redact IPC state and survive restart', a
   const safeStorage = { isAsyncEncryptionAvailable: async () => true, getSelectedStorageBackend: () => 'test', encryptStringAsync: async key => Buffer.from(key.split('').reverse().join('')), decryptStringAsync: async bytes => ({ result: bytes.toString().split('').reverse().join('') }) };
   try {
     const service = createWebResearch(root, { safeStorage });
-    assert.equal((await service.status()).enabled, true);
-    await service.update({ key: 'tvly-test-only-secret', browser: 'msedge', enabled: false });
+    assert.equal((await service.status()).enabled, true); assert.equal((await service.status()).searchProvider, 'duckduckgo');
+    await service.update({ key: 'tvly-test-only-secret', searchProvider: 'tavily', browser: 'msedge', enabled: false });
     const raw = await fs.readFile(path.join(root, 'web-research.json'), 'utf8'); assert.ok(!raw.includes('tvly-test-only-secret'));
     const fresh = createWebResearch(root, { safeStorage }); assert.equal((await fresh.configuration()).tavilyKey, 'tvly-test-only-secret');
-    assert.deepEqual(await fresh.status(), { enabled: false, browser: 'msedge', hasKey: true, environmentKey: false, persistentKey: true, installing: false });
+    assert.deepEqual(await fresh.status(), { enabled: false, searchProvider: 'tavily', browser: 'msedge', hasKey: true, environmentKey: false, persistentKey: true, installing: false });
     assert.ok(!JSON.stringify(await fresh.status()).includes('tvly-test-only-secret'));
     await assert.rejects(fresh.update({ browser: 'invalid' })); await assert.rejects(fresh.update({ key: '\ninvalid' })); await assert.rejects(fresh.update({ unexpected: true }));
+    await assert.rejects(fresh.update({ searchProvider: 'invalid' }));
+    await fresh.update({ searchProvider: 'duckduckgo' }); assert.equal((await fresh.configuration()).tavilyKey, 'tvly-test-only-secret');
+    assert.equal((await createWebResearch(root, { safeStorage }).status()).searchProvider, 'duckduckgo');
     await fresh.update({ key: null }); assert.equal((await createWebResearch(root, { safeStorage }).status()).hasKey, false);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

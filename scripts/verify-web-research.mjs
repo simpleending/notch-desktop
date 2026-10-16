@@ -24,9 +24,10 @@ async function launch() {
     globalThis.__webQa = { events: [], approvals: [], opened: [], searches: [], requests: [] };
 
     globalThis.fetch = async (url, init) => {
+      if (String(url).startsWith('https://html.duckduckgo.com/html/')) globalThis.__webQa.searches.push({ provider: 'duckduckgo', url: String(url), authorization: new Headers(init?.headers).has('Authorization') });
       if (String(url) === 'https://api.tavily.com/search') {
         if (init.headers.Authorization !== 'Bearer tvly-fixture-only-secret' || JSON.parse(init.body).api_key) throw Error('Incorrect Tavily bearer contract');
-        globalThis.__webQa.searches.push({ query: JSON.parse(init.body).query, bearer: true });
+        globalThis.__webQa.searches.push({ provider: 'tavily', query: JSON.parse(init.body).query, bearer: true });
         return new Response(JSON.stringify({ results: [{ title: 'Official source', url: 'https://playwright.dev/docs/browsers', content: 'Official browser documentation. IDE_SEARCH_FIXTURE_OK' }] }), { headers: { 'content-type': 'application/json' } });
       }
       if (String(url).endsWith('/api/chat')) { const body = JSON.parse(init.body); globalThis.__webQa.requests.push({ model: body.model, context: body.options?.num_ctx }); }
@@ -64,6 +65,11 @@ try {
   await app.evaluate(({ shell }) => { const open = shell.openExternal; shell.openExternal = async url => { globalThis.__webQa.opened.push(url); }; });
   await page.getByRole('button', { name: 'Open user menu', exact: true }).first().click(); await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
   await page.locator('.notch-web-settings').waitFor(); const access = page.getByRole('combobox', { name: 'Web access', exact: true }); await until(async () => !await access.isDisabled(), 'web settings ready', 15000);
+  const provider = page.getByRole('combobox', { name: 'Search provider', exact: true });
+  assert.equal(await provider.inputValue(), 'duckduckgo');
+  await provider.selectOption('tavily'); await until(async () => (await page.evaluate(() => window.notchModels.web())).searchProvider === 'tavily', 'choose Tavily');
+  await provider.selectOption('duckduckgo'); await until(async () => (await page.evaluate(() => window.notchModels.web())).searchProvider === 'duckduckgo', 'choose DuckDuckGo');
+  checks.push('Provider defaults to no-key DuckDuckGo and both choices save through the visible settings menu');
   await access.selectOption('false'); await until(async () => !(await page.evaluate(() => window.notchModels.web())).enabled, 'disable web access');
   await access.selectOption('true'); await until(async () => (await page.evaluate(() => window.notchModels.web())).enabled, 'enable web access');
   await page.getByLabel('Tavily API key', { exact: true }).fill('tvly-fixture-only-secret');
@@ -80,7 +86,7 @@ try {
   const back = page.getByRole('button', { name: 'Back to app', exact: true }); if (await back.count()) await back.click();
   await page.locator('.notch-welcome').waitFor();
   await app.evaluate(({ shell }) => { shell.openExternal = async url => { globalThis.__webQa.opened.push(url); }; });
-  const saved = await page.evaluate(() => window.notchModels.web()); assert.equal(saved.hasKey, true); assert.equal(saved.browser, 'chromium'); checks.push('Research settings survive a complete app restart');
+  const saved = await page.evaluate(() => window.notchModels.web()); assert.equal(saved.hasKey, true); assert.equal(saved.searchProvider, 'duckduckgo'); assert.equal(saved.browser, 'chromium'); checks.push('Research settings survive a complete app restart');
   await page.evaluate(model => window.notchModels.context(model, 8192), model);
   await page.getByRole('button', { name: 'Open project', exact: true }).click(); await app.evaluate(({ dialog }, cwd) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [cwd] }); }, cwd);
   await page.getByText('Click to add a readable and editable folder', { exact: true }).click(); await page.getByRole('dialog').getByRole('textbox').fill('Web research verification'); await page.getByRole('button', { name: 'Create', exact: true }).click(); await page.getByRole('dialog').waitFor({ state: 'hidden' });
@@ -95,16 +101,20 @@ try {
   await until(async () => (await inspect()).opened.includes('https://playwright.dev/docs/browsers') || page.frames().some(frame => frame.url().startsWith('https://playwright.dev/')) || app.context().pages().some(page => page.url().startsWith('https://playwright.dev/')) || !!await page.locator('[data-browser-url],iframe[src^="https://playwright.dev/"]').count(), 'source link opens', 15000);
   checks.push('Real local model renders a page with read tools and its source link opens');
   const continuation = page.locator('[contenteditable=true][role=textbox]').first();
+  await continuation.fill('Use web_search once for "Playwright browser documentation". Cite a returned source URL as a Markdown link. Do not use other tools.'); await continuation.press('Enter');
+  result = await complete(2); assert.ok(result.searches.some(row => row.provider === 'duckduckgo' && !row.authorization)); assert.ok(!result.searches.some(row => row.provider === 'tavily'));
+  assert.ok(result.events.some(event => event.message?.content?.some(part => part.type === 'tool_result' && !part.is_error && part.content.includes('Web search results') && part.content.includes('https://playwright.dev/')))); checks.push('Real local model searches live DuckDuckGo without a key even with an unused saved Tavily key');
+  await page.evaluate(() => window.notchModels.web({ searchProvider: 'tavily' }));
   await continuation.fill('Use web_search once for Playwright browsers. Include the result marker and cite its URL. Do not use other tools.'); await continuation.press('Enter');
-  result = await complete(2); assert.ok(result.searches.length > 0); assert.ok(result.events.some(event => event.message?.content?.some(part => part.type === 'tool_result' && !part.is_error && part.content.includes('IDE_SEARCH_FIXTURE_OK')))); checks.push('Real local model searches and cites through the packaged Tavily fixture');
+  result = await complete(3); assert.ok(result.searches.some(row => row.provider === 'tavily')); assert.ok(result.events.some(event => event.message?.content?.some(part => part.type === 'tool_result' && !part.is_error && part.content.includes('IDE_SEARCH_FIXTURE_OK')))); checks.push('Real local model searches and cites through the packaged Tavily fixture');
   await page.getByRole('button', { name: 'Access permissions', exact: true }).click(); await page.getByRole('menuitem', { name: /^Ask for approval/ }).click();
   await continuation.fill(`Use browser_interact to open ${url}, fill #name with notch, then click #submit. Set wait_for to #submitted. Report the verification phrase. Do not use shell or other tools.`); await continuation.press('Enter');
-  result = await complete(3, true); assert.ok(result.approvals.some(row => row.name === 'BrowserInteract' && row.allowed)); assert.ok(result.events.some(event => event.message?.content?.some(part => part.type === 'tool_result' && !part.is_error && part.content.includes('IDE_ACTION_REAL_OK notch')))); checks.push('Browser interactions wait for native approval and execute with the real local model');
+  result = await complete(4, true); assert.ok(result.approvals.some(row => row.name === 'BrowserInteract' && row.allowed)); assert.ok(result.events.some(event => event.message?.content?.some(part => part.type === 'tool_result' && !part.is_error && part.content.includes('IDE_ACTION_REAL_OK notch')))); checks.push('Browser interactions wait for native approval and execute with the real local model');
   assert.ok(result.requests.length >= 6 && result.requests.every(row => row.context === 8192)); assert.deepEqual(errors, []);
   await page.screenshot({ path: reportFile.replace(/\.json$/, '-chat.png') }); trace = result;
 } catch (error) { failure = error.stack || error.message; if (app) { trace = await inspect().catch(() => null); await page?.screenshot({ path: reportFile.replace(/\.json$/, '-failure.png') }).catch(() => {}); } }
 finally {
   if (app) await app.close().catch(() => {}); await new Promise(resolve => server.close(resolve));
-  await fs.writeFile(reportFile, JSON.stringify({ passed: !failure, checks, failure, executable, profile, errors, trace, searchApi: 'Contract fixture, not a live Tavily account.', qaPlaywright: process.env.NOTCH_QA_PLAYWRIGHT || 'electron-qa (Playwright 1.64.0)' }, null, 2));
+  await fs.writeFile(reportFile, JSON.stringify({ passed: !failure, checks, failure, executable, profile, errors, trace, searchApi: 'Live DuckDuckGo; Tavily contract fixture, not a live Tavily account.', qaPlaywright: process.env.NOTCH_QA_PLAYWRIGHT || 'electron-qa (Playwright 1.64.0)' }, null, 2));
 }
 console.log(JSON.stringify({ passed: !failure, checks, failure, reportFile })); if (failure) process.exitCode = 1;

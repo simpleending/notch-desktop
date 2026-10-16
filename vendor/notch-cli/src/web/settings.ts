@@ -8,6 +8,7 @@ import { getConfigDir } from '../auth.js';
 
 export const webSettingsSchema = z.object({
   enabled: z.boolean().default(true),
+  searchProvider: z.enum(['duckduckgo', 'tavily']).default('duckduckgo'),
   browser: z.enum(['auto', 'msedge', 'chrome', 'chromium']).default('auto'),
 });
 export type WebSettings = z.infer<typeof webSettingsSchema> & { tavilyKey?: string };

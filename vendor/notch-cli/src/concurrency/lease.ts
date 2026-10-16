@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 
-async function retryFileOperation(operation: () => Promise<void>) {
+async function retryFileOperation<T>(operation: () => Promise<T>) {
   for (let attempt = 0; ; attempt++) {
     try { return await operation(); }
     catch (error) {
@@ -25,7 +25,7 @@ export async function acquireLease(key: string, signal?: AbortSignal, onWait?: (
   await fs.writeFile(file, '', { flag: 'wx', mode: 0o600 });
   const readNumber = async (ticket: string): Promise<number | undefined> => {
     try {
-      const raw = await fs.readFile(path.join(folder, ticket), 'utf8'), value = Number(raw);
+      const raw = await retryFileOperation(() => fs.readFile(path.join(folder, ticket), 'utf8')), value = Number(raw);
       return raw && Number.isSafeInteger(value) && value > 0 ? value : undefined;
     }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0; throw error; }

@@ -20,7 +20,7 @@ export function createWebResearch(directory, { safeStorage, signal, install = in
     async configuration() { await ready; return { ...settings, tavilyKey: process.env.TAVILY_API_KEY || key }; },
     async update(patch) {
       await ready;
-      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some(name => !['enabled','browser','key'].includes(name))) throw Error('Invalid web settings.');
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.keys(patch).some(name => !['enabled','browser','searchProvider','key'].includes(name))) throw Error('Invalid web settings.');
       const next = webSettingsSchema.parse({ ...settings, ...patch });
       const nextKey = 'key' in patch ? patch.key === null ? undefined : patch.key : key;
       if (nextKey !== undefined && (typeof nextKey !== 'string' || !validSearchKey(nextKey))) throw Error('Enter a valid Tavily API key.');

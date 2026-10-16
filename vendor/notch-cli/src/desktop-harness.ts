@@ -94,7 +94,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   const delivered = new Set<string>();
   const allowed = definitionRules(turn.allowedTools, 'allow'), denied = definitionRules(turn.disallowedTools, 'deny');
   const ctx: ToolContext = {
-    webSettings: turn.webSettings ?? (async () => ({ enabled: true, browser: 'auto' })),
+    webSettings: turn.webSettings ?? (async () => ({ enabled: true, searchProvider: 'duckduckgo', browser: 'auto' })),
     workspaceMode: () => turn.workspaceMode ?? config.workspaceMode ?? 'shared',
     isolateTasks: () => provider === 'openrouter' && (turn.workspaceMode ?? config.workspaceMode) === 'isolated',
     workspaceCheckpoints: {
