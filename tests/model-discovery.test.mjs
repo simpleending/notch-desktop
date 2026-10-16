@@ -18,6 +18,14 @@ async function fixture(){
 }
 async function turn(f,model){let result;for await(const event of f.host.query({cwd:f.directory,prompt:'Hello',model}))if(event.type==='result')result=event;return result;}
 
+test('initial inventory waits for the cached local runtime before committing an empty list',async()=>{
+  const f=await fixture();let ready;f.host.runtimeReady=new Promise(resolve=>{ready=resolve;});
+  try{
+    const listing=f.host.listModels();await new Promise(resolve=>setTimeout(resolve,10));assert.equal(f.tags(),0);
+    ready();assert.ok((await listing).some(row=>row.key==='ollama/alpha'));assert.equal(f.tags(),2);
+  }finally{ready();await f.host.workspaceSearch.shutdown();}
+});
+
 test('failed discovery preserves selection, blocks unverified local turns and retries without caching an outage',async()=>{
   const f=await fixture();try{
     await f.host.listModels(true);const chosen=f.host.getDefaultModel();

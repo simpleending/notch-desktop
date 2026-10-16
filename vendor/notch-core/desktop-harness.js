@@ -1,4 +1,7 @@
 import {
+  managedOllama
+} from "./chunk-3C22YZAZ.js";
+import {
   LOCAL_MODEL_CATALOG,
   acquireLease,
   detectLocalHardware,
@@ -613,7 +616,7 @@ function resolveByokModel(spec) {
   }
   const provider = createOpenAI({
     ...providerInfo.id === "ollama" ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startMlx } = await import("./local-runner-GG2B6WZJ.js");
+      const { startMlx } = await import("./local-runner-Q7EKKICX.js");
       const ready = await startMlx(modelId, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
@@ -2317,7 +2320,7 @@ function toolResultValue(part) {
 }
 
 // vendor/notch-cli/src/agent/loop.ts
-import { isStepCount as isStepCount2, asSchema } from "ai";
+import { isStepCount as isStepCount2, asSchema, jsonSchema } from "ai";
 import { ToolLoopAgent } from "ai";
 import { promises as fs19 } from "fs";
 import { execSync } from "child_process";
@@ -4728,41 +4731,8 @@ ${code}
   if (outcome.kind === "timeout") return { status: "timeout" };
   return { status: "error", error: outcome.error.message };
 }
-var CODE_EXEC_DESCRIPTION = `Run JavaScript code to orchestrate/compose tool calls in one round-trip.
-
-- Evaluates the provided JavaScript as an async module in a node:vm sandbox.
-- All nested tools are available on the global \`tools\` object, e.g. \`await tools.read({ path: 'foo.ts' })\`. Tool names are normalized JS identifiers (slashes/dots become underscores, so \`tools.mcp__ologs__get_profile(...)\`).
-- Nested tools accept an object and return a string.
-- Accepts raw JavaScript source text \u2014 not JSON, not markdown fences, not a quoted string.
-- Optional first-line pragma: \`// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}\`. Pragma values override the structured params.
-- \`yield_time_ms\` asks \`code_exec\` to yield early (status "yielded") if the script is still running. Max 300000ms.
-- \`max_output_tokens\` caps the stdout returned to the model. Default 1000 tokens (~4000 chars).
-- Top-level await is supported.
-
-Globals available in the sandbox:
-- \`tools.<name>(args)\`: call any other notch-cli tool.
-- \`console.log/info/warn/error\`: captured and returned as stdout.
-- \`store(key, value)\` / \`load(key)\`: per-cell kv scoped to the current \`cell_id\`.
-- \`notify(msg)\`: log a message to the user terminal without waiting.
-- \`yield_control()\`: yield current stdout back to the model while the script keeps running \u2014 resume with \`code_wait\`.
-- \`exit()\`: end the script immediately.
-- \`fetch\`, \`URL\`, \`URLSearchParams\`, \`crypto\`, \`TextEncoder/Decoder\`, \`Buffer\`, timers \u2014 standard runtime primitives.
-- \`input\`: optional string provided by \`code_wait\` when resuming.
-- \`ALL_TOOLS\`: array of \`{name, description}\` for every tool exposed on \`tools.*\`.
-
-Sandbox limits (NOT a hard isolate \u2014 this is node:vm, not V8 isolate):
-- No \`require\`, no \`process\`, no \`fs\`, no module system \u2014 all filesystem access must go through wrapped tools (tools.read / tools.write / tools.edit / ...).
-- \`fetch\` IS exposed; assume arbitrary network egress is possible.
-- A tight sync loop CAN exceed \`yield_time_ms\` (vm timeout catches sync code, but async work is only bounded by an outer race).
-
-Return shape: \`{cell_id, status, stdout, return_value?, error?}\`. If status is "yielded" or "timeout", use \`code_wait\` with the same \`cell_id\` to resume.`;
-var CODE_WAIT_DESCRIPTION = `Resume a previously yielded or timed-out \`code_exec\` cell.
-
-- Use only after \`code_exec\` returned status "yielded" or "timeout".
-- \`cell_id\` must match the id returned by the original \`code_exec\` call.
-- \`additional_input\` (optional) is injected as the global \`input\` string inside the resumed script.
-- Returns the same shape as \`code_exec\`: \`{cell_id, status, stdout, return_value?, error?}\`.
-- If the cell has already completed, \`code_wait\` returns the final result and forgets the cell.`;
+var CODE_EXEC_DESCRIPTION = `Run raw JavaScript with top-level await in node:vm. Call other tools as await tools.read({path:'file'}); names replace slashes/dots with underscores, arguments are objects, results strings. Console output is captured. Globals: tools, ALL_TOOLS ({name,description}), store(key,value), load(key), notify(message), yield_control(), exit(), input, fetch, URL, URLSearchParams, crypto, TextEncoder/Decoder, Buffer, timers. No require/process/fs/modules; filesystem access uses tools and their permissions. Not a security sandbox: fetch permits network access and synchronous loops can exceed yield_time_ms. Optional first-line // @exec: {"yield_time_ms":10000,"max_output_tokens":1000} overrides parameters; yield max300000ms, output default1000tokens. Returns cell_id/status/stdout/return_value/error. Resume yielded/timeout cells with code_wait.`;
+var CODE_WAIT_DESCRIPTION = `Resume code_exec only after yielded/timeout, using its exact cell_id. Optional additional_input becomes the input string. Returns cell_id/status/stdout/return_value/error; completed cells return the final result and are forgotten.`;
 function clampYield(ms) {
   const v = ms ?? DEFAULT_YIELD_TIME_MS;
   if (!Number.isFinite(v) || v <= 0) return DEFAULT_YIELD_TIME_MS;
@@ -5002,17 +4972,7 @@ var ParamsSchema = z18.object({
   /** For edit/patch/delete/toggle: which existing skill to operate on. */
   skill_id: z18.string().uuid().optional()
 });
-var DESCRIPTION = `Create, edit, patch, delete, toggle, or list durable "skills" (procedural memory) attached to the current agent. Use this when a non-trivial workflow, error-recovery pattern, or learned convention is worth persisting so future sessions inherit it. All writes are scanned server-side; prompt-override/secret/exfil patterns are rejected.
-
-Actions:
-- create: new skill from scratch. Requires name, label, content. Optional category.
-- edit:   full replace. Requires skill_id + content. Other fields optional.
-- patch:  append to existing. Requires skill_id + appendContent.
-- delete: remove. Requires skill_id.
-- toggle: enable/disable without rewriting. Requires skill_id + enabled.
-- list:   enumerate the agent's current skills.
-
-SKILL.md body should be terse, imperative, and action-oriented. Include triggers ("when X") and the procedure ("then Y"). Avoid prose.`;
+var DESCRIPTION = `Manage durable agent skills; writes are scanned for prompt overrides, secrets, and exfiltration. Actions: create requires name,label,content (category optional); edit replaces content using skill_id,content; patch appends appendContent using skill_id; delete requires skill_id; toggle requires skill_id,enabled; list enumerates skills. Write terse SKILL.md triggers and procedures.`;
 var skillManageTool = {
   name: "skill_manage",
   description: DESCRIPTION,
@@ -7003,8 +6963,9 @@ function estimateTextTokens(text2) {
 }
 function contextBudget(window, overhead = 0, outputLimit) {
   if (!Number.isSafeInteger(window) || window < 2048) throw new Error("Context must be at least 2,048 tokens.");
-  const output = Math.min(outputLimit ?? 4096, Math.max(512, Math.floor(window / 4)));
   const safety = Math.max(256, Math.ceil(window * 0.05));
+  const available = window - overhead - safety;
+  const output = Math.min(outputLimit ?? 4096, Math.max(512, Math.floor(window / 4)), Math.max(512, available - Math.max(512, Math.floor(window / 8))));
   const history = window - overhead - output - safety;
   if (history < 512) throw new Error("Instructions and tool definitions leave too little context. Increase the context limit or reduce project instructions.");
   return { output, history, compactAt: Math.floor(history * 0.8) };
@@ -7124,13 +7085,15 @@ async function autoCompactSummarize(messages, opts) {
     return { messages, compressed: false };
   }
   const middleText = boundedSummaryInput(middle, opts.contextWindow);
+  const summaryBudget = (opts.historyBudget ?? contextBudget(opts.contextWindow).history) - estimateTokens([...head, ...tail]) - 96;
+  if (summaryBudget < 64) return { messages, compressed: false };
   let summaryText;
   try {
     const result = await generateText3({
       model: opts.model,
       instructions: "You are a conversation summarizer. Condense the following conversation history into a brief summary. Preserve: files modified, key decisions, errors encountered, and the current task state. Be concise but thorough. Output only the summary, no preamble.",
       messages: [{ role: "user", content: middleText }],
-      maxOutputTokens: Math.min(1024, contextBudget(opts.contextWindow).output),
+      maxOutputTokens: Math.min(1024, contextBudget(opts.contextWindow).output, Math.max(64, Math.floor(summaryBudget * 0.6))),
       abortSignal: opts.signal,
       maxRetries: 0
     });
@@ -7144,7 +7107,7 @@ async function autoCompactSummarize(messages, opts) {
   }
   return buildCompressedHistory(head, summaryText, tail);
 }
-async function fullCompact(messages, model, contextWindow = 131072, signal) {
+async function fullCompact(messages, model, contextWindow = 131072, signal, historyBudget = contextBudget(contextWindow).history) {
   if (messages.length < 4) {
     return { messages, compressed: false };
   }
@@ -7154,13 +7117,15 @@ async function fullCompact(messages, model, contextWindow = 131072, signal) {
   const allButLast2 = messages.slice(1, cut);
   const last2 = messages.slice(cut);
   const middleText = boundedSummaryInput(allButLast2, contextWindow);
+  const summaryBudget = historyBudget - estimateTokens([...head, ...last2]) - 96;
+  if (summaryBudget < 64) return { messages, compressed: false };
   let summaryText;
   try {
     const result = await generateText3({
       model,
       instructions: "Compress this entire conversation into a dense summary. Include: the original task, all files created/modified, key decisions, current state, and any unresolved issues. Max 500 words.",
       messages: [{ role: "user", content: middleText }],
-      maxOutputTokens: Math.min(2048, contextBudget(contextWindow).output),
+      maxOutputTokens: Math.min(2048, contextBudget(contextWindow).output, Math.max(64, Math.floor(summaryBudget * 0.6))),
       abortSignal: signal,
       maxRetries: 0
     });
@@ -7288,7 +7253,7 @@ async function autoCompressWithStats(messages, model, contextWindow, signal, his
     stats.autoCompacted = auto.compressed;
   }
   if (estimateTokens(result) > historyBudget) {
-    const full = await fullCompact(result, model, contextWindow, signal);
+    const full = await fullCompact(result, model, contextWindow, signal, historyBudget);
     result = full.messages;
     stats.fullCompacted = full.compressed;
   }
@@ -7954,6 +7919,11 @@ async function runAgentLoopInternal(messages, config) {
   };
   const feedback = toolValidationFeedback(buildToolMap(toolCtxWithCache));
   const tools = feedback.tools;
+  for (const value of Object.values(tools)) {
+    const original = asSchema(value.inputSchema);
+    const { $schema, ...parameters16 } = await original.jsonSchema;
+    value.inputSchema = jsonSchema(parameters16, { validate: original.validate });
+  }
   const maxIter = config.maxIterations ?? 25;
   const contextWindow = config.contextWindow ?? 131072;
   let iterations = 0;
@@ -7976,8 +7946,8 @@ async function runAgentLoopInternal(messages, config) {
     `Available tool names: ${toolNames.join(", ")}`
   ].join("\n") : "";
   const schemaText = JSON.stringify(await Promise.all(Object.entries(tools).map(async ([name, value]) => ({ name, description: value.description, schema: await asSchema(value.inputSchema).jsonSchema }))));
-  const overhead = estimateTextTokens(`${config.systemPrompt}${templateFormatHint}${schemaText}`) + 256;
-  const budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+  let overhead = estimateTextTokens(`${config.systemPrompt}${templateFormatHint}${schemaText}`) + 256;
+  let budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
   let tokenRatio = 1;
   const compact = async () => {
     const estimated = estimateTokens(history);
@@ -8065,6 +8035,10 @@ async function runAgentLoopInternal(messages, config) {
       totalPromptTokens += streamUsage.promptTokens ?? 0;
       totalCompletionTokens += streamUsage.completionTokens ?? 0;
       if (Number.isSafeInteger(streamUsage.promptTokens) && Number.isSafeInteger(streamUsage.completionTokens) && streamUsage.promptTokens >= 0 && streamUsage.completionTokens >= 0) {
+        if (streamUsage.promptTokens > 0) {
+          overhead = Math.min(overhead, streamUsage.promptTokens + 256);
+          budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+        }
         tokenRatio = Math.max(1, Math.min(4, (streamUsage.promptTokens - overhead) / Math.max(1, estimateTokens(history))));
         config.onUsage?.({ inputTokens: streamUsage.promptTokens, outputTokens: streamUsage.completionTokens, contextWindow });
       }
@@ -8273,6 +8247,7 @@ async function buildSystemPrompt(projectRoot, _modelId, toolContext) {
       ].join("\n")
     ),
     safeSection("builtin-agents", () => {
+      if (!toolContext?.coordinatorMode) return "";
       try {
         const agents = listBuiltinAgents();
         if (agents.length === 0) return "";
@@ -8713,11 +8688,11 @@ async function runDesktopTurn(turn) {
     delete selection.byokApiShape;
   }
   if (provider === "ollama" && selection.baseUrl?.replace(/\/v1\/?$/, "") === "http://127.0.0.1:11436") {
-    const { managedOllama } = await import("./ollama-runtime-H64CY4CC.js");
-    await managedOllama("0.40.3", turn.signal);
+    const { managedOllama: managedOllama2 } = await import("./ollama-runtime-ASVPSEWA.js");
+    await managedOllama2("0.40.3", turn.signal);
   }
   if (provider === "mlx") {
-    const { startMlx } = await import("./local-runner-GG2B6WZJ.js");
+    const { startMlx } = await import("./local-runner-Q7EKKICX.js");
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
@@ -8814,6 +8789,7 @@ export {
   inspectHubModel,
   installResearchBrowser,
   linuxGpuMemory,
+  managedOllama,
   modelFit,
   parseNvidiaMemory,
   runDesktopTurn,

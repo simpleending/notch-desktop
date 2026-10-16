@@ -67,7 +67,7 @@ async function ensureOllama(host, signal) {
       if (error.code !== "ENOENT") throw error;
     }
   }
-  const { managedOllama } = await import("./ollama-runtime-H64CY4CC.js");
+  const { managedOllama } = await import("./ollama-runtime-ASVPSEWA.js");
   return managedOllama("0.30.0", signal);
 }
 async function runPython(executable, args, signal) {

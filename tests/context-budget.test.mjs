@@ -5,6 +5,7 @@ test('small local and large cloud contexts reserve proportional output plus inst
   const small=contextBudget(8192,1800),cloud=contextBudget(131072,1800,4096);
   assert.ok(small.history>3000);assert.equal(small.output,2048);assert.equal(cloud.output,4096);
   assert.ok(small.history+small.output+1800<8192);assert.ok(cloud.history>100000);
+  const crowded=contextBudget(8192,6000);assert.ok(crowded.output>=512&&crowded.output<2048);assert.ok(crowded.history>=512);assert.ok(crowded.history+crowded.output+6000<8192);
   assert.throws(()=>contextBudget(8192,8000),/too little/);assert.throws(()=>contextBudget(0),/2,048/);
   assert.ok(estimateTextTokens('中文'.repeat(100))>=200);
 });

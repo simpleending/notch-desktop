@@ -41,6 +41,8 @@ See [web research details](docs/web-research.md) for setup and browser limitatio
 
 Local models need enough memory to run. Cloud models use your provider’s pricing and receive the project content included in your request. Your API keys are kept out of saved conversations.
 
+On launch, notch starts its previously installed Ollama runtime so downloaded models remain available after a reboot. Startup does not download a missing runtime; choose a model download to install one.
+
 No notch account or sign-in is required. Knowledge Center and Sites use local storage in place of the inherited hosted services. Hosted knowledge processing and site publishing are not included; exported sites can be opened locally or deployed with a host of your choice. Using a note in a new task sends that note to the model you selected.
 
 Voice input, recording notes, and Live Voice use local speech processing. Open **Settings → Voice → Install speech engine** for a one-time download of about 157 MB. Whisper transcribes audio on your PC; Windows' installed speech voice reads replies. Live Voice sends spoken requests through the task's selected model and tool permissions. Choose a local model for offline inference; an optional cloud model receives the transcript, not microphone audio.

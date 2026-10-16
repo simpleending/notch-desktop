@@ -17,6 +17,7 @@ export { CheckpointManager };
 export { acquireLease } from './concurrency/lease.js';
 export { detectLocalHardware, parseNvidiaMemory, linuxGpuMemory, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
 export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
+export { managedOllama } from './providers/ollama-runtime.js';
 export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };
 export interface DesktopTurn {

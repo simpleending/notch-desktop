@@ -76,7 +76,7 @@ async function downloadAsset(asset, directory, signal) {
   await rename(partial, file);
   return file;
 }
-async function managedOllama(minimum = "0.30.0", signal) {
+async function managedOllama(minimum = "0.30.0", signal, allowInstall = true) {
   const running = await daemonVersion(MANAGED_OLLAMA_HOST);
   if (running) {
     if (!versionAtLeast(running, minimum)) throw new Error(`Port 11436 hosts incompatible Ollama ${running}. Stop that server before retrying.`);
@@ -106,6 +106,7 @@ async function managedOllama(minimum = "0.30.0", signal) {
     signal?.throwIfAborted();
   }
   if (!installed) {
+    if (!allowInstall) throw new Error("No compatible cached Ollama runtime. Install a local model or start Ollama.");
     const response = await fetch("https://api.github.com/repos/ollama/ollama/releases/latest", { signal: AbortSignal.timeout(15e3) });
     if (!response.ok) throw new Error(`Cannot discover the official Ollama runtime (HTTP ${response.status}).`);
     const release = await response.json();
@@ -174,10 +175,11 @@ async function managedOllama(minimum = "0.30.0", signal) {
   }
   throw new Error(`Managed Ollama did not start. See ${path.join(root(), "server.log")}.`);
 }
+
 export {
   MANAGED_OLLAMA_HOST,
-  daemonVersion,
-  managedOllama,
+  versionAtLeast,
   runtimeAssetName,
-  versionAtLeast
+  daemonVersion,
+  managedOllama
 };

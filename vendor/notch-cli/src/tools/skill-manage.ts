@@ -57,17 +57,7 @@ const ParamsSchema = z.object({
   skill_id: z.string().uuid().optional(),
 });
 
-const DESCRIPTION = `Create, edit, patch, delete, toggle, or list durable "skills" (procedural memory) attached to the current agent. Use this when a non-trivial workflow, error-recovery pattern, or learned convention is worth persisting so future sessions inherit it. All writes are scanned server-side; prompt-override/secret/exfil patterns are rejected.
-
-Actions:
-- create: new skill from scratch. Requires name, label, content. Optional category.
-- edit:   full replace. Requires skill_id + content. Other fields optional.
-- patch:  append to existing. Requires skill_id + appendContent.
-- delete: remove. Requires skill_id.
-- toggle: enable/disable without rewriting. Requires skill_id + enabled.
-- list:   enumerate the agent's current skills.
-
-SKILL.md body should be terse, imperative, and action-oriented. Include triggers ("when X") and the procedure ("then Y"). Avoid prose.`;
+const DESCRIPTION = `Manage durable agent skills; writes are scanned for prompt overrides, secrets, and exfiltration. Actions: create requires name,label,content (category optional); edit replaces content using skill_id,content; patch appends appendContent using skill_id; delete requires skill_id; toggle requires skill_id,enabled; list enumerates skills. Write terse SKILL.md triggers and procedures.`;
 
 /**
  * Build the `skill_manage` tool using the AI-SDK `tool()` helper. Shares

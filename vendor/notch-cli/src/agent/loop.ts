@@ -1,7 +1,7 @@
 import { toolOutput } from '../messages.js';
 import { executionContext } from '../concurrency/local-inference.js';
 import { withTaskWorkspace, openRouterTaskContext } from '../concurrency/task-workspace.js';
-import { isStepCount, asSchema } from 'ai';
+import { isStepCount, asSchema, jsonSchema } from 'ai';
 /**
  * Notch CLI — Agent Loop
  *
@@ -154,6 +154,11 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
   };
   const feedback = toolValidationFeedback(buildToolMap(toolCtxWithCache));
   const tools = feedback.tools;
+  for (const value of Object.values(tools)) {
+    const original = asSchema(value.inputSchema);
+    const { $schema, ...parameters } = await original.jsonSchema;
+    value.inputSchema = jsonSchema(parameters, { validate: original.validate });
+  }
   const maxIter = config.maxIterations ?? 25;
   const contextWindow = config.contextWindow ?? 131_072;
   let iterations = 0;
@@ -185,8 +190,8 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
     : '';
 
   const schemaText = JSON.stringify(await Promise.all(Object.entries(tools).map(async ([name, value]) => ({ name, description: value.description, schema: await asSchema(value.inputSchema).jsonSchema }))));
-  const overhead = estimateTextTokens(`${config.systemPrompt}${templateFormatHint}${schemaText}`) + 256;
-  const budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+  let overhead = estimateTextTokens(`${config.systemPrompt}${templateFormatHint}${schemaText}`) + 256;
+  let budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
   let tokenRatio = 1;
   const compact = async () => {
     const estimated = estimateTokens(history);
@@ -299,6 +304,11 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       totalCompletionTokens += streamUsage.completionTokens ?? 0;
       if (Number.isSafeInteger(streamUsage.promptTokens) && Number.isSafeInteger(streamUsage.completionTokens)
           && streamUsage.promptTokens! >= 0 && streamUsage.completionTokens! >= 0) {
+        // A measured full prompt also bounds fixed overhead, while conservatively counting its history twice.
+        if (streamUsage.promptTokens! > 0) {
+          overhead = Math.min(overhead, streamUsage.promptTokens! + 256);
+          budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+        }
         tokenRatio = Math.max(1, Math.min(4, (streamUsage.promptTokens! - overhead) / Math.max(1, estimateTokens(history))));
         config.onUsage?.({ inputTokens: streamUsage.promptTokens!, outputTokens: streamUsage.completionTokens!, contextWindow });
       }
@@ -576,6 +586,7 @@ export async function buildSystemPrompt(
     ),
 
     safeSection('builtin-agents', () => {
+      if (!toolContext?.coordinatorMode) return '';
       try {
         const agents = listBuiltinAgents();
         if (agents.length === 0) return '';

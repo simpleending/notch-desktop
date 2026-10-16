@@ -347,42 +347,9 @@ async function runScript(args: ExecInternalArgs): Promise<{
 // Tool descriptions
 // ---------------------------------------------------------------------------
 
-export const CODE_EXEC_DESCRIPTION = `Run JavaScript code to orchestrate/compose tool calls in one round-trip.
+export const CODE_EXEC_DESCRIPTION = `Run raw JavaScript with top-level await in node:vm. Call other tools as await tools.read({path:'file'}); names replace slashes/dots with underscores, arguments are objects, results strings. Console output is captured. Globals: tools, ALL_TOOLS ({name,description}), store(key,value), load(key), notify(message), yield_control(), exit(), input, fetch, URL, URLSearchParams, crypto, TextEncoder/Decoder, Buffer, timers. No require/process/fs/modules; filesystem access uses tools and their permissions. Not a security sandbox: fetch permits network access and synchronous loops can exceed yield_time_ms. Optional first-line // @exec: {"yield_time_ms":10000,"max_output_tokens":1000} overrides parameters; yield max300000ms, output default1000tokens. Returns cell_id/status/stdout/return_value/error. Resume yielded/timeout cells with code_wait.`;
 
-- Evaluates the provided JavaScript as an async module in a node:vm sandbox.
-- All nested tools are available on the global \`tools\` object, e.g. \`await tools.read({ path: 'foo.ts' })\`. Tool names are normalized JS identifiers (slashes/dots become underscores, so \`tools.mcp__ologs__get_profile(...)\`).
-- Nested tools accept an object and return a string.
-- Accepts raw JavaScript source text — not JSON, not markdown fences, not a quoted string.
-- Optional first-line pragma: \`// @exec: {"yield_time_ms": 10000, "max_output_tokens": 1000}\`. Pragma values override the structured params.
-- \`yield_time_ms\` asks \`code_exec\` to yield early (status "yielded") if the script is still running. Max 300000ms.
-- \`max_output_tokens\` caps the stdout returned to the model. Default 1000 tokens (~4000 chars).
-- Top-level await is supported.
-
-Globals available in the sandbox:
-- \`tools.<name>(args)\`: call any other notch-cli tool.
-- \`console.log/info/warn/error\`: captured and returned as stdout.
-- \`store(key, value)\` / \`load(key)\`: per-cell kv scoped to the current \`cell_id\`.
-- \`notify(msg)\`: log a message to the user terminal without waiting.
-- \`yield_control()\`: yield current stdout back to the model while the script keeps running — resume with \`code_wait\`.
-- \`exit()\`: end the script immediately.
-- \`fetch\`, \`URL\`, \`URLSearchParams\`, \`crypto\`, \`TextEncoder/Decoder\`, \`Buffer\`, timers — standard runtime primitives.
-- \`input\`: optional string provided by \`code_wait\` when resuming.
-- \`ALL_TOOLS\`: array of \`{name, description}\` for every tool exposed on \`tools.*\`.
-
-Sandbox limits (NOT a hard isolate — this is node:vm, not V8 isolate):
-- No \`require\`, no \`process\`, no \`fs\`, no module system — all filesystem access must go through wrapped tools (tools.read / tools.write / tools.edit / ...).
-- \`fetch\` IS exposed; assume arbitrary network egress is possible.
-- A tight sync loop CAN exceed \`yield_time_ms\` (vm timeout catches sync code, but async work is only bounded by an outer race).
-
-Return shape: \`{cell_id, status, stdout, return_value?, error?}\`. If status is "yielded" or "timeout", use \`code_wait\` with the same \`cell_id\` to resume.`;
-
-export const CODE_WAIT_DESCRIPTION = `Resume a previously yielded or timed-out \`code_exec\` cell.
-
-- Use only after \`code_exec\` returned status "yielded" or "timeout".
-- \`cell_id\` must match the id returned by the original \`code_exec\` call.
-- \`additional_input\` (optional) is injected as the global \`input\` string inside the resumed script.
-- Returns the same shape as \`code_exec\`: \`{cell_id, status, stdout, return_value?, error?}\`.
-- If the cell has already completed, \`code_wait\` returns the final result and forgets the cell.`;
+export const CODE_WAIT_DESCRIPTION = `Resume code_exec only after yielded/timeout, using its exact cell_id. Optional additional_input becomes the input string. Returns cell_id/status/stdout/return_value/error; completed cells return the final result and are forgotten.`;
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -427,6 +427,8 @@ export async function autoCompactSummarize(
   }
 
   const middleText = boundedSummaryInput(middle, opts.contextWindow);
+  const summaryBudget = (opts.historyBudget ?? contextBudget(opts.contextWindow).history) - estimateTokens([...head, ...tail]) - 96;
+  if (summaryBudget < 64) return { messages, compressed: false };
 
   let summaryText: string;
   try {
@@ -438,7 +440,7 @@ export async function autoCompactSummarize(
         'errors encountered, and the current task state. Be concise but thorough. ' +
         'Output only the summary, no preamble.',
       messages: [{ role: 'user', content: middleText }],
-      maxOutputTokens: Math.min(1024, contextBudget(opts.contextWindow).output),
+      maxOutputTokens: Math.min(1024, contextBudget(opts.contextWindow).output, Math.max(64, Math.floor(summaryBudget * .6))),
       abortSignal: opts.signal,
       maxRetries: 0,
     });
@@ -469,6 +471,7 @@ export async function fullCompact(
   model: LanguageModel,
   contextWindow = 131072,
   signal?: AbortSignal,
+  historyBudget = contextBudget(contextWindow).history,
 ): Promise<{ messages: ModelMessage[]; compressed: boolean }> {
   if (messages.length < 4) {
     return { messages, compressed: false };
@@ -481,6 +484,8 @@ export async function fullCompact(
   const last2 = messages.slice(cut);
 
   const middleText = boundedSummaryInput(allButLast2, contextWindow);
+  const summaryBudget = historyBudget - estimateTokens([...head, ...last2]) - 96;
+  if (summaryBudget < 64) return { messages, compressed: false };
 
   let summaryText: string;
   try {
@@ -491,7 +496,7 @@ export async function fullCompact(
         'the original task, all files created/modified, key decisions, ' +
         'current state, and any unresolved issues. Max 500 words.',
       messages: [{ role: 'user', content: middleText }],
-      maxOutputTokens: Math.min(2048, contextBudget(contextWindow).output),
+      maxOutputTokens: Math.min(2048, contextBudget(contextWindow).output, Math.max(64, Math.floor(summaryBudget * .6))),
       abortSignal: signal,
       maxRetries: 0,
     });
@@ -663,7 +668,7 @@ export async function autoCompressWithStats(
     result = auto.messages; stats.autoCompacted = auto.compressed;
   }
   if (estimateTokens(result) > historyBudget) {
-    const full = await fullCompact(result, model, contextWindow, signal);
+    const full = await fullCompact(result, model, contextWindow, signal, historyBudget);
     result = full.messages; stats.fullCompacted = full.compressed;
   }
   return { messages: result, stats };

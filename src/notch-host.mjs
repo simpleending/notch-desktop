@@ -47,6 +47,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
       }
       if (pending) return pending;
       pending = (async () => {
+        await host.runtimeReady;
         const roots=['http://127.0.0.1:11436','http://127.0.0.1:11434'];
         const results = await Promise.allSettled(roots.map(async root => {
           const [response,running] = await Promise.all([
