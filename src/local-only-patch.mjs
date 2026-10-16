@@ -111,10 +111,10 @@ export function patchLocalOnlyRenderer(source) {
     body = replace(body,'["tasks","templates","logs"].map','["tasks","logs"].map');
     return removeControls(body,['all','cloud']);
   });
-  if (source.includes('class VoiceInputService')) source = patchClassMethod(source,'VoiceInputService','setConfiguration','this.configuration={...e1,enabled:false};');
-  if (source.includes('class LiveVoiceService')) source = patchClassMethod(source,'LiveVoiceService','startSession',unavailable);
-  if (source.includes('class RecordingNoteService')) source = patchClassMethod(source,'RecordingNoteService','start',unavailable);
-  if (source.includes('class KeybindingService')) source = patchClassMethod(source,'KeybindingService','registerKeybinding',body => {
+  if (source.includes('class VoiceInputService') || source.includes('VoiceInputService=class')) source = patchClassMethod(source,'VoiceInputService','setConfiguration','this.configuration={...e1,enabled:false};');
+  if (source.includes('class LiveVoiceService') || source.includes('LiveVoiceService=class')) source = patchClassMethod(source,'LiveVoiceService','startSession',unavailable);
+  if (source.includes('class RecordingNoteService') || source.includes('RecordingNoteService=class')) source = patchClassMethod(source,'RecordingNoteService','start',unavailable);
+  if (source.includes('class KeybindingService') || source.includes('KeybindingService=class')) source = patchClassMethod(source,'KeybindingService','registerKeybinding',body => {
     return replace(body,'return this.keybindings.push(t1)','if(/voice|recording|remoteControl|feedback/i.test(t1.commandId))return {dispose(){}};return this.keybindings.push(t1)');
   });
   return source;

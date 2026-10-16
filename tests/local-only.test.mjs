@@ -39,8 +39,8 @@ test('local edition removes account actions and voice hardware controls before r
   const source=`function VoiceSettings(){readVoiceprint();} function DataPrivacySettings(){readCloudPolicy();}
     function NetworkDiagnosticsSettings(){probeRetiredServices();} function authorizedErrorActions(){return [];} function notchCloudAccountSettings(){readCloudToken();}
     function ChatComposer(){const {voiceInputEnabled:P3,experimentalRecordingNoteEnabled:U8,}=useWorkbenchPreferences(),_8={canStartLiveVoice:!d1&&!H3&&!!s1&&!K9};return {P3,U8,..._8};}
-    class VoiceInputService{setConfiguration(e1){readMicrophone();}} class LiveVoiceService{startSession(){captureMicrophone();}} class RecordingNoteService{start(){captureMicrophone();}}
-    class KeybindingService{registerKeybinding(e1){const t1={commandId:e1.command};return this.keybindings.push(t1);}}`;
+    let VoiceInputService=class{setConfiguration(e1){readMicrophone();}}; let LiveVoiceService=class{startSession(){captureMicrophone();}}; let RecordingNoteService=class{start(){captureMicrophone();}};
+    let KeybindingService=class{registerKeybinding(e1){const t1={commandId:e1.command};return this.keybindings.push(t1);}};`;
   const patched=patchLocalOnlyRenderer(source);parse(patched,{ecmaVersion:'latest'});
   assert.doesNotMatch(patched,/readCloud|readVoiceprint|probeRetired|captureMicrophone|readMicrophone/);
   const types=new Function('useWorkbenchPreferences',patched+';return {ChatComposer,authorizedErrorActions,VoiceInputService,LiveVoiceService,KeybindingService};')(()=>({voiceInputEnabled:true,experimentalRecordingNoteEnabled:true}));
