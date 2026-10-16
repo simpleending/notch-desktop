@@ -25,6 +25,10 @@ try{
  if(setup){await setup.getByRole('button',{name:/^Continue/}).click();
  const closed=setup.waitForEvent('close');await setup.getByRole('button',{name:/^Open notch/}).click();await closed;}
  const page=await app.firstWindow();await page.locator('.notch-welcome').waitFor();
+ await page.waitForFunction(async()=>{
+  const views=await window.notchDesktop.listAppPluginViews();
+  return ['knowledge-center-workbench','sites-portal','index-settings'].every(id=>views.some(view=>view.viewId===id&&view.hostState==='running'));
+ });
  const capture=async label=>{
   await page.waitForTimeout(300);
   const text=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')))).join('\n');
