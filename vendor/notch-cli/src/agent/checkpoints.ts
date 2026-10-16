@@ -11,6 +11,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { acquireLease } from '../concurrency/lease.js';
+import { acquireProjectLease } from '../concurrency/task-workspace.js';
 
 export interface FileSnapshot {
   path: string;
@@ -227,8 +228,11 @@ export class CheckpointManager {
     return { canRewind: true, filesChanged: selected.files.map(row => row.path), insertions: 0, deletions: 0 };
   }
   async undo(messageId?: string): Promise<Checkpoint | null> {
-    const release = await acquireLease('file-mutations');
-    try { return await this.undoLocked(messageId); } finally { await release(); }
+    const projectRelease = this.storage ? await acquireProjectLease(this.storage.cwd) : undefined;
+    try {
+      const release = await acquireLease('file-mutations');
+      try { return await this.undoLocked(messageId); } finally { await release(); }
+    } finally { await projectRelease?.(); }
   }
   private async undoLocked(messageId?: string): Promise<Checkpoint | null> {
     const selected = this.selection(messageId);

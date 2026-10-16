@@ -28,9 +28,13 @@ export interface NotchTool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
 
 /** Shared context available to all tools during execution */
 export interface ToolContext {
+  workspaceMode?: () => 'shared' | 'isolated';
+  /** Internal ownership token, inherited only by workers of an active shared task. */
+  sharedTask?: string;
+  sharedWorker?: string;
   isolateTasks?: () => boolean;
   taskWorkspace?: import('../concurrency/task-workspace.js').TaskWorkspace;
-  workspaceCheckpoints?: { recordBefore(file: string): Promise<void>; recordAfter(file?: string): Promise<void> };
+  workspaceCheckpoints?: { recordBefore(file: string): Promise<void>; recordAfter(file?: string): Promise<void>; finish?(): Promise<void> };
   onWorkspaceResult?: (result: { applied: boolean; files: string[]; conflicts: string[]; cwd: string }) => void;
   /** Desktop's shared native index; undefined requests the ripgrep compatibility path. */
   workspaceSearch?: (operation: 'grep' | 'glob', params: Record<string, unknown>, cwd: string, signal?: AbortSignal) => Promise<ToolResult | undefined>;

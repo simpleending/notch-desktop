@@ -7,6 +7,16 @@ import { createModelManager } from '../src/model-manager.mjs';
 import { cloudModelRows, localContextProfile, isPrimaryModelSender } from '../src/model-policy.mjs';
 import { parseNvidiaMemory, linuxGpuMemory } from '../vendor/notch-core/desktop-harness.js';
 const GiB=2**30;
+test('task workspace defaults to the project, persists both choices, and rejects invalid saved settings',async()=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'notch-workspace-setting-'));
+  const manager=createModelManager(directory);
+  assert.equal(await manager.getWorkspaceMode(),'shared');
+  await assert.rejects(manager.setWorkspaceMode('other'),/Choose/);
+  await manager.setWorkspaceMode('isolated'); assert.equal(await createModelManager(directory).getWorkspaceMode(),'isolated');
+  await manager.setWorkspaceMode('shared'); assert.equal(await createModelManager(directory).getWorkspaceMode(),'shared');
+  await writeFile(path.join(directory,'task-workspace.json'),'{"mode":"invalid"}');
+  await assert.rejects(createModelManager(directory).getWorkspaceMode(),/Invalid task workspace/);
+});
 const model = { id:'lab/new-model',name:'New model',created:10,context_length:131072,architecture:{output_modalities:['text']},supported_parameters:['tools'],pricing:{prompt:'0.000001',completion:'0.000002'},top_provider:{max_completion_tokens:4096} };
 const encrypted = { async isAsyncEncryptionAvailable(){return true;},getSelectedStorageBackend(){return 'gnome_libsecret';},async encryptStringAsync(value){return Buffer.from([...value].reverse().join(''));},async decryptStringAsync(value){return { result:[...value.toString()].reverse().join('') };} };
 

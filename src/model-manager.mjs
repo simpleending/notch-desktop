@@ -10,11 +10,15 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
   const keys = new Map(), preferences = new Map();
   const keyFile = path.join(directory, 'provider-keys.encrypted.json'), contextFile = path.join(directory, 'model-context.json'), catalogFile = path.join(directory, 'openrouter-models.json');
   const mlxFile = path.join(directory,'mlx-models.json');
+  const workspaceFile = path.join(directory,'task-workspace.json');
+  let workspaceMode = 'shared';
   const hub=createHubCatalog(directory,{fetcher});
   let cached, pending, job, keyLoadError, installedMlx = [];
   let persistent = false;
   const secure = () => persistent;
   const ready = (async () => {
+    try { const value = JSON.parse(await fs.readFile(workspaceFile,'utf8')); if (!['shared','isolated'].includes(value.mode)) throw new Error('Invalid task workspace setting.'); workspaceMode = value.mode; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
     persistent = !!safeStorage && await safeStorage.isAsyncEncryptionAvailable() && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text');
     if (secure()) try { const values = JSON.parse(await fs.readFile(keyFile, 'utf8')); for (const provider of ['openrouter','huggingface']) if (typeof values[provider] === 'string') keys.set(provider, (await safeStorage.decryptStringAsync(Buffer.from(values[provider], 'base64'))).result); } catch (error) { if (error.code !== 'ENOENT') { keys.clear(); keyLoadError = 'Saved provider keys could not be decrypted. Reconnect the provider.'; } }
     try { const values = JSON.parse(await fs.readFile(contextFile, 'utf8')); for (const [model,value] of Object.entries(values)) if (Number.isSafeInteger(value) && value >= 2048) preferences.set(model,value); } catch { /* Context choices are optional. */ }
@@ -32,6 +36,8 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
     await atomic(keyFile, Object.fromEntries(values));
   }
   const service = {
+    async getWorkspaceMode() { await ready; return workspaceMode; },
+    async setWorkspaceMode(mode) { await ready; if (!['shared','isolated'].includes(mode)) throw new Error('Choose Project folder or Isolated worktrees.'); await atomic(workspaceFile,{mode}); workspaceMode=mode; return mode; },
     async status() { await ready; return { openrouter: keys.has('openrouter'), huggingface: keys.has('huggingface'), persistentKeys: !!secure(), keyLoadError, job: job ? { ...job.public } : null }; },
     async key(provider) { await ready; return keys.get(provider); },
     async connect(provider, key) {

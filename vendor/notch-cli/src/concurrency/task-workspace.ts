@@ -10,7 +10,38 @@ import type { LanguageModel } from 'ai';
 
 export function openRouterTaskContext(ctx: ToolContext, model: LanguageModel): ToolContext {
   const cloud = typeof model === 'string' ? /^openrouter[/:]/.test(model) : /^openrouter(?:\.|$)/.test(model.provider);
-  return cloud ? { ...ctx, isolateTasks: () => true } : ctx;
+  return { ...ctx, isolateTasks: () => cloud && (ctx.workspaceMode?.() === 'isolated' || (!ctx.workspaceMode && !!ctx.isolateTasks?.())) };
+}
+
+export function parseWorkspaceMode(value: unknown): 'shared' | 'isolated' {
+  if (value !== 'shared' && value !== 'isolated') throw new Error('Workspace mode must be shared or isolated.');
+  return value;
+}
+
+async function projectKey(cwd: string) {
+  cwd = await fs.realpath(cwd);
+  try { cwd = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim(); } catch { /* Shared folders do not require Git. */ }
+  return 'project-task:' + (process.platform === 'win32' ? path.resolve(cwd).toLowerCase() : cwd);
+}
+const sharedWorkers = new Map<string, Set<Promise<unknown>>>();
+export async function acquireProjectLease(cwd: string, signal?: AbortSignal, onWait?: (waiting: boolean) => void) {
+  return acquireLease(await projectKey(cwd), signal, onWait);
+}
+
+/** Workers take turns within their parent task; nested workers use their own lane. */
+export async function withSharedWorker<T>(ctx: ToolContext, run: (ctx: ToolContext) => Promise<T>): Promise<T> {
+  if (ctx.taskWorkspace || ctx.accessMode === 'read-only' || ctx.dryRun) return run(ctx);
+  return withTaskWorkspace(ctx, owned => {
+    const workers = sharedWorkers.get(owned.sharedTask!)!;
+    const pending = (async () => {
+      const release = await acquireLease('shared-workers:' + owned.sharedTask + ':' + (owned.sharedWorker ?? 'root'), ctx.abortSignal,
+        waiting => ctx.onQueue?.(waiting ? 'Waiting for another worker in this project…' : null));
+      try { return await run({ ...owned, sharedWorker: randomUUID() }); } finally { await release(); }
+    })();
+    workers.add(pending);
+    void pending.finally(() => workers.delete(pending)).catch(() => {});
+    return pending;
+  });
 }
 
 const exec = promisify(execFile);
@@ -65,11 +96,13 @@ async function save(file: string, data: unknown) {
   finally { await fs.unlink(temporary).catch(() => {}); }
 }
 async function sourceLease(cwd: string, signal?: AbortSignal) {
-  const release = await acquireLease('file-mutations', signal);
+  const projectRelease = await acquireProjectLease(cwd, signal);
+  let release: (() => Promise<void>) | undefined;
   try {
+    release = await acquireLease('file-mutations', signal);
     const taskRelease = await acquireLease('task-files:' + cwd, signal);
-    return async () => { try { await taskRelease(); } finally { await release(); } };
-  } catch (error) { await release(); throw error; }
+    return async () => { try { await taskRelease(); } finally { try { await release!(); } finally { await projectRelease(); } } };
+  } catch (error) { try { await release?.(); } finally { await projectRelease(); } throw error; }
 }
 async function files(repo: string, root: string, index?: string) {
   const result = await git(root, ['--git-dir', repo, '--work-tree', root, 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], index ? { GIT_INDEX_FILE: index } : {});
@@ -223,6 +256,7 @@ export class TaskWorkspace {
         }
         await checkpoints?.recordAfter(item.source);
       }
+      await checkpoints?.finish?.();
       m.state = 'applied'; await save(this.file, m);
       return { applied: true, files: changes.map(c => c.name), conflicts, cwd: this.cwd };
     } finally { await release(); }
@@ -259,9 +293,20 @@ export class TaskWorkspace {
   }
 }
 
-/** Every writable cloud task gets a checkout, even when it is the first task. */
+/** Shared tasks hold the project lane for the whole turn, including terminal and plugin calls. */
 export async function withTaskWorkspace<T>(ctx: ToolContext, run: (ctx: ToolContext) => Promise<T>): Promise<T> {
-  if (!ctx.isolateTasks?.() || ctx.accessMode === 'read-only' || ctx.dryRun || ctx.taskWorkspace) return run(ctx);
+  if (ctx.accessMode === 'read-only' || ctx.dryRun || ctx.taskWorkspace) return run(ctx);
+  if (!ctx.isolateTasks?.()) {
+    if (ctx.sharedTask && sharedWorkers.has(ctx.sharedTask)) return run(ctx);
+    const release = await acquireProjectLease(ctx.cwd, ctx.abortSignal,
+      waiting => ctx.onQueue?.(waiting ? 'Waiting for another task in this project…' : null));
+    const token = randomUUID(), workers = new Set<Promise<unknown>>(); sharedWorkers.set(token, workers);
+    try { ctx.abortSignal?.throwIfAborted(); return await run({ ...ctx, sharedTask: token, sharedWorker: undefined, _readCache: new Map(), _fileVersions: new Map() }); }
+    finally {
+      try { while (workers.size) await Promise.allSettled([...workers]); await ctx.workspaceCheckpoints?.finish?.(); }
+      finally { sharedWorkers.delete(token); await release(); }
+    }
+  }
   const session = ctx.permissionSessionId || randomUUID();
   const release = await acquireLease('task-workspace:' + hash(ctx.cwd + '\0' + session), ctx.abortSignal);
   let task: TaskWorkspace | undefined;

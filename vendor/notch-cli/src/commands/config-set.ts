@@ -24,6 +24,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { persistConfigPatch } from '../config.js';
+import { parseWorkspaceMode } from '../concurrency/task-workspace.js';
 
 const HELP = `notch config — manage .notch.json settings
 
@@ -87,6 +88,7 @@ export async function runConfigCli(argv: string[], projectRoot: string): Promise
       return 2;
     }
     const parsed = parseValue(value);
+    if (key === 'workspaceMode') parseWorkspaceMode(parsed);
     const merged = await persistConfigPatch(projectRoot, { [key]: parsed });
     process.stdout.write(`${key} = ${JSON.stringify(merged[key])}\n`);
     return 0;

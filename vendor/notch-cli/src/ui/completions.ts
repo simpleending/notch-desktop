@@ -13,6 +13,7 @@ import { THEME_IDS } from './themes.js';
 import { registeredCommandNames } from '../commands/registry.js';
 
 const COMMANDS = [
+  '/settings', '/workspace', '/workspace shared', '/workspace isolated',
   '/help', '/quit', '/exit', '/q', '/clear',
   '/model', '/model coding', '/models', '/models coding', '/models install', '/models recommend', '/models status', '/models unload', '/status', '/undo', '/usage',
   '/compact', '/diff', '/export', '/save', '/sessions',

@@ -17,7 +17,7 @@ import { buildToolMap, describeToolSchemas, type ToolContext } from '../tools/in
 import { getBuiltinAgent, type BuiltinAgent } from './builtins/index.js';
 import { Rollout } from '../session/rollout.js';
 import { toolValidationFeedback, missingToolCallFeedback } from './tool-feedback.js';
-import { withTaskWorkspace, openRouterTaskContext } from '../concurrency/task-workspace.js';
+import { withTaskWorkspace, withSharedWorker, openRouterTaskContext } from '../concurrency/task-workspace.js';
 
 export type SubagentType = 'explore' | 'plan' | 'general' | 'builtin';
 
@@ -200,7 +200,7 @@ export async function spawnSubagent(config: SubagentConfig): Promise<SubagentRes
   if (config.type === 'general' && config.toolContext.isolateTasks?.()) {
     return isolatedWorker(config.toolContext, config.id, toolContext => spawnSubagentInternal({ ...config, toolContext }));
   }
-  return spawnSubagentInternal(config);
+  return withSharedWorker(config.toolContext, toolContext => spawnSubagentInternal({ ...config, toolContext }));
 }
 
 async function spawnSubagentInternal(config: SubagentConfig): Promise<SubagentResult> {
@@ -420,7 +420,7 @@ export async function spawnBuiltinAgent(config: BuiltinSpawnConfig): Promise<Sub
   if (config.toolContext.isolateTasks?.()) {
     return isolatedWorker(config.toolContext, config.id ?? config.agentName, toolContext => spawnBuiltinAgentInternal({ ...config, toolContext }));
   }
-  return spawnBuiltinAgentInternal(config);
+  return withSharedWorker(config.toolContext, toolContext => spawnBuiltinAgentInternal({ ...config, toolContext }));
 }
 
 async function spawnBuiltinAgentInternal(config: BuiltinSpawnConfig): Promise<SubagentResult> {

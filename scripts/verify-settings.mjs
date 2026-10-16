@@ -16,6 +16,13 @@ try {
   const page=await app.firstWindow();await page.locator('.notch-welcome').waitFor();
   await page.getByRole('button',{name:'Open user menu',exact:true}).first().click();
   await page.getByRole('menuitem',{name:'Settings',exact:true}).click();await page.locator('.notch-appearance').waitFor();
+  const workspace=page.getByRole('combobox',{name:'Task workspace',exact:true});
+  await workspace.waitFor();await page.waitForFunction(()=>!document.querySelector('select[aria-label="Task workspace"]').disabled);
+  assert.equal(await workspace.inputValue(),'shared');
+  await workspace.selectOption('isolated');await page.waitForFunction(async()=>await window.notchModels.workspace()==='isolated');
+  assert.equal(JSON.parse(await fs.readFile(path.join(profile,'task-workspace.json'),'utf8')).mode,'isolated');
+  await workspace.selectOption('shared');await page.waitForFunction(async()=>await window.notchModels.workspace()==='shared');
+  assert.equal(JSON.parse(await fs.readFile(path.join(profile,'task-workspace.json'),'utf8')).mode,'shared');
   const navigation=page.getByRole('navigation',{name:'Settings',exact:true}),names=await navigation.getByRole('button').allTextContents();
   for(const name of names){
     const button=navigation.getByRole('button',{name:name.trim(),exact:true});await button.click();

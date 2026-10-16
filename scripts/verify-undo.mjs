@@ -30,6 +30,7 @@ async function probe(){await app.evaluate(()=>{
   const row=globalThis.__notchCloudWorkspaceRow,key=row.key;row.isDefault=true;
   host.listModels=async()=>[row];host.getCachedModels=()=>[row];host.getDefaultModel=()=>key;host.resolveModelChoice=()=>key;
   host.modelManager.key=async()=>'fixture-only';
+  host.modelManager.getWorkspaceMode=async()=>'isolated';
  }else if(globalThis.__notchRecoveryFixture)host.resolveModelChoice=()=>{
   const row=host.getCachedModels().find(row=>row.provider==='ollama'&&row.key!=='auto');
   if(!row)throw Error('Recovery fixture needs local model metadata');

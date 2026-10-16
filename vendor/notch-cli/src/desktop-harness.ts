@@ -35,6 +35,7 @@ export interface DesktopTurn {
   disallowedTools?: string[];
   instructions?: string;
   accessMode: AccessMode;
+  workspaceMode?: 'shared' | 'isolated';
   signal: AbortSignal;
   checkpoints: CheckpointManager;
   approve: NonNullable<ToolContext['confirmTool']>;
@@ -92,8 +93,10 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   const delivered = new Set<string>();
   const allowed = definitionRules(turn.allowedTools, 'allow'), denied = definitionRules(turn.disallowedTools, 'deny');
   const ctx: ToolContext = {
-    isolateTasks: () => provider === 'openrouter',
+    workspaceMode: () => turn.workspaceMode ?? config.workspaceMode ?? 'shared',
+    isolateTasks: () => provider === 'openrouter' && (turn.workspaceMode ?? config.workspaceMode) === 'isolated',
     workspaceCheckpoints: {
+      finish: async () => { await turn.checkpoints.commit('Desktop turn'); },
       recordBefore: async file => {
         await turn.checkpoints.recordBefore(file); delivered.add(file);
         await turn.onLifecycle?.('pre-tool', { tool: 'write', args: { path: file }, toolCallId: `delivery:${file}` });

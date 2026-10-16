@@ -17,6 +17,7 @@ import { readOllamaCreds } from './providers/ollama-credentials.js';
 import { listModels, showModel } from './providers/ollama.js';
 import { ollamaRoot, ollamaChatUrl } from './providers/ollama-url.js';
 import { parseAccessMode, type AccessMode } from './permissions/access.js';
+import { parseWorkspaceMode } from './concurrency/task-workspace.js';
 
 /**
  * Optional provider block. When `provider` is set the CLI talks to the
@@ -45,6 +46,7 @@ export interface ByokConfigBlock {
 }
 
 export interface NotchConfig {
+  workspaceMode?: 'shared' | 'isolated';
   /** Model role assignments */
   models: ModelRoles;
   /** Project root (auto-detected or specified) */
@@ -99,6 +101,7 @@ const DEFAULT_MODEL: ModelConfig = {
 };
 
 const DEFAULTS: NotchConfig = {
+  workspaceMode: 'shared',
   models: { chat: DEFAULT_MODEL },
   projectRoot: process.cwd(),
   autoConfirm: false,
@@ -218,6 +221,7 @@ export async function loadConfig(overrides: Partial<NotchConfig> = {}, selection
     if (fileConfig.enableHooks !== undefined) config.enableHooks = fileConfig.enableHooks;
     if (fileConfig.permissionMode) config.permissionMode = fileConfig.permissionMode;
     if (fileConfig.accessMode !== undefined) config.accessMode = parseAccessMode(fileConfig.accessMode);
+    if (fileConfig.workspaceMode !== undefined) config.workspaceMode = parseWorkspaceMode(fileConfig.workspaceMode);
     if (fileConfig.shellTimeout) config.shellTimeout = fileConfig.shellTimeout;
     if (fileConfig.theme) config.theme = fileConfig.theme;
   } catch (error) {
@@ -295,7 +299,7 @@ export async function loadConfig(overrides: Partial<NotchConfig> = {}, selection
 
   // Explicit overrides from CLI flags
   config.models.chat = selectModel(config.models.chat, { baseUrl: selection.baseUrl, apiKey: selection.apiKey });
-  return { ...config, ...overrides, projectRoot: config.projectRoot };
+  return { ...config, ...overrides, workspaceMode: parseWorkspaceMode(overrides.workspaceMode ?? config.workspaceMode), projectRoot: config.projectRoot };
 }
 
 async function inferDefaultProviderConfig(): Promise<{

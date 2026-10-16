@@ -9,6 +9,31 @@ import { createHost } from '../src/notch-host.mjs';
 const exec = promisify(execFile);
 const until = async check => { for (let i=0;i<1000;i++) { if (check()) return; await new Promise(resolve=>setTimeout(resolve,10)); } throw new Error('Workspace test timed out'); };
 
+test('default desktop tasks share the project, queue whole turns, and retain independent Undo histories', async()=>{
+  const root=await fs.mkdtemp(path.join(os.tmpdir(),'notch-desktop-shared-')),cwd=path.join(root,'project');await fs.mkdir(cwd);await fs.writeFile(path.join(cwd,'shared.txt'),'original');
+  const host=createHost(path.join(root,'profile')),model='openrouter/fixture/shared',previous=globalThis.fetch;
+  host.listModels=async()=>[{key:model,enabled:true}];host.resolveModelChoice=()=>model;
+  host.modelManager={key:async()=>'fixture-only'};
+  let release;const calls=[],tasks=[];
+  globalThis.fetch=async(_url,init)=>{
+    const body=JSON.parse(init.body),label=body.messages.find(row=>row.role==='user').content,results=body.messages.filter(row=>row.role==='tool');calls.push(label);
+    if(label==='A'&&!results.length)await new Promise(resolve=>release=resolve);
+    if(results.length===1)assert.match(results[0].content,label==='A'?/original/:/A/);
+    const delta=results.length>=2?{content:'Done '+label}:{tool_calls:[{index:0,id:'call-'+results.length,type:'function',function:{name:results.length?'write':'read',arguments:JSON.stringify(results.length?{path:'shared.txt',content:label}:{path:'shared.txt'})}}]};
+    const frame=(delta,finish_reason=null)=>({id:'fixture',choices:[{index:0,delta,finish_reason}]});
+    return new Response(`data: ${JSON.stringify(frame(delta))}\n\ndata: ${JSON.stringify(frame({},results.length>=2?'stop':'tool_calls'))}\n\ndata: [DONE]\n\n`,{headers:{'content-type':'text/event-stream'}});
+  };
+  const start=label=>{const query=host.query({cwd,sessionId:'shared-'+label,prompt:label,model,permissionMode:'bypassPermissions',tools:['Read','Write']}),events=[];const done=(async()=>{for await(const event of query)events.push(event);})();const task={query,events,done};tasks.push(task);return task;};
+  try{
+    const a=start('A');await until(()=>!!release);const b=start('B');await until(()=>host.getQueueStatus().some(row=>row.message.includes('another task')));
+    assert.deepEqual(calls,['A']);assert.equal(await fs.readFile(path.join(cwd,'shared.txt'),'utf8'),'original');release();await Promise.all([a.done,b.done]);
+    assert.equal(a.events.at(-1).is_error,false);assert.equal(b.events.at(-1).is_error,false);assert.equal(await fs.readFile(path.join(cwd,'shared.txt'),'utf8'),'B');
+    const undoA=await host.openCheckpoints(a.query.id,cwd),undoB=await host.openCheckpoints(b.query.id,cwd);
+    await assert.rejects(undoA.preview(),/changed since/);await undoB.undo();assert.equal(await fs.readFile(path.join(cwd,'shared.txt'),'utf8'),'A');await undoA.undo();assert.equal(await fs.readFile(path.join(cwd,'shared.txt'),'utf8'),'original');
+    await assert.rejects(fs.access(path.join(cwd,'.git')));assert.deepEqual(host.getQueueStatus(),[]);
+  }finally{release?.();for(const task of tasks){await task.query.close();await task.done;}globalThis.fetch=previous;await host.workspaceSearch.shutdown();}
+});
+
 test('parallel desktop cloud tasks isolate shell files, deliver native changes, preserve conflicts and support Undo', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-desktop-worktrees-')), cwd = path.join(root,'project');
   await fs.mkdir(cwd); await fs.writeFile(path.join(cwd,'shared.txt'),'original');
@@ -22,7 +47,7 @@ test('parallel desktop cloud tasks isolate shell files, deliver native changes, 
   const cloud='openrouter/fixture/chat';
   const host=createHost(path.join(root,'profile'));
   host.listModels=async()=>[{key:cloud,enabled:true}]; host.resolveModelChoice=()=>cloud;
-  host.modelManager={cloudCatalog:async()=>[{key:cloud,enabled:true,maxInputTokens:16384,maxOutputTokens:2048,defaultContextWindow:16384}],key:async()=>'fixture-only',context:()=>16384,requestedContext:()=>undefined};
+  host.modelManager={getWorkspaceMode:async()=>'isolated',cloudCatalog:async()=>[{key:cloud,enabled:true,maxInputTokens:16384,maxOutputTokens:2048,defaultContextWindow:16384}],key:async()=>'fixture-only',context:()=>16384,requestedContext:()=>undefined};
   const sourceEvents = (event) => async input => { hookEvents.push({event,input}); if (event==='pre') assert.equal(await fs.readFile(path.join(cwd,'shared.txt'),'utf8'),'original'); };
   globalThis.fetch=async(url,init)=>{
     assert.equal(String(url),'https://openrouter.ai/api/v1/chat/completions');

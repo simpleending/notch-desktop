@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parse } from 'acorn';
 import { createNotchWorkbench } from '../src/workbench-skin.mjs';
 import { patchWorkbenchRenderer, patchSecondaryArtwork } from '../src/workbench-patch.mjs';
-const React = { createElement(type, props, ...children) { return { type, props: props || {}, children }; } };
+const React = { useState(value){return [value,()=>{}];},useEffect(){}, createElement(type, props, ...children) { return { type, props: props || {}, children }; } };
 function all(tree) { return [tree, ...tree.children.flat(Infinity).filter(child => child && typeof child === 'object').flatMap(all)]; }
 
 test('all secondary illustrations use the canonical notch symbol and patching is repeatable',()=>{

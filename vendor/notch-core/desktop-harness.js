@@ -24,8 +24,8 @@ import path22 from "path";
 import fs20 from "fs/promises";
 
 // vendor/notch-cli/src/config.ts
-import fs4 from "fs/promises";
-import path4 from "path";
+import fs5 from "fs/promises";
+import path5 from "path";
 
 // vendor/notch-cli/src/providers/registry.ts
 import { createOpenAI as createOpenAI2 } from "@ai-sdk/openai";
@@ -1651,12 +1651,444 @@ function isBuiltInReadTool(tool3, builtin) {
   return builtin && READ_TOOLS.has(tool3);
 }
 
+// vendor/notch-cli/src/concurrency/task-workspace.ts
+import fs4 from "fs/promises";
+import path4 from "path";
+import os3 from "os";
+import { createHash, randomUUID as randomUUID2 } from "crypto";
+import { execFile } from "child_process";
+import { promisify } from "util";
+function openRouterTaskContext(ctx, model) {
+  const cloud = typeof model === "string" ? /^openrouter[/:]/.test(model) : /^openrouter(?:\.|$)/.test(model.provider);
+  return { ...ctx, isolateTasks: () => cloud && (ctx.workspaceMode?.() === "isolated" || !ctx.workspaceMode && !!ctx.isolateTasks?.()) };
+}
+function parseWorkspaceMode(value) {
+  if (value !== "shared" && value !== "isolated") throw new Error("Workspace mode must be shared or isolated.");
+  return value;
+}
+async function projectKey(cwd) {
+  cwd = await fs4.realpath(cwd);
+  try {
+    cwd = (await git(cwd, ["rev-parse", "--show-toplevel"])).trim();
+  } catch {
+  }
+  return "project-task:" + (process.platform === "win32" ? path4.resolve(cwd).toLowerCase() : cwd);
+}
+var sharedWorkers = /* @__PURE__ */ new Map();
+async function acquireProjectLease(cwd, signal, onWait) {
+  return acquireLease(await projectKey(cwd), signal, onWait);
+}
+async function withSharedWorker(ctx, run) {
+  if (ctx.taskWorkspace || ctx.accessMode === "read-only" || ctx.dryRun) return run(ctx);
+  return withTaskWorkspace(ctx, (owned) => {
+    const workers = sharedWorkers.get(owned.sharedTask);
+    const pending = (async () => {
+      const release = await acquireLease(
+        "shared-workers:" + owned.sharedTask + ":" + (owned.sharedWorker ?? "root"),
+        ctx.abortSignal,
+        (waiting) => ctx.onQueue?.(waiting ? "Waiting for another worker in this project\u2026" : null)
+      );
+      try {
+        return await run({ ...owned, sharedWorker: randomUUID2() });
+      } finally {
+        await release();
+      }
+    })();
+    workers.add(pending);
+    void pending.finally(() => workers.delete(pending)).catch(() => {
+    });
+    return pending;
+  });
+}
+var exec2 = promisify(execFile);
+var hash = (data) => createHash("sha256").update(data).digest("hex");
+var home = () => path4.join(process.env.USERPROFILE || process.env.HOME || os3.homedir(), ".notch", "worktrees");
+async function git(cwd, args, env = {}) {
+  const inherited = { ...process.env };
+  for (const key of Object.keys(inherited)) if (/^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS)$/i.test(key)) delete inherited[key];
+  const result = await exec2("git", ["-c", "core.hooksPath=" + path4.join(home(), "no-hooks"), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true", ...args], {
+    cwd,
+    env: { ...inherited, GIT_TERMINAL_PROMPT: "0", ...env },
+    windowsHide: true,
+    maxBuffer: 64 * 1024 * 1024
+  });
+  return result.stdout;
+}
+async function revision(file) {
+  try {
+    const stat = await fs4.lstat(file);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Task isolation requires regular files: ${file}`);
+    return { hash: hash(await fs4.readFile(file)), mode: stat.mode & 511 };
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+function same(a, b) {
+  return a?.hash === b?.hash && (process.platform === "win32" || a?.mode === b?.mode);
+}
+function inside(root, file) {
+  const relative = path4.relative(root, file);
+  return relative !== ".." && !relative.startsWith(".." + path4.sep) && !path4.isAbsolute(relative);
+}
+async function safeFile(root, relative) {
+  const target = path4.resolve(root, relative);
+  if (!inside(root, target) || relative.split(/[\\/]/).some((part) => part.toLowerCase() === ".git")) throw new Error("Task path escapes the project.");
+  if (process.platform === "win32" && path4.relative(root, target).includes(":")) throw new Error("Windows alternate data streams are not task files.");
+  let parent = target;
+  while (parent !== root) {
+    try {
+      const stat = await fs4.lstat(parent);
+      if (stat.isSymbolicLink() || !inside(root, await fs4.realpath(parent))) throw new Error(`Task path crosses a symbolic link: ${relative}`);
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    parent = path4.dirname(parent);
+  }
+  return target;
+}
+async function save(file, data) {
+  await fs4.mkdir(path4.dirname(file), { recursive: true });
+  const temporary = file + "." + randomUUID2() + ".tmp";
+  try {
+    await fs4.writeFile(temporary, JSON.stringify(data), { flag: "wx", mode: 384, flush: true });
+    await fs4.rename(temporary, file);
+  } finally {
+    await fs4.unlink(temporary).catch(() => {
+    });
+  }
+}
+async function sourceLease(cwd, signal) {
+  const projectRelease = await acquireProjectLease(cwd, signal);
+  let release;
+  try {
+    release = await acquireLease("file-mutations", signal);
+    const taskRelease = await acquireLease("task-files:" + cwd, signal);
+    return async () => {
+      try {
+        await taskRelease();
+      } finally {
+        try {
+          await release();
+        } finally {
+          await projectRelease();
+        }
+      }
+    };
+  } catch (error) {
+    try {
+      await release?.();
+    } finally {
+      await projectRelease();
+    }
+    throw error;
+  }
+}
+async function files(repo, root, index) {
+  const result = await git(root, ["--git-dir", repo, "--work-tree", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], index ? { GIT_INDEX_FILE: index } : {});
+  return [...new Set(result.split("\0").filter(Boolean))];
+}
+var TaskWorkspace = class _TaskWorkspace {
+  constructor(file, manifest) {
+    this.file = file;
+    this.manifest = manifest;
+  }
+  file;
+  manifest;
+  get cwd() {
+    return this.manifest.cwd;
+  }
+  static async open(source, session) {
+    source = await fs4.realpath(source);
+    if (inside(source, home())) throw new Error("Choose a specific project folder: the selected folder contains notch\u2019s own task storage.");
+    const folder = path4.join(home(), hash(source).slice(0, 20), hash(session).slice(0, 20));
+    const file = path4.join(folder, "task.json");
+    await fs4.mkdir(folder, { recursive: true, mode: 448 });
+    let savedText;
+    try {
+      savedText = await fs4.readFile(file, "utf8");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (savedText !== void 0) {
+      const saved = JSON.parse(savedText);
+      if (saved.version !== 1 || saved.source !== source || typeof saved.root !== "string" || typeof saved.cwd !== "string" || typeof saved.repo !== "string" || !saved.baseline || !["running", "pending", "applied"].includes(saved.state) || !inside(folder, saved.root) || saved.root === folder || !inside(saved.root, saved.cwd)) throw new Error("Invalid saved task workspace.");
+      if (saved.state !== "applied") {
+        if (await fs4.realpath(saved.root).catch(() => "") !== saved.root) throw new Error("Saved task checkout is missing or moved. Its recovery record was preserved.");
+        await safeFile(saved.root, path4.relative(saved.root, saved.cwd));
+        await fs4.mkdir(saved.cwd, { recursive: true });
+        if (await fs4.realpath(saved.cwd) !== saved.cwd) throw new Error("Saved task checkout moved.");
+        return new _TaskWorkspace(file, saved);
+      }
+    }
+    let root, repo;
+    try {
+      root = (await git(source, ["rev-parse", "--show-toplevel"])).trim();
+      root = await fs4.realpath(root);
+      repo = (await git(root, ["rev-parse", "--absolute-git-dir"])).trim();
+    } catch (error) {
+      if (error.code === "ENOENT") throw new Error("Install Git to enable automatic task isolation.");
+      root = source;
+      repo = path4.join(folder, "repository.git");
+      await git(source, ["init", "--bare", repo]);
+      await fs4.writeFile(path4.join(repo, "info", "exclude"), "node_modules/\n.venv/\nvenv/\n__pycache__/\n");
+    }
+    if (inside(root, home())) throw new Error("Choose a project repository outside notch\u2019s task storage. Its parent repository contains that storage.");
+    const index = path4.join(folder, "index-" + randomUUID2());
+    const env = { GIT_INDEX_FILE: index };
+    const args = ["--git-dir", repo, "--work-tree", root];
+    const checkout = path4.join(folder, "checkout-" + randomUUID2());
+    try {
+      let filterNames = "";
+      try {
+        filterNames = await git(root, [...args, "config", "--name-only", "--get-regexp", "^filter\\..*\\.(clean|smudge|process|required)$"]);
+      } catch (error) {
+        if (error.code !== 1) throw error;
+      }
+      const filters = [...new Set(filterNames.trim().split(/\r?\n/).filter(Boolean).map((name) => name.replace(/\.[^.]+$/, "")))];
+      const noFilters = filters.flatMap((name) => ["-c", `${name}.clean=`, "-c", `${name}.smudge=`, "-c", `${name}.process=`, "-c", `${name}.required=false`]);
+      const sourceIndex = (await git(root, ["--git-dir", repo, "rev-parse", "--git-path", "index"])).trim();
+      try {
+        await fs4.copyFile(path4.resolve(root, sourceIndex), index);
+        await git(root, [...args, "update-index", "--no-split-index"], env);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        try {
+          await git(root, [...args, "read-tree", "HEAD"], env);
+        } catch {
+          await git(root, [...args, "read-tree", "--empty"], env);
+        }
+      }
+      let commit;
+      try {
+        commit = (await git(root, [...args, "rev-parse", "--verify", "HEAD"])).trim();
+      } catch {
+      }
+      const headNames = commit ? (await git(root, [...args, "ls-tree", "-r", "--name-only", "-z", commit])).split("\0").filter(Boolean) : [];
+      const names = [.../* @__PURE__ */ new Set([...headNames, ...await files(repo, root, index)])];
+      const skipped = new Set((await git(root, [...args, "ls-files", "-v", "-z"], env)).split("\0").filter((line) => line[0]?.toUpperCase() === "S").map((line) => line.slice(2)));
+      const baseline = /* @__PURE__ */ Object.create(null);
+      for (const name of names) baseline[name] = { source: await revision(await safeFile(root, name)), task: null };
+      if (!commit) {
+        const empty = { GIT_INDEX_FILE: index + ".empty" };
+        try {
+          await git(root, [...args, "read-tree", "--empty"], empty);
+          const tree = (await git(root, [...args, "write-tree"], empty)).trim();
+          commit = (await git(root, [...args, "commit-tree", tree, "-m", "notch task workspace"], {
+            ...empty,
+            GIT_AUTHOR_NAME: "notch",
+            GIT_AUTHOR_EMAIL: "tasks@freesyntax.dev",
+            GIT_COMMITTER_NAME: "notch",
+            GIT_COMMITTER_EMAIL: "tasks@freesyntax.dev"
+          })).trim();
+        } finally {
+          await fs4.unlink(empty.GIT_INDEX_FILE).catch(() => {
+          });
+        }
+      }
+      await git(root, ["--git-dir", repo, ...noFilters, "-c", "core.autocrlf=false", "worktree", "add", "--detach", checkout, commit]);
+      for (const [name, entry] of Object.entries(baseline)) {
+        const target = await safeFile(checkout, name);
+        if (entry.source) {
+          await fs4.mkdir(path4.dirname(target), { recursive: true });
+          await fs4.copyFile(await safeFile(root, name), target);
+        } else if (!skipped.has(name)) await fs4.unlink(target).catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+        entry.task = await revision(target);
+      }
+      for (const [name, entry] of Object.entries(baseline)) {
+        if (!same(entry.source, await revision(await safeFile(root, name)))) throw new Error("Project changed while preparing the task. Please retry.");
+      }
+      for (const name of await files(repo, checkout, index)) {
+        const entry = baseline[name];
+        if (!entry) throw new Error("Project changed while preparing the task. Please retry.");
+      }
+      const manifest = { version: 1, source, repo, root: checkout, cwd: path4.join(checkout, path4.relative(root, source)), baseline, state: "running" };
+      manifest.baseline = Object.fromEntries(Object.entries(baseline).map(([name, entry]) => [path4.relative(source, path4.join(root, name)), entry]));
+      await save(file, manifest);
+      return new _TaskWorkspace(file, manifest);
+    } catch (error) {
+      if (inside(folder, checkout) && path4.basename(checkout).startsWith("checkout-")) await git(root, ["--git-dir", repo, "worktree", "remove", "--force", checkout]).catch(() => {
+      });
+      throw error;
+    } finally {
+      await fs4.unlink(index).catch(() => {
+      });
+    }
+  }
+  /** Capture shell-created/deleted files too; plugins cannot bypass the delivery check. */
+  async changes() {
+    const m = this.manifest;
+    const taskRepo = (await git(m.root, ["rev-parse", "--absolute-git-dir"])).trim();
+    const names = /* @__PURE__ */ new Set([...Object.keys(m.baseline), ...(await files(taskRepo, m.root)).map((name) => path4.relative(m.cwd, path4.join(m.root, name)))]);
+    const changes = [];
+    for (const name of names) {
+      const current = await revision(await safeFile(m.root, path4.relative(m.root, path4.resolve(m.cwd, name))));
+      const entry = Object.hasOwn(m.baseline, name) ? m.baseline[name] : void 0;
+      if (!same(current, entry?.task ?? null)) changes.push({ name, current, entry: entry ?? { source: null, task: null } });
+    }
+    return changes;
+  }
+  async apply(checkpoints) {
+    const m = this.manifest, changes = await this.changes();
+    const release = await sourceLease(m.source);
+    try {
+      const conflicts = [], plan = [];
+      for (const change of changes) {
+        if (!inside(m.source, path4.resolve(m.source, change.name))) {
+          conflicts.push(`Outside the selected folder: ${change.name}`);
+          continue;
+        }
+        const source = await safeFile(m.source, change.name);
+        const current = await revision(source);
+        if (same(current, change.current)) continue;
+        if (Object.hasOwn(change.entry, "reconcile") && same(change.current, change.entry.reconcile)) {
+          conflicts.push(change.name);
+          continue;
+        }
+        if (!same(current, change.entry.source)) {
+          conflicts.push(change.name);
+          continue;
+        }
+        const bytes = change.current ? await fs4.readFile(await safeFile(m.cwd, change.name)) : null;
+        if (bytes && hash(bytes) !== change.current.hash) throw new Error("Task files changed during delivery. Please retry.");
+        if (checkpoints && bytes && !Buffer.from(bytes.toString("utf8")).equals(bytes)) throw new Error(`Binary task output needs review before applying: ${change.name}. The private checkout was preserved.`);
+        plan.push({ ...change, source, bytes });
+      }
+      if (conflicts.length) {
+        m.state = "pending";
+        await save(this.file, m);
+        return { applied: false, files: changes.map((c) => c.name), conflicts, cwd: this.cwd };
+      }
+      for (const item of plan) await checkpoints?.recordBefore(item.source);
+      for (const item of plan) {
+        if (item.bytes === null) await fs4.unlink(item.source);
+        else {
+          await fs4.mkdir(path4.dirname(item.source), { recursive: true });
+          const temporary = item.source + ".notch-" + randomUUID2() + ".tmp";
+          try {
+            await fs4.writeFile(temporary, item.bytes, { mode: item.current.mode, flag: "wx", flush: true });
+            await fs4.rename(temporary, item.source);
+          } finally {
+            await fs4.unlink(temporary).catch(() => {
+            });
+          }
+        }
+        await checkpoints?.recordAfter(item.source);
+      }
+      await checkpoints?.finish?.();
+      m.state = "applied";
+      await save(this.file, m);
+      return { applied: true, files: changes.map((c) => c.name), conflicts, cwd: this.cwd };
+    } finally {
+      await release();
+    }
+  }
+  async readSource(name) {
+    const release = await sourceLease(this.manifest.source);
+    try {
+      const source = await safeFile(this.manifest.source, name);
+      const relative = path4.relative(this.manifest.source, source);
+      const key = (value) => process.platform === "win32" ? path4.normalize(value).toLowerCase() : path4.normalize(value);
+      name = Object.keys(this.manifest.baseline).find((existing) => key(existing) === key(relative)) ?? relative;
+      const current = await revision(source);
+      const bytes = current ? await fs4.readFile(source) : null;
+      if (bytes && hash(bytes) !== current.hash) throw new Error("Source changed while reading. Read it again.");
+      const entry = (Object.hasOwn(this.manifest.baseline, name) ? this.manifest.baseline[name] : void 0) ?? { source: null, task: null };
+      if (!same(entry.source, current)) entry.reconcile = await revision(await safeFile(this.manifest.cwd, name));
+      entry.source = current;
+      Object.defineProperty(this.manifest.baseline, name, { value: entry, enumerable: true, writable: true, configurable: true });
+      await save(this.file, this.manifest);
+      return bytes ? bytes.toString("utf8") : "[This source file does not exist.]";
+    } finally {
+      await release();
+    }
+  }
+  async retainForWorkers() {
+    this.manifest.retainForWorkers = true;
+    await save(this.file, this.manifest);
+  }
+  async dispose() {
+    if (this.manifest.state !== "applied" || this.manifest.retainForWorkers) return;
+    const root = path4.resolve(this.manifest.root), folder = path4.dirname(this.file);
+    if (!inside(folder, root) || !path4.basename(root).startsWith("checkout-")) throw new Error("Invalid managed checkout path.");
+    await git(this.manifest.source, ["--git-dir", this.manifest.repo, "worktree", "remove", "--force", root]);
+  }
+};
+async function withTaskWorkspace(ctx, run) {
+  if (ctx.accessMode === "read-only" || ctx.dryRun || ctx.taskWorkspace) return run(ctx);
+  if (!ctx.isolateTasks?.()) {
+    if (ctx.sharedTask && sharedWorkers.has(ctx.sharedTask)) return run(ctx);
+    const release2 = await acquireProjectLease(
+      ctx.cwd,
+      ctx.abortSignal,
+      (waiting) => ctx.onQueue?.(waiting ? "Waiting for another task in this project\u2026" : null)
+    );
+    const token = randomUUID2(), workers = /* @__PURE__ */ new Set();
+    sharedWorkers.set(token, workers);
+    try {
+      ctx.abortSignal?.throwIfAborted();
+      return await run({ ...ctx, sharedTask: token, sharedWorker: void 0, _readCache: /* @__PURE__ */ new Map(), _fileVersions: /* @__PURE__ */ new Map() });
+    } finally {
+      try {
+        while (workers.size) await Promise.allSettled([...workers]);
+        await ctx.workspaceCheckpoints?.finish?.();
+      } finally {
+        sharedWorkers.delete(token);
+        await release2();
+      }
+    }
+  }
+  const session = ctx.permissionSessionId || randomUUID2();
+  const release = await acquireLease("task-workspace:" + hash(ctx.cwd + "\0" + session), ctx.abortSignal);
+  let task;
+  try {
+    ctx.onQueue?.("Preparing a private task workspace\u2026");
+    const sourceLock = await sourceLease(ctx.cwd, ctx.abortSignal);
+    try {
+      task = await TaskWorkspace.open(ctx.cwd, session);
+    } finally {
+      await sourceLock();
+    }
+    ctx.abortSignal?.throwIfAborted();
+    ctx.onQueue?.(null);
+    ctx.log("Working in a private task workspace. Safe changes return automatically.");
+    const child = {
+      ...ctx,
+      cwd: task.cwd,
+      taskWorkspace: task,
+      _readCache: /* @__PURE__ */ new Map(),
+      _fileVersions: /* @__PURE__ */ new Map(),
+      runHook: ctx.runHook ? (event, payload) => ctx.runHook(event, { ...payload, isolatedWorkspace: true, cwd: task.cwd }) : void 0
+    };
+    const result = await run(child);
+    ctx.abortSignal?.throwIfAborted();
+    if (result && typeof result === "object" && ("error" in result && result.error || "status" in result && result.status === "max-iterations")) {
+      ctx.log(`Unfinished task files are safe in ${task.cwd}. Resume this chat to continue.`);
+      return result;
+    }
+    const delivery = await task.apply(ctx.workspaceCheckpoints);
+    ctx.onWorkspaceResult?.(delivery);
+    ctx.log(delivery.applied ? `Applied ${delivery.files.length} task file change(s).` : `Changes kept separate: ${delivery.conflicts.join(", ")} changed in the project. Ask notch to reconcile them. Saved workspace: ${task.cwd}`);
+    if (delivery.applied) await task.dispose().catch(() => ctx.log("Completed task checkout retained for cleanup."));
+    return result;
+  } catch (error) {
+    if (task) ctx.log(`Unfinished task files are safe in ${task.cwd}. Resume this chat to continue.`);
+    throw error;
+  } finally {
+    ctx.onQueue?.(null);
+    await release();
+  }
+}
+
 // vendor/notch-cli/src/config.ts
 var DEFAULT_MODEL = {
   model: "openrouter/anthropic/claude-sonnet-4.6",
   temperature: 0.3
 };
 var DEFAULTS = {
+  workspaceMode: "shared",
   models: { chat: DEFAULT_MODEL },
   projectRoot: process.cwd(),
   autoConfirm: false,
@@ -1711,11 +2143,11 @@ function selectModel(current, selection) {
   return next;
 }
 async function loadConfig(overrides = {}, selection = {}) {
-  const config = { ...DEFAULTS, projectRoot: path4.resolve(overrides.projectRoot ?? process.cwd()), models: { chat: { ...DEFAULT_MODEL } } };
+  const config = { ...DEFAULTS, projectRoot: path5.resolve(overrides.projectRoot ?? process.cwd()), models: { chat: { ...DEFAULT_MODEL } } };
   let explicitModelConfig = false;
-  const configPath = path4.resolve(config.projectRoot, ".notch.json");
+  const configPath = path5.resolve(config.projectRoot, ".notch.json");
   try {
-    const raw = await fs4.readFile(configPath, "utf-8");
+    const raw = await fs5.readFile(configPath, "utf-8");
     const fileConfig = JSON.parse(raw);
     if (fileConfig.model && (isValidModel(fileConfig.model) || isByokRef(fileConfig.model))) {
       config.models.chat.model = fileConfig.model;
@@ -1762,6 +2194,7 @@ async function loadConfig(overrides = {}, selection = {}) {
     if (fileConfig.enableHooks !== void 0) config.enableHooks = fileConfig.enableHooks;
     if (fileConfig.permissionMode) config.permissionMode = fileConfig.permissionMode;
     if (fileConfig.accessMode !== void 0) config.accessMode = parseAccessMode(fileConfig.accessMode);
+    if (fileConfig.workspaceMode !== void 0) config.workspaceMode = parseWorkspaceMode(fileConfig.workspaceMode);
     if (fileConfig.shellTimeout) config.shellTimeout = fileConfig.shellTimeout;
     if (fileConfig.theme) config.theme = fileConfig.theme;
   } catch (error) {
@@ -1811,7 +2244,7 @@ async function loadConfig(overrides = {}, selection = {}) {
   }
   config.maxIterations = Math.max(1, Math.min(100, config.maxIterations));
   config.models.chat = selectModel(config.models.chat, { baseUrl: selection.baseUrl, apiKey: selection.apiKey });
-  return { ...config, ...overrides, projectRoot: config.projectRoot };
+  return { ...config, ...overrides, workspaceMode: parseWorkspaceMode(overrides.workspaceMode ?? config.workspaceMode), projectRoot: config.projectRoot };
 }
 async function inferDefaultProviderConfig() {
   const providers = listByokProviders();
@@ -1864,366 +2297,6 @@ function toolResultValue(part) {
   const output = part.output;
   if (!output) return part.result;
   return output.type === "execution-denied" ? output.reason : output.value;
-}
-
-// vendor/notch-cli/src/concurrency/task-workspace.ts
-import fs5 from "fs/promises";
-import path5 from "path";
-import os3 from "os";
-import { createHash, randomUUID as randomUUID2 } from "crypto";
-import { execFile } from "child_process";
-import { promisify } from "util";
-function openRouterTaskContext(ctx, model) {
-  const cloud = typeof model === "string" ? /^openrouter[/:]/.test(model) : /^openrouter(?:\.|$)/.test(model.provider);
-  return cloud ? { ...ctx, isolateTasks: () => true } : ctx;
-}
-var exec2 = promisify(execFile);
-var hash = (data) => createHash("sha256").update(data).digest("hex");
-var home = () => path5.join(process.env.USERPROFILE || process.env.HOME || os3.homedir(), ".notch", "worktrees");
-async function git(cwd, args, env = {}) {
-  const inherited = { ...process.env };
-  for (const key of Object.keys(inherited)) if (/^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS)$/i.test(key)) delete inherited[key];
-  const result = await exec2("git", ["-c", "core.hooksPath=" + path5.join(home(), "no-hooks"), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true", ...args], {
-    cwd,
-    env: { ...inherited, GIT_TERMINAL_PROMPT: "0", ...env },
-    windowsHide: true,
-    maxBuffer: 64 * 1024 * 1024
-  });
-  return result.stdout;
-}
-async function revision(file) {
-  try {
-    const stat = await fs5.lstat(file);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Task isolation requires regular files: ${file}`);
-    return { hash: hash(await fs5.readFile(file)), mode: stat.mode & 511 };
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-function same(a, b) {
-  return a?.hash === b?.hash && (process.platform === "win32" || a?.mode === b?.mode);
-}
-function inside(root, file) {
-  const relative = path5.relative(root, file);
-  return relative !== ".." && !relative.startsWith(".." + path5.sep) && !path5.isAbsolute(relative);
-}
-async function safeFile(root, relative) {
-  const target = path5.resolve(root, relative);
-  if (!inside(root, target) || relative.split(/[\\/]/).some((part) => part.toLowerCase() === ".git")) throw new Error("Task path escapes the project.");
-  if (process.platform === "win32" && path5.relative(root, target).includes(":")) throw new Error("Windows alternate data streams are not task files.");
-  let parent = target;
-  while (parent !== root) {
-    try {
-      const stat = await fs5.lstat(parent);
-      if (stat.isSymbolicLink() || !inside(root, await fs5.realpath(parent))) throw new Error(`Task path crosses a symbolic link: ${relative}`);
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    parent = path5.dirname(parent);
-  }
-  return target;
-}
-async function save(file, data) {
-  await fs5.mkdir(path5.dirname(file), { recursive: true });
-  const temporary = file + "." + randomUUID2() + ".tmp";
-  try {
-    await fs5.writeFile(temporary, JSON.stringify(data), { flag: "wx", mode: 384, flush: true });
-    await fs5.rename(temporary, file);
-  } finally {
-    await fs5.unlink(temporary).catch(() => {
-    });
-  }
-}
-async function sourceLease(cwd, signal) {
-  const release = await acquireLease("file-mutations", signal);
-  try {
-    const taskRelease = await acquireLease("task-files:" + cwd, signal);
-    return async () => {
-      try {
-        await taskRelease();
-      } finally {
-        await release();
-      }
-    };
-  } catch (error) {
-    await release();
-    throw error;
-  }
-}
-async function files(repo, root, index) {
-  const result = await git(root, ["--git-dir", repo, "--work-tree", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], index ? { GIT_INDEX_FILE: index } : {});
-  return [...new Set(result.split("\0").filter(Boolean))];
-}
-var TaskWorkspace = class _TaskWorkspace {
-  constructor(file, manifest) {
-    this.file = file;
-    this.manifest = manifest;
-  }
-  file;
-  manifest;
-  get cwd() {
-    return this.manifest.cwd;
-  }
-  static async open(source, session) {
-    source = await fs5.realpath(source);
-    if (inside(source, home())) throw new Error("Choose a specific project folder: the selected folder contains notch\u2019s own task storage.");
-    const folder = path5.join(home(), hash(source).slice(0, 20), hash(session).slice(0, 20));
-    const file = path5.join(folder, "task.json");
-    await fs5.mkdir(folder, { recursive: true, mode: 448 });
-    let savedText;
-    try {
-      savedText = await fs5.readFile(file, "utf8");
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    if (savedText !== void 0) {
-      const saved = JSON.parse(savedText);
-      if (saved.version !== 1 || saved.source !== source || typeof saved.root !== "string" || typeof saved.cwd !== "string" || typeof saved.repo !== "string" || !saved.baseline || !["running", "pending", "applied"].includes(saved.state) || !inside(folder, saved.root) || saved.root === folder || !inside(saved.root, saved.cwd)) throw new Error("Invalid saved task workspace.");
-      if (saved.state !== "applied") {
-        if (await fs5.realpath(saved.root).catch(() => "") !== saved.root) throw new Error("Saved task checkout is missing or moved. Its recovery record was preserved.");
-        await safeFile(saved.root, path5.relative(saved.root, saved.cwd));
-        await fs5.mkdir(saved.cwd, { recursive: true });
-        if (await fs5.realpath(saved.cwd) !== saved.cwd) throw new Error("Saved task checkout moved.");
-        return new _TaskWorkspace(file, saved);
-      }
-    }
-    let root, repo;
-    try {
-      root = (await git(source, ["rev-parse", "--show-toplevel"])).trim();
-      root = await fs5.realpath(root);
-      repo = (await git(root, ["rev-parse", "--absolute-git-dir"])).trim();
-    } catch (error) {
-      if (error.code === "ENOENT") throw new Error("Install Git to enable automatic task isolation.");
-      root = source;
-      repo = path5.join(folder, "repository.git");
-      await git(source, ["init", "--bare", repo]);
-      await fs5.writeFile(path5.join(repo, "info", "exclude"), "node_modules/\n.venv/\nvenv/\n__pycache__/\n");
-    }
-    if (inside(root, home())) throw new Error("Choose a project repository outside notch\u2019s task storage. Its parent repository contains that storage.");
-    const index = path5.join(folder, "index-" + randomUUID2());
-    const env = { GIT_INDEX_FILE: index };
-    const args = ["--git-dir", repo, "--work-tree", root];
-    const checkout = path5.join(folder, "checkout-" + randomUUID2());
-    try {
-      let filterNames = "";
-      try {
-        filterNames = await git(root, [...args, "config", "--name-only", "--get-regexp", "^filter\\..*\\.(clean|smudge|process|required)$"]);
-      } catch (error) {
-        if (error.code !== 1) throw error;
-      }
-      const filters = [...new Set(filterNames.trim().split(/\r?\n/).filter(Boolean).map((name) => name.replace(/\.[^.]+$/, "")))];
-      const noFilters = filters.flatMap((name) => ["-c", `${name}.clean=`, "-c", `${name}.smudge=`, "-c", `${name}.process=`, "-c", `${name}.required=false`]);
-      const sourceIndex = (await git(root, ["--git-dir", repo, "rev-parse", "--git-path", "index"])).trim();
-      try {
-        await fs5.copyFile(path5.resolve(root, sourceIndex), index);
-        await git(root, [...args, "update-index", "--no-split-index"], env);
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-        try {
-          await git(root, [...args, "read-tree", "HEAD"], env);
-        } catch {
-          await git(root, [...args, "read-tree", "--empty"], env);
-        }
-      }
-      let commit;
-      try {
-        commit = (await git(root, [...args, "rev-parse", "--verify", "HEAD"])).trim();
-      } catch {
-      }
-      const headNames = commit ? (await git(root, [...args, "ls-tree", "-r", "--name-only", "-z", commit])).split("\0").filter(Boolean) : [];
-      const names = [.../* @__PURE__ */ new Set([...headNames, ...await files(repo, root, index)])];
-      const skipped = new Set((await git(root, [...args, "ls-files", "-v", "-z"], env)).split("\0").filter((line) => line[0]?.toUpperCase() === "S").map((line) => line.slice(2)));
-      const baseline = /* @__PURE__ */ Object.create(null);
-      for (const name of names) baseline[name] = { source: await revision(await safeFile(root, name)), task: null };
-      if (!commit) {
-        const empty = { GIT_INDEX_FILE: index + ".empty" };
-        try {
-          await git(root, [...args, "read-tree", "--empty"], empty);
-          const tree = (await git(root, [...args, "write-tree"], empty)).trim();
-          commit = (await git(root, [...args, "commit-tree", tree, "-m", "notch task workspace"], {
-            ...empty,
-            GIT_AUTHOR_NAME: "notch",
-            GIT_AUTHOR_EMAIL: "tasks@freesyntax.dev",
-            GIT_COMMITTER_NAME: "notch",
-            GIT_COMMITTER_EMAIL: "tasks@freesyntax.dev"
-          })).trim();
-        } finally {
-          await fs5.unlink(empty.GIT_INDEX_FILE).catch(() => {
-          });
-        }
-      }
-      await git(root, ["--git-dir", repo, ...noFilters, "-c", "core.autocrlf=false", "worktree", "add", "--detach", checkout, commit]);
-      for (const [name, entry] of Object.entries(baseline)) {
-        const target = await safeFile(checkout, name);
-        if (entry.source) {
-          await fs5.mkdir(path5.dirname(target), { recursive: true });
-          await fs5.copyFile(await safeFile(root, name), target);
-        } else if (!skipped.has(name)) await fs5.unlink(target).catch((error) => {
-          if (error.code !== "ENOENT") throw error;
-        });
-        entry.task = await revision(target);
-      }
-      for (const [name, entry] of Object.entries(baseline)) {
-        if (!same(entry.source, await revision(await safeFile(root, name)))) throw new Error("Project changed while preparing the task. Please retry.");
-      }
-      for (const name of await files(repo, checkout, index)) {
-        const entry = baseline[name];
-        if (!entry) throw new Error("Project changed while preparing the task. Please retry.");
-      }
-      const manifest = { version: 1, source, repo, root: checkout, cwd: path5.join(checkout, path5.relative(root, source)), baseline, state: "running" };
-      manifest.baseline = Object.fromEntries(Object.entries(baseline).map(([name, entry]) => [path5.relative(source, path5.join(root, name)), entry]));
-      await save(file, manifest);
-      return new _TaskWorkspace(file, manifest);
-    } catch (error) {
-      if (inside(folder, checkout) && path5.basename(checkout).startsWith("checkout-")) await git(root, ["--git-dir", repo, "worktree", "remove", "--force", checkout]).catch(() => {
-      });
-      throw error;
-    } finally {
-      await fs5.unlink(index).catch(() => {
-      });
-    }
-  }
-  /** Capture shell-created/deleted files too; plugins cannot bypass the delivery check. */
-  async changes() {
-    const m = this.manifest;
-    const taskRepo = (await git(m.root, ["rev-parse", "--absolute-git-dir"])).trim();
-    const names = /* @__PURE__ */ new Set([...Object.keys(m.baseline), ...(await files(taskRepo, m.root)).map((name) => path5.relative(m.cwd, path5.join(m.root, name)))]);
-    const changes = [];
-    for (const name of names) {
-      const current = await revision(await safeFile(m.root, path5.relative(m.root, path5.resolve(m.cwd, name))));
-      const entry = Object.hasOwn(m.baseline, name) ? m.baseline[name] : void 0;
-      if (!same(current, entry?.task ?? null)) changes.push({ name, current, entry: entry ?? { source: null, task: null } });
-    }
-    return changes;
-  }
-  async apply(checkpoints) {
-    const m = this.manifest, changes = await this.changes();
-    const release = await sourceLease(m.source);
-    try {
-      const conflicts = [], plan = [];
-      for (const change of changes) {
-        if (!inside(m.source, path5.resolve(m.source, change.name))) {
-          conflicts.push(`Outside the selected folder: ${change.name}`);
-          continue;
-        }
-        const source = await safeFile(m.source, change.name);
-        const current = await revision(source);
-        if (same(current, change.current)) continue;
-        if (Object.hasOwn(change.entry, "reconcile") && same(change.current, change.entry.reconcile)) {
-          conflicts.push(change.name);
-          continue;
-        }
-        if (!same(current, change.entry.source)) {
-          conflicts.push(change.name);
-          continue;
-        }
-        const bytes = change.current ? await fs5.readFile(await safeFile(m.cwd, change.name)) : null;
-        if (bytes && hash(bytes) !== change.current.hash) throw new Error("Task files changed during delivery. Please retry.");
-        if (checkpoints && bytes && !Buffer.from(bytes.toString("utf8")).equals(bytes)) throw new Error(`Binary task output needs review before applying: ${change.name}. The private checkout was preserved.`);
-        plan.push({ ...change, source, bytes });
-      }
-      if (conflicts.length) {
-        m.state = "pending";
-        await save(this.file, m);
-        return { applied: false, files: changes.map((c) => c.name), conflicts, cwd: this.cwd };
-      }
-      for (const item of plan) await checkpoints?.recordBefore(item.source);
-      for (const item of plan) {
-        if (item.bytes === null) await fs5.unlink(item.source);
-        else {
-          await fs5.mkdir(path5.dirname(item.source), { recursive: true });
-          const temporary = item.source + ".notch-" + randomUUID2() + ".tmp";
-          try {
-            await fs5.writeFile(temporary, item.bytes, { mode: item.current.mode, flag: "wx", flush: true });
-            await fs5.rename(temporary, item.source);
-          } finally {
-            await fs5.unlink(temporary).catch(() => {
-            });
-          }
-        }
-        await checkpoints?.recordAfter(item.source);
-      }
-      m.state = "applied";
-      await save(this.file, m);
-      return { applied: true, files: changes.map((c) => c.name), conflicts, cwd: this.cwd };
-    } finally {
-      await release();
-    }
-  }
-  async readSource(name) {
-    const release = await sourceLease(this.manifest.source);
-    try {
-      const source = await safeFile(this.manifest.source, name);
-      const relative = path5.relative(this.manifest.source, source);
-      const key = (value) => process.platform === "win32" ? path5.normalize(value).toLowerCase() : path5.normalize(value);
-      name = Object.keys(this.manifest.baseline).find((existing) => key(existing) === key(relative)) ?? relative;
-      const current = await revision(source);
-      const bytes = current ? await fs5.readFile(source) : null;
-      if (bytes && hash(bytes) !== current.hash) throw new Error("Source changed while reading. Read it again.");
-      const entry = (Object.hasOwn(this.manifest.baseline, name) ? this.manifest.baseline[name] : void 0) ?? { source: null, task: null };
-      if (!same(entry.source, current)) entry.reconcile = await revision(await safeFile(this.manifest.cwd, name));
-      entry.source = current;
-      Object.defineProperty(this.manifest.baseline, name, { value: entry, enumerable: true, writable: true, configurable: true });
-      await save(this.file, this.manifest);
-      return bytes ? bytes.toString("utf8") : "[This source file does not exist.]";
-    } finally {
-      await release();
-    }
-  }
-  async retainForWorkers() {
-    this.manifest.retainForWorkers = true;
-    await save(this.file, this.manifest);
-  }
-  async dispose() {
-    if (this.manifest.state !== "applied" || this.manifest.retainForWorkers) return;
-    const root = path5.resolve(this.manifest.root), folder = path5.dirname(this.file);
-    if (!inside(folder, root) || !path5.basename(root).startsWith("checkout-")) throw new Error("Invalid managed checkout path.");
-    await git(this.manifest.source, ["--git-dir", this.manifest.repo, "worktree", "remove", "--force", root]);
-  }
-};
-async function withTaskWorkspace(ctx, run) {
-  if (!ctx.isolateTasks?.() || ctx.accessMode === "read-only" || ctx.dryRun || ctx.taskWorkspace) return run(ctx);
-  const session = ctx.permissionSessionId || randomUUID2();
-  const release = await acquireLease("task-workspace:" + hash(ctx.cwd + "\0" + session), ctx.abortSignal);
-  let task;
-  try {
-    ctx.onQueue?.("Preparing a private task workspace\u2026");
-    const sourceLock = await sourceLease(ctx.cwd, ctx.abortSignal);
-    try {
-      task = await TaskWorkspace.open(ctx.cwd, session);
-    } finally {
-      await sourceLock();
-    }
-    ctx.abortSignal?.throwIfAborted();
-    ctx.onQueue?.(null);
-    ctx.log("Working in a private task workspace. Safe changes return automatically.");
-    const child = {
-      ...ctx,
-      cwd: task.cwd,
-      taskWorkspace: task,
-      _readCache: /* @__PURE__ */ new Map(),
-      _fileVersions: /* @__PURE__ */ new Map(),
-      runHook: ctx.runHook ? (event, payload) => ctx.runHook(event, { ...payload, isolatedWorkspace: true, cwd: task.cwd }) : void 0
-    };
-    const result = await run(child);
-    ctx.abortSignal?.throwIfAborted();
-    if (result && typeof result === "object" && ("error" in result && result.error || "status" in result && result.status === "max-iterations")) {
-      ctx.log(`Unfinished task files are safe in ${task.cwd}. Resume this chat to continue.`);
-      return result;
-    }
-    const delivery = await task.apply(ctx.workspaceCheckpoints);
-    ctx.onWorkspaceResult?.(delivery);
-    ctx.log(delivery.applied ? `Applied ${delivery.files.length} task file change(s).` : `Changes kept separate: ${delivery.conflicts.join(", ")} changed in the project. Ask notch to reconcile them. Saved workspace: ${task.cwd}`);
-    if (delivery.applied) await task.dispose().catch(() => ctx.log("Completed task checkout retained for cleanup."));
-    return result;
-  } catch (error) {
-    if (task) ctx.log(`Unfinished task files are safe in ${task.cwd}. Resume this chat to continue.`);
-    throw error;
-  } finally {
-    ctx.onQueue?.(null);
-    await release();
-  }
 }
 
 // vendor/notch-cli/src/agent/loop.ts
@@ -5540,7 +5613,7 @@ async function spawnSubagent(config) {
   if (config.type === "general" && config.toolContext.isolateTasks?.()) {
     return isolatedWorker(config.toolContext, config.id, (toolContext) => spawnSubagentInternal({ ...config, toolContext }));
   }
-  return spawnSubagentInternal(config);
+  return withSharedWorker(config.toolContext, (toolContext) => spawnSubagentInternal({ ...config, toolContext }));
 }
 async function spawnSubagentInternal(config) {
   const { id, type, prompt, model, toolContext, maxIterations = 15 } = config;
@@ -5689,7 +5762,7 @@ async function spawnBuiltinAgent(config) {
   if (config.toolContext.isolateTasks?.()) {
     return isolatedWorker(config.toolContext, config.id ?? config.agentName, (toolContext) => spawnBuiltinAgentInternal({ ...config, toolContext }));
   }
-  return spawnBuiltinAgentInternal(config);
+  return withSharedWorker(config.toolContext, (toolContext) => spawnBuiltinAgentInternal({ ...config, toolContext }));
 }
 async function spawnBuiltinAgentInternal(config) {
   const { agentName, prompt, model, toolContext } = config;
@@ -8050,11 +8123,16 @@ var CheckpointManager = class _CheckpointManager {
     return { canRewind: true, filesChanged: selected.files.map((row) => row.path), insertions: 0, deletions: 0 };
   }
   async undo(messageId) {
-    const release = await acquireLease("file-mutations");
+    const projectRelease = this.storage ? await acquireProjectLease(this.storage.cwd) : void 0;
     try {
-      return await this.undoLocked(messageId);
+      const release = await acquireLease("file-mutations");
+      try {
+        return await this.undoLocked(messageId);
+      } finally {
+        await release();
+      }
     } finally {
-      await release();
+      await projectRelease?.();
     }
   }
   async undoLocked(messageId) {
@@ -8180,8 +8258,12 @@ async function runDesktopTurn(turn) {
   const delivered = /* @__PURE__ */ new Set();
   const allowed = definitionRules(turn.allowedTools, "allow"), denied = definitionRules(turn.disallowedTools, "deny");
   const ctx = {
-    isolateTasks: () => provider === "openrouter",
+    workspaceMode: () => turn.workspaceMode ?? config.workspaceMode ?? "shared",
+    isolateTasks: () => provider === "openrouter" && (turn.workspaceMode ?? config.workspaceMode) === "isolated",
     workspaceCheckpoints: {
+      finish: async () => {
+        await turn.checkpoints.commit("Desktop turn");
+      },
       recordBefore: async (file) => {
         await turn.checkpoints.recordBefore(file);
         delivered.add(file);

@@ -48,6 +48,15 @@ export function createNotchWorkbench(React, useTheme) {
   }
   function Appearance({ preferences, language, setLanguage }) {
     const { themeMode, setThemeMode } = useTheme();
+    const [workspace, setWorkspace] = React.useState('shared');
+    const [workspaceError, setWorkspaceError] = React.useState('');
+    const [savingWorkspace, setSavingWorkspace] = React.useState(true);
+    React.useEffect(() => { let alive=true; window.notchModels?.workspace?.().then(value=>{if(alive)setWorkspace(value);}).catch(error=>{if(alive)setWorkspaceError(error.message);}).finally(()=>{if(alive)setSavingWorkspace(false);}); return ()=>{alive=false;}; }, []);
+    const changeWorkspace = async mode => {
+      setSavingWorkspace(true); setWorkspaceError('');
+      try { setWorkspace(await window.notchModels.workspace(mode)); } catch(error) { setWorkspaceError(error.message); }
+      finally { setSavingWorkspace(false); }
+    };
     const select = (label, value, setter, options, description) => h('label', { className: 'notch-setting-row' },
       h('span', null, h('strong', null, label), h('small', null, description)),
       h('select', { 'aria-label': label, value, onChange: event => setter(event.target.value) },
@@ -55,6 +64,9 @@ export function createNotchWorkbench(React, useTheme) {
     return h('section', { className: 'notch-appearance', 'aria-labelledby': 'notch-appearance-title' },
       h('h2', { id: 'notch-appearance-title' }, 'Appearance'),
       h('p', { className: 'notch-appearance-copy' }, 'Adjust your workspace and reading preferences.'),
+      h('label', { className: 'notch-setting-row' }, h('span', null, h('strong',null,'Task workspace'), h('small',null,'Project folder is the default; writable tasks take turns. Isolated worktrees allow parallel OpenRouter tasks. Changes apply to new turns; unfinished isolated files stay saved.')),
+        h('select', { 'aria-label':'Task workspace', value:workspace, disabled:savingWorkspace, onChange:event=>changeWorkspace(event.target.value) }, h('option',{value:'shared'},'Project folder'),h('option',{value:'isolated'},'Isolated worktrees'))),
+      workspaceError ? h('p',{role:'alert'},workspaceError) : null,
       h('fieldset', { className: 'notch-appearance-modes' }, h('legend', null, 'Appearance'),
         ...[['dark','Dark'],['light','Light'],['auto','System']].map(([value,label]) =>
           h('label', { key: value, className: 'notch-appearance-choice' },
