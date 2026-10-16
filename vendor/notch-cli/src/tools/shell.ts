@@ -80,7 +80,7 @@ const parameters = z.object({
  * Validate command against all security layers.
  * Returns null if safe, or an error message if blocked.
  */
-function validateCommand(command: string, cwd: string): string | null {
+export function validateCommand(command: string, cwd: string, paths = path): string | null {
   // Layer 1: Absolute blocks
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(command)) {
@@ -122,7 +122,7 @@ function validateCommand(command: string, cwd: string): string | null {
   const fileOpRegex = /(?:^|\s)(?:>|>>|cat|cp|mv|ln|tee|tar|zip|scp|rsync|chmod|chown|rm)\s+(\/(?!tmp\b|dev\/null\b)[^\s]+)/g;
   let match;
   while ((match = fileOpRegex.exec(command)) !== null) {
-    const targetPath = path.normalize(match[1]!);
+    const targetPath = paths.normalize(match[1]!);
     if (!targetPath.startsWith(cwd) && !targetPath.startsWith('/tmp')) {
       return `Blocked: command targets path outside project root: ${targetPath}`;
     }

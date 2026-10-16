@@ -35,6 +35,7 @@ export function patchSetupRenderer(source) {
 }
 
 export function patchSetupDocument(html) {
+  html=html.replace('<html lang="zh-CN"','<html lang="en"');
   if (html.includes('<!-- notch quiet startup -->')) return html;
   const style = '<style>html,body,#root{width:100%;height:100%;margin:0}#notch-boot-splash{position:fixed;inset:0;z-index:2147483647;display:grid;place-content:center;gap:24px;background:#141416;color:#aeb9c2;text-align:center;font:12px/1.5 system-ui,sans-serif;-webkit-app-region:drag}#notch-boot-splash img{width:168px;height:50px;margin:auto}#notch-boot-splash .light{display:none}#notch-boot-splash[data-hidden="true"]{pointer-events:none;opacity:0}@media(prefers-color-scheme:light){#notch-boot-splash{background:#f5f4f6;color:#655b6c}#notch-boot-splash .dark{display:none}#notch-boot-splash .light{display:block}}</style>';
   const splash = '<!-- notch quiet startup --><div id="notch-boot-splash" role="status" aria-label="Opening notch"><img class="dark" src="./assets/notch-wordmark-dark.svg" alt="notch"><img class="light" src="./assets/notch-wordmark-light.svg" alt="notch"><span>Opening your workspace…</span></div>';

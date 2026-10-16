@@ -2,9 +2,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from 'acorn';
 import { createNotchWorkbench } from '../src/workbench-skin.mjs';
-import { patchWorkbenchRenderer, patchSecondaryArtwork } from '../src/workbench-patch.mjs';
+import { patchWorkbenchRenderer, patchSecondaryArtwork, patchVoiceOverlayArtwork } from '../src/workbench-patch.mjs';
 const React = { useState(value){return [value,()=>{}];},useEffect(){}, createElement(type, props, ...children) { return { type, props: props || {}, children }; } };
 function all(tree) { return [tree, ...tree.children.flat(Infinity).filter(child => child && typeof child === 'object').flatMap(all)]; }
+
+test('voice artwork is static notch branding while native controls, status and reduced-motion handling remain', () => {
+  const frames = ['qoduck-voice-frame','qoduck-voice-glass-light','qoduck-voice-glass-dark'].map((id,index) => `jsxRuntimeExports.jsx("img",{id:"${id}",${index?'className:"qoduck-voice-glass",':''}src:${['w1','qoduckVoiceGlassLightSrc','qoduckVoiceGlassDarkSrc'][index]},alt:"",width:${index?120:104},height:${index?120:104},draggable:!1})`).join(',');
+  const source = `function LiveVoiceOverlaySurface(){const [s1,o1]=reactExports.useState(0),c1=reactExports.useRef(null);const x1=t1?resolveQoduckFrameSetName(t1):"normal",frames=oldSprites();reactExports.useEffect(()=>{const j1=c1.current;bindControls(j1)},[]);const M1="Listening";return jsxRuntimeExports.jsxs("main",{children:[jsxRuntimeExports.jsx(FloatingCaptionBubble,{}),jsxRuntimeExports.jsx("span",{id:"orb-halo"}),jsxRuntimeExports.jsxs("span",{id:"orb-core",children:[${frames}]}),jsxRuntimeExports.jsx("span",{id:"orb-status",role:"status",children:M1}),...['toggleMuted','toggleMicrophone','close'].map(action=>jsxRuntimeExports.jsx("button",{onClick:()=>window.notchLiveVoiceOverlay.action({action}),children:action}))],onClose:()=>window.matchMedia("(prefers-reduced-motion: reduce)").matches});}`;
+  const patched = patchVoiceOverlayArtwork(source);
+  parse(patched,{ecmaVersion:'latest'});
+  assert.doesNotMatch(patched,/qoduck|oldSprites|useState\(0\)|orb-halo/);
+  assert.match(patched,/NotchSymbol,\{size:22\}/);
+  assert.match(patched,/notch-voice-colors/);
+  assert.match(patched,/--notch-voice-background:#242228/);
+  assert.match(patched,/--notch-voice-text:#f4f1f5/);
+  for(const control of ['toggleMuted','toggleMicrophone','close','role:"status"','prefers-reduced-motion']) assert.ok(patched.includes(control));
+  assert.equal(patchVoiceOverlayArtwork(patched),patched);
+  assert.equal(patchSecondaryArtwork(patched),patched);
+  assert.throws(()=>patchVoiceOverlayArtwork(source.replace('id:"orb-core"','id:"changed"')),/anchor changed/);
+});
 
 test('all secondary illustrations use the canonical notch symbol and patching is repeatable',()=>{
   const names=['emptyIllustrationRaw','renderErrorIllustrationRaw','liveVoiceEmptyIllustration','emptyTimelineIllustration','failedMarkRaw','applePromptTitleRaw','workspaceFilesEmptyIllustrationRaw'];

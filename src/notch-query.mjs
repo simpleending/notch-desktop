@@ -32,9 +32,9 @@ export class NotchQuery {
     this.closed = false; this.ended = false; this.active = undefined;
     this.model = request.model; this.permissionMode = request.permissionMode || 'default'; this.planMode = !!request.planMode;
     accessForMode(this.permissionMode, this.planMode);
-    this.ready = host.loadSession(this.id, request.cwd).then(async state => {
+    this.ready = host.loadSession(this.id, request.cwd, request.executionTarget).then(async state => {
       this.state = state;
-      if (host.openCheckpoints) this.checkpoints = await host.openCheckpoints(this.id, state.cwd);
+      if (host.openCheckpoints) this.checkpoints = await host.openCheckpoints(this.id, state.cwd, request.executionTarget);
     });
     this.task = this.consume(request.prompt).catch(error => { this.emitResult(error); }).finally(() => this.finish());
   }
@@ -75,7 +75,7 @@ export class NotchQuery {
     if (this.active) throw new Error('Finish or interrupt the current turn before changing models.');
     if (!models.some(row => row.key === model && row.enabled)) throw new Error('Choose an available model from the composer.');
     if (this.host.openCheckpoints) {
-      const state = await this.host.loadSession(this.id, this.request.cwd);
+      const state = await this.host.loadSession(this.id, this.request.cwd, this.request.executionTarget);
       if (this.active) throw new Error('Finish or interrupt the current turn before changing models.');
       this.state = state;
     }
@@ -97,8 +97,8 @@ export class NotchQuery {
     await this.ready;
     if (this.active) throw new Error('Interrupt the turn before restoring files.');
     if (this.host.openCheckpoints) {
-      this.state = await this.host.loadSession(this.id, this.request.cwd);
-      this.checkpoints = await this.host.openCheckpoints(this.id, this.state.cwd);
+      this.state = await this.host.loadSession(this.id, this.request.cwd, this.request.executionTarget);
+      this.checkpoints = await this.host.openCheckpoints(this.id, this.state.cwd, this.request.executionTarget);
     }
     const preview = await this.checkpoints.preview(messageId);
     if (!options.dryRun && preview.canRewind) {
@@ -155,8 +155,8 @@ export class NotchQuery {
     };
     try {
       if (this.host.openCheckpoints) {
-        this.state = await this.host.loadSession(this.id, this.request.cwd);
-        this.checkpoints = await this.host.openCheckpoints(this.id, this.state.cwd);
+        this.state = await this.host.loadSession(this.id, this.request.cwd, this.request.executionTarget);
+        this.checkpoints = await this.host.openCheckpoints(this.id, this.state.cwd, this.request.executionTarget);
       }
       this.host.assertTurnAvailable?.(this.id);
       await this.checkpoints.beginTurn(messageId);

@@ -10,7 +10,7 @@ import type { LanguageModel } from 'ai';
 
 export function openRouterTaskContext(ctx: ToolContext, model: LanguageModel): ToolContext {
   const cloud = typeof model === 'string' ? /^openrouter[/:]/.test(model) : /^openrouter(?:\.|$)/.test(model.provider);
-  return { ...ctx, isolateTasks: () => cloud && (ctx.workspaceMode?.() === 'isolated' || (!ctx.workspaceMode && !!ctx.isolateTasks?.())) };
+  return { ...ctx, isolateTasks: () => !ctx.remoteWorkspace && cloud && (ctx.workspaceMode?.() === 'isolated' || (!ctx.workspaceMode && !!ctx.isolateTasks?.())) };
 }
 
 export function parseWorkspaceMode(value: unknown): 'shared' | 'isolated' {
@@ -295,6 +295,11 @@ export class TaskWorkspace {
 
 /** Shared tasks hold the project lane for the whole turn, including terminal and plugin calls. */
 export async function withTaskWorkspace<T>(ctx: ToolContext, run: (ctx: ToolContext) => Promise<T>): Promise<T> {
+  if (ctx.remoteWorkspace) {
+    const release = await acquireLease(ctx.remoteWorkspace.leaseKey, ctx.abortSignal, waiting => ctx.onQueue?.(waiting ? 'Waiting for another task in this SSH workspace…' : null));
+    try { return await run(ctx); }
+    finally { try { await ctx.workspaceCheckpoints?.finish?.(); } finally { ctx.onQueue?.(null); await release(); } }
+  }
   if (ctx.accessMode === 'read-only' || ctx.dryRun || ctx.taskWorkspace) return run(ctx);
   if (!ctx.isolateTasks?.()) {
     if (ctx.sharedTask && sharedWorkers.has(ctx.sharedTask)) return run(ctx);

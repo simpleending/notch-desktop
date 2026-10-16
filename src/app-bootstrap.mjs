@@ -8,12 +8,17 @@ import { createWebResearch } from './web-research.mjs';
 import { createModelManager } from './model-manager.mjs';
 import { registerModelIpc } from './model-ipc.mjs';
 import { createStartupDiscovery } from './startup-discovery.mjs';
+import { createLocalVoice } from './local-voice.mjs';
+import { createLocalLiveVoice } from './local-live-voice.mjs';
 app.setName('notch');
 globalThis.__notchDiscovery = createStartupDiscovery();
 const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
 globalThis.__notchProfileOverride = requestedProfile ? { directory: app.getPath('userData'), existed: existsSync(path.join(app.getPath('userData'), 'main.sqlite')) } : null;
 globalThis.__notchHost = createHost(app.getPath('userData'));
+globalThis.__notchHost.voice = createLocalVoice(app.getPath('userData'));
+globalThis.__notchHost.createLiveVoice = createLocalLiveVoice;
+app.on('will-quit', () => { void globalThis.__notchHost.voice.shutdown(); });
 app.on('will-quit', () => { void globalThis.__notchHost.workspaceSearch.shutdown(); });
 const databasePath = path.join(app.getPath('userData'), 'main.sqlite');
 if (existsSync(databasePath)) { const database = new DatabaseSync(databasePath); try { migrateBrandDatabase(database); } finally { database.close(); } }

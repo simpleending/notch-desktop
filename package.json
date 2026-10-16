@@ -1,6 +1,6 @@
 {
   "name": "@freesyntax/notch-desktop",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "type": "module",
   "description": "notch by freesyntax.dev: local models first, optional provider API keys",
@@ -30,14 +30,17 @@
     "verify:renderer-shutdown": "node scripts/verify-renderer-shutdown.mjs",
     "verify:shutdown": "node scripts/verify-shutdown.mjs",
     "verify:mcp-shutdown": "node scripts/verify-mcp-shutdown.mjs",
-    "verify:web": "node scripts/verify-web-research.mjs"
+    "verify:web": "node scripts/verify-web-research.mjs",
+    "verify:voice": "node scripts/verify-local-voice.mjs",
+    "verify:voice-shutdown": "node scripts/verify-local-voice-shutdown.mjs",
+    "verify:ssh": "node scripts/verify-local-ssh.mjs"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.79",
     "@ai-sdk/openai": "^4.0.92",
     "@earendil-works/pi-ai": "^1.2.0",
     "@ff-labs/fff-node": "0.11.0",
-    "@freesyntax/notch-cli": "0.7.14",
+    "@freesyntax/notch-cli": "0.7.15",
     "@openrouter/ai-sdk-provider": "3.1.0",
     "ai": "^7.0.138",
     "ajv": "^8.20.0",

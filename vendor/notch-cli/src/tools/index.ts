@@ -12,7 +12,8 @@ import { readTool } from './read.js';
 import { writeTool } from './write.js';
 import { editTool } from './edit.js';
 import { applyPatchTool } from './apply-patch.js';
-import { shellTool } from './shell.js';
+import { shellTool, validateCommand } from './shell.js';
+import path from 'node:path';
 import { gitTool } from './git.js';
 import { grepTool } from './grep.js';
 import { globTool } from './glob.js';
@@ -144,7 +145,7 @@ function getAllTools(ctx?: ToolContext): NotchTool<any>[] {
   // Non-coordinator mode: full built-in set + MCP + plugins, and the
   // coordinator-only tools are excluded entirely so the model never sees
   // agent_spawn / agent_send_message / agent_stop outside coordinator mode.
-  const all = ctx?.taskWorkspace ? BUILTIN_TOOLS : [...BUILTIN_TOOLS.filter(t => t !== taskChangesTool), ...mcpTools, ...pluginManager.getTools()];
+  const all = ctx?.remoteWorkspace ? BUILTIN_TOOLS.filter(t => ['read', 'write', 'edit', 'shell', 'grep', 'glob'].includes(t.name)) : ctx?.taskWorkspace ? BUILTIN_TOOLS : [...BUILTIN_TOOLS.filter(t => t !== taskChangesTool), ...mcpTools, ...pluginManager.getTools()];
   return ctx?.onlyTools ? all.filter(tool => ctx.onlyTools!.includes(tool.name) || (ctx.taskWorkspace && tool === taskChangesTool && ctx.onlyTools!.includes('read'))) : all;
 }
 
@@ -177,6 +178,10 @@ export function buildToolMap(ctx: ToolContext) {
           return { content: `Invalid arguments for ${t.name}: ${validated.error.message}`, isError: true };
         }
         params = validated.data;
+        if (ctx.remoteWorkspace && t.name === 'shell') {
+          const problem = validateCommand((params as {command: string}).command, ctx.cwd, path.posix);
+          if (problem) return { content: problem, isError: true };
+        }
         // Check permissions
         if (ctx.checkPermission) {
           // Fire permission-request hook
@@ -297,7 +302,7 @@ export function buildToolMap(ctx: ToolContext) {
           }
         }
 
-        return guardedFileAccess(t.name, params as Record<string, unknown>, ctx, async () => {
+        const execute = async () => {
         // Fire pre-tool hook
         await ctx.runHook?.('pre-tool', { tool: t.name, args: params, toolCallId: execution?.toolCallId });
         ctx.abortSignal?.throwIfAborted();
@@ -309,7 +314,7 @@ export function buildToolMap(ctx: ToolContext) {
         if (mayChangeFiles) ctx._readCache?.clear();
         let result;
         try {
-          result = await t.execute(params, ctx);
+          result = ctx.remoteWorkspace ? await ctx.remoteWorkspace.execute(t.name, params as Record<string, unknown>, ctx.abortSignal) : await t.execute(params, ctx);
         } finally {
           if (mayChangeFiles) ctx._readCache?.clear();
         }
@@ -324,7 +329,8 @@ export function buildToolMap(ctx: ToolContext) {
         });
 
         return result;
-        });
+        };
+        return ctx.remoteWorkspace ? execute() : guardedFileAccess(t.name, params as Record<string, unknown>, ctx, execute);
       },
     });
   }

@@ -4,9 +4,11 @@ import { patchFunction } from './bundle-patch.mjs';
 import { readFileSync } from 'node:fs';
 import { parse } from 'acorn';
 import { patchLocalOnlyRenderer } from './local-only-patch.mjs';
+import { patchEnglishRenderer } from './english-renderer-patch.mjs';
 
 const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
 export function patchSecondaryArtwork(source) {
+  if (source.includes('function LiveVoiceOverlaySurface(')) source = patchVoiceOverlayArtwork(source);
   source=source.replaceAll('https://github.com/simpleending/notch-desktop/commits/main/','https://github.com/simpleending/notch-desktop/releases');
   for(const name of ['emptyIllustrationRaw','renderErrorIllustrationRaw','liveVoiceEmptyIllustration','emptyTimelineIllustration','failedMarkRaw','applePromptTitleRaw','workspaceFilesEmptyIllustrationRaw']) {
     const expression=new RegExp(`\\b${name}=\x60([\\s\\S]*?)\x60`,'g');
@@ -40,6 +42,27 @@ export function patchSecondaryArtwork(source) {
   return source;
 }
 
+export function patchVoiceOverlayArtwork(source) {
+  return patchFunction(source, 'LiveVoiceOverlaySurface', body => {
+    if (body.includes('id:"notch-voice-colors"')) return body;
+    if (!body.includes('className:"notch-voice-brand"')) {
+    body = replaceOnce(body, '[s1,o1]=reactExports.useState(0),', '');
+    const start = body.indexOf('const x1=t1?resolveQoduckFrameSetName(t1):"normal",');
+    const stop = body.indexOf('reactExports.useEffect(()=>{const j1=c1.current;', start);
+    if (start < 0 || stop <= start) throw new Error('Voice sprite animation differs from the inspected baseline.');
+    body = body.slice(0, start) + body.slice(stop);
+    body = replaceOnce(body, 'jsxRuntimeExports.jsx("span",{id:"orb-halo"})', 'null');
+    const images = 'jsxRuntimeExports.jsx("img",{id:"qoduck-voice-frame",src:w1,alt:"",width:104,height:104,draggable:!1}),jsxRuntimeExports.jsx("img",{id:"qoduck-voice-glass-light",className:"qoduck-voice-glass",src:qoduckVoiceGlassLightSrc,alt:"",width:120,height:120,draggable:!1}),jsxRuntimeExports.jsx("img",{id:"qoduck-voice-glass-dark",className:"qoduck-voice-glass",src:qoduckVoiceGlassDarkSrc,alt:"",width:120,height:120,draggable:!1})';
+    body = replaceOnce(body, images, 'jsxRuntimeExports.jsxs("span",{className:"notch-voice-brand",style:{display:"flex",alignItems:"center",gap:6,fontSize:20,fontWeight:600,letterSpacing:"-.6px"},children:[jsxRuntimeExports.jsx(NotchSymbol,{size:22}),"notch"]}),jsxRuntimeExports.jsx("span",{style:{fontSize:11,lineHeight:1.3,opacity:.75},children:M1})');
+    body = replaceOnce(body, 'id:"orb-core",children:', 'id:"orb-core",style:{top:"40%",width:132,height:56,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,border:"1px solid var(--qcac38d)",borderRadius:12,background:"var(--q715358)",color:"var(--qec21c5)"},children:');
+    }
+    body = replaceOnce(body, 'border:"1px solid var(--qcac38d)"', 'border:"1px solid var(--notch-voice-border)"');
+    body = replaceOnce(body, 'background:"var(--q715358)",color:"var(--qec21c5)"', 'background:"var(--notch-voice-background)",color:"var(--notch-voice-text)"');
+    const colors = '#orb-root{--notch-voice-background:#f7f6f8;--notch-voice-text:#242128;--notch-voice-border:#d3cfd5}html[data-theme$="-dark"] #orb-root,html[data-theme="dark"] #orb-root{--notch-voice-background:#242228;--notch-voice-text:#f4f1f5;--notch-voice-border:#504b55}';
+    return replaceOnce(body, 'children:[jsxRuntimeExports.jsx(FloatingCaptionBubble,', 'children:[jsxRuntimeExports.jsx("style",{id:"notch-voice-colors",children:'+JSON.stringify(colors)+'}),jsxRuntimeExports.jsx(FloatingCaptionBubble,');
+  });
+}
+
 function replaceOnce(source, before, after) {
   if (source.split(before).length !== 2) throw new Error(`Workbench skin anchor changed: ${before.slice(0, 70)}`);
   return source.replace(before, after);
@@ -48,7 +71,7 @@ export function patchWorkbenchRenderer(source) {
   source = patchLocalOnlyRenderer(source);
   // Keep extension management on its existing local installer, away from the retired account marketplace.
   if (source.includes('function ExtensionsView(')) source = patchFunction(source, 'ExtensionsView', 'function ExtensionsView({initialKind="plugin"}){return jsxRuntimeExports.jsx(InstalledExtensionsSettings,{initialKind});}');
-  if (source.includes('/* notch workbench skin */')) return patchSecondaryArtwork(source);
+  if (source.includes('/* notch workbench skin */')) return patchEnglishRenderer(patchSecondaryArtwork(source));
   source = patchFunction(source, 'preloadDoodleAssets', 'function preloadDoodleAssets(){}');
   for (const name of ['AgentGreetingMark', 'AppleTreeDoodle', 'ImageDoodle', 'PartnerPlanGreetingMark', 'MobileAppDownloadPromo', 'NewChatCursorGrid', 'FeedbackFloatingButton', 'FeedbackDialog']) {
     source = patchFunction(source, name, `function ${name}(){return null;}`);
@@ -105,7 +128,7 @@ export function patchWorkbenchRenderer(source) {
   source = replaceOnce(source, 'const NotchSetup=createNotchSetup(reactExports);', 'const {Brand:NotchWindowBrand,ThemeControls:NotchThemeControls,ModeSwitch:NotchModeSwitch,Welcome:NotchWelcome,QuickStart:NotchQuickStart,PanelLauncher:NotchPanelLauncher,Appearance:NotchAppearance,LocalProfile:NotchLocalProfile,Symbol:NotchSymbol}=createNotchWorkbench(reactExports,useTheme);const NotchSetup=createNotchSetup(reactExports);');
   // Initialize after the bundle's house components, before React renders.
   source = source.replace('const NotchSetup=createNotchSetup(reactExports);','const NotchModelMenu=createModelMenu(reactExports,{Popover,PopoverTrigger,PopoverContent},useTheme);const NotchSetup=createNotchSetup(reactExports);');
-  return patchSecondaryArtwork('/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench} from "./workbench-skin.mjs";\n' + source);
+  return patchEnglishRenderer(patchSecondaryArtwork('/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench} from "./workbench-skin.mjs";\n' + source));
 }
 
 export async function verifyWorkbenchImports(assets) {

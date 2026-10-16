@@ -6,6 +6,7 @@ import { createWorkspaceSearch } from './workspace-search.mjs';
 import { detectLocalHardware, runDesktopTurn, CheckpointManager } from '../vendor/notch-core/desktop-harness.js';
 import { localContextProfile } from './model-policy.mjs';
 import { validateLocalPlugin } from './plugin-validation.mjs';
+import { createRemoteWorkspace } from './remote-workspace.mjs';
 
 const localIdentity = Object.freeze({ status: 'signed-in', mode: 'local', user: { id: 'local-notch', name: 'Local workspace', nickname: 'Local workspace', email: null }, error: null, loginUrl: null });
 function sessionFile(directory, id) {
@@ -19,6 +20,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
   const queries = new Map();
   const rewinding = new Set();
   const host = {
+    remoteWorkspace: (target, signal) => createRemoteWorkspace(host.remoteSsh, target, signal),
     workspaceSearch: createWorkspaceSearch(),
     identity: localIdentity,
     validatePlugin: validateLocalPlugin,
@@ -100,15 +102,16 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
       })().finally(() => { pending = undefined; });
       return pending;
     },
-    async loadSession(id, cwd) {
+    async loadSession(id, cwd, executionTarget) {
       await fs.mkdir(sessions, { recursive: true });
-      const realCwd = await fs.realpath(cwd || process.cwd());
+      const remote = executionTarget?.host?.kind === 'ssh';
+      const realCwd = remote ? path.posix.normalize(cwd) : await fs.realpath(cwd || process.cwd());
       try {
         const raw = await fs.readFile(sessionFile(sessions, id), 'utf8');
         const state = JSON.parse(raw);
-        if (state.version !== 1 || state.cwd !== realCwd || !Array.isArray(state.messages)) throw new Error('Notch session belongs to a different workspace or has an unsupported format.');
+        if (state.version !== 1 || state.cwd !== realCwd || !Array.isArray(state.messages) || (state.executionTarget?.host?.id ?? null) !== (remote ? executionTarget.host.id : null)) throw new Error('Notch session belongs to a different workspace or has an unsupported format.');
         return state;
-      } catch (error) { if (error.code !== 'ENOENT') throw error; return { version: 1, cwd: realCwd, messages: [], createdAt: new Date().toISOString() }; }
+      } catch (error) { if (error.code !== 'ENOENT') throw error; return { version: 1, cwd: realCwd, ...(remote ? {executionTarget} : {}), messages: [], createdAt: new Date().toISOString() }; }
     },
     async saveSession(id, state) {
       await fs.mkdir(sessions, { recursive: true });
@@ -117,15 +120,16 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
       try { await fs.writeFile(temporary, data, { mode: 0o600, flag: 'wx', flush: true }); await fs.rename(temporary, file); }
       finally { await fs.unlink(temporary).catch(() => {}); }
     },
-    async openCheckpoints(id, cwd) {
+    async openCheckpoints(id, cwd, executionTarget) {
       const file = sessionFile(path.join(dataDirectory, 'notch-undo'), id);
-      return CheckpointManager.open(cwd, file);
+      const remote = executionTarget?.host?.kind === 'ssh' ? await host.remoteWorkspace(executionTarget) : undefined;
+      return CheckpointManager.open(cwd, file, remote?.checkpointFiles);
     },
     async acquireRewind(id) {
       if (queries.get(id)?.active || rewinding.has(id)) throw new Error('Finish the active turn or undo before restoring files.');
       const stored = JSON.parse(await fs.readFile(sessionFile(sessions, id), 'utf8'));
-      const state = await host.loadSession(id, stored.cwd);
-      const checkpoints = await host.openCheckpoints(id, state.cwd);
+      const state = await host.loadSession(id, stored.cwd, stored.executionTarget);
+      const checkpoints = await host.openCheckpoints(id, state.cwd, state.executionTarget);
       if (queries.get(id)?.active || rewinding.has(id)) throw new Error('Finish the active turn or undo before restoring files.');
       rewinding.add(id);
       let released = false;
@@ -172,7 +176,8 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
           if(unverifiedModels.has(model))throw new Error('Could not verify the local model. Start Ollama or refresh to retry.');
           const apiKey = model.startsWith('openrouter/') ? await host.modelManager?.key('openrouter') : undefined;
           if (model.startsWith('openrouter/') && !apiKey) throw new Error('Connect an OpenRouter API key in the model picker.');
-          return runTurn({ ...turn, model, apiKey, webSettings: async () => await host.webResearch?.configuration() ?? { enabled: true, searchProvider: 'duckduckgo', browser: 'auto' }, workspaceMode: await host.modelManager?.getWorkspaceMode?.() ?? 'shared', workspaceSearch: (operation, params, cwd, signal) => host.workspaceSearch.tool(operation, cwd, params, signal),
+          const remoteWorkspace = request.executionTarget?.host?.kind === 'ssh' ? await host.remoteWorkspace(request.executionTarget, turn.signal) : undefined;
+          return runTurn({ ...turn, model, apiKey, remoteWorkspace, webSettings: async () => await host.webResearch?.configuration() ?? { enabled: true, searchProvider: 'duckduckgo', browser: 'auto' }, workspaceMode: await host.modelManager?.getWorkspaceMode?.() ?? 'shared', workspaceSearch: (operation, params, cwd, signal) => host.workspaceSearch.tool(operation, cwd, params, signal),
             onLifecycle: async (event, payload) => {
               if (event === 'pre-tool' && !['read', 'grep', 'glob'].includes(payload.tool)) host.workspaceSearch.invalidate(turn.cwd);
               if (event === 'post-tool' && !['read', 'grep', 'glob'].includes(payload.tool)) host.workspaceSearch.invalidate(turn.cwd);

@@ -4,6 +4,16 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { runDesktopTurn, CheckpointManager, inspectHubModel } from '../vendor/notch-core/desktop-harness.js';
+test('tool-free background turns do not advertise a validation tool or permit tool execution',async t=>{
+  const cwd=await mkdtemp(path.join(os.tmpdir(),'notch-no-tools-'));
+  t.mock.method(globalThis,'fetch',async(_url,options)=>{
+    const body=JSON.parse(options.body);assert.ok(!body.tools||body.tools.length===0,'An empty allowed toolset must stay empty');
+    const chunk={id:'recap',model:body.model,choices:[{index:0,delta:{content:'{"recap":"You confirmed READY."}'},finish_reason:null}]};
+    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify({...chunk,choices:[{index:0,delta:{},finish_reason:'stop'}]})}\n\ndata: [DONE]\n\n`,{headers:{'Content-Type':'text/event-stream'}});
+  });
+  const result=await runDesktopTurn({cwd,sessionId:'no-tools',messages:[{role:'user',content:'Return a JSON recap'}],model:'openrouter/openai/gpt-4.1',apiKey:'fixture-only',contextWindow:8192,accessMode:'read-only',signal:AbortSignal.timeout(15000),checkpoints:new CheckpointManager(),tools:[],approve:async()=>{throw Error('No tool can request permission')}});
+  assert.equal(JSON.parse(result.text).recap,'You confirmed READY.');
+});
 test('OpenRouter uses the explicit key, correct endpoint, bounded output and provider usage',async()=>{
   const previous=globalThis.fetch, calls=[];
   globalThis.fetch=async (url,options)=>{

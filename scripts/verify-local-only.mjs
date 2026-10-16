@@ -40,7 +40,7 @@ try{
  for(const name of ['File','Edit','View','Help']){
   await page.getByRole('button',{name,exact:true}).click();await capture('menu/'+name);await page.keyboard.press('Escape');
  }
- assert.equal(await page.getByRole('button',{name:/^(Start voice input|Start Live voice)$/i}).count(),0);
+ assert.ok(await page.getByRole('button',{name:/^(Start voice input|Start Live voice)$/i}).count()>0);
  const capabilities=await page.evaluate(()=>window.notchDesktop.getFeatureCapabilities());
  for(const key of ['cloudCollaborationEnabled','issuesEnabled','discussionsEnabled','agentTeamsEnabled','squadEnabled'])assert.equal(capabilities[key],false,key);
  const cloud=await page.evaluate(()=>window.notchDesktop.getCloudAutomationState());assert.equal(cloud.available,false);assert.equal(cloud.error,null);
@@ -56,8 +56,9 @@ try{
    const consent=page.getByRole('checkbox');if(await consent.count()){await consent.check();await page.getByRole('button',{name:'View experimental features',exact:true}).click();await capture('settings/Experiments expanded');}
   }
  }
- assert.match(screens['settings/Voice'],/unavailable in this local build/);
- assert.doesNotMatch(screens['settings/Keyboard shortcuts'],/Start or stop voice input|Mute or resume Live Voice|Send feedback/);
+ assert.match(screens['settings/Voice'],/Install local voice|Whisper is ready/);
+ assert.doesNotMatch(screens['settings/Keyboard shortcuts'],/Send feedback/);
+ assert.equal((await page.evaluate(()=>window.notchDesktop.getRemoteSshAvailability())).supported,true);
  assert.match(screens['settings/General'],/automatic diagnostic uploads are disabled/);
  assert.doesNotMatch(screens['settings/Network'],/notch online services|foundation, model, messaging/);
  await nav.getByRole('button',{name:'Models',exact:true}).click();
@@ -89,7 +90,7 @@ try{
  await page.getByRole('button',{name:'Add',exact:true}).click();await capture('add extension');
  await page.keyboard.press('Escape');
  checks.push('local extension tabs and Add dialog have no account marketplace');
- for(const [method,args]of [['startVoiceRecognition',[{}]],['configurenotchCloud',['fixture-not-a-token']],['setRemoteControlEnabled',[true]],['runNetworkDiagnostics',[]],['listExtensionMarket',[{kind:'plugin',scope:'public',query:'',page:1,pageSize:10}]]]){
+ for(const [method,args]of [['configurenotchCloud',['fixture-not-a-token']],['setRemoteControlEnabled',[true]],['runNetworkDiagnostics',[]],['listExtensionMarket',[{kind:'plugin',scope:'public',query:'',page:1,pageSize:10}]]]){
   const outcome=await page.evaluate(async({method,args})=>{try{await window.notchDesktop[method](...args);return 'unexpected success';}catch(error){return error.message;}},{method,args});
   assert.match(outcome,/unavailable in the local edition/,method);
  }

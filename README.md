@@ -43,7 +43,11 @@ Local models need enough memory to run. Cloud models use your provider’s prici
 
 No notch account or sign-in is required. Knowledge Center and Sites use local storage in place of the inherited hosted services. Hosted knowledge processing and site publishing are not included; exported sites can be opened locally or deployed with a host of your choice. Using a note in a new task sends that note to the model you selected.
 
-The local edition also retires the account marketplace, hosted collaboration/remote control, speech services, and managed SSH runtime. Their controls are removed or explain that the feature is unavailable. Local automations, model management and custom MCP configuration remain available. See the [local service audit](docs/local-only-audit.md) for the exact scope and verification command.
+Voice input, recording notes, and Live Voice use local speech processing. Open **Settings → Voice → Install speech engine** for a one-time download of about 157 MB. Whisper transcribes audio on your PC; Windows' installed speech voice reads replies. Live Voice sends spoken requests through the task's selected model and tool permissions. Choose a local model for offline inference; an optional cloud model receives the transcript, not microphone audio.
+
+SSH uses your system OpenSSH client and SSH configuration, keys, and normal host authentication. Add a host under **Settings → Connections**, then open a remote project. The model and task history stay on this device; file operations, Git, and commands run on the POSIX remote host. No Notch account or proprietary remote runtime is needed. Remote tasks share their remote workspace; the local worktree-isolation preference does not create remote worktrees.
+
+The local edition retires the account marketplace, hosted collaboration/remote control, and proprietary managed SSH runtime. Local automations, model management, voice, SSH, and custom MCP configuration remain available. See the [local service audit](docs/local-only-audit.md) for setup, limits, and verification commands.
 
 Undo covers built-in file edits and changes returned from an isolated OpenRouter task, including terminal-created files. Commands in the shared project folder and external tools can still make changes outside that history. Keep projects in version control. The Windows installer is unsigned; see the [download notes](docs/windows-preview.md).
 
@@ -67,3 +71,7 @@ Want to contribute? See the [development guide](docs/development.md). The IDE’
 notch’s original code is licensed under [AGPL v3](LICENSE). Dependencies and bundled components retain their [own licenses and notices](docs/third-party-notices.md).
 
 Copyright 2026 Driftrail.
+
+## Contributing
+
+Pull requests are welcome. Fork the repository and send your changes to `main`; no collaborator invitation is needed. See [how to contribute](CONTRIBUTING.md) for setup, checks, and the pull-request process.

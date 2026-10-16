@@ -1,6 +1,3 @@
-// vendor/notch-cli/src/concurrency/local-inference.ts
-import { AsyncLocalStorage } from "async_hooks";
-
 // vendor/notch-cli/src/concurrency/lease.ts
 import fs from "fs/promises";
 import os from "os";
@@ -94,6 +91,7 @@ async function acquireLease(key, signal, onWait, directory = path.join(os.homedi
 }
 
 // vendor/notch-cli/src/concurrency/local-inference.ts
+import { AsyncLocalStorage } from "async_hooks";
 var executionContext = new AsyncLocalStorage();
 var ownership = new AsyncLocalStorage();
 async function withLocalInference(operation, signal) {

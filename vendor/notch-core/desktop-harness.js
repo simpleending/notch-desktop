@@ -8,7 +8,7 @@ import {
   modelFit,
   parseNvidiaMemory,
   queuedLocalFetch
-} from "./chunk-FL7ZJYYV.js";
+} from "./chunk-YDBYCRLC.js";
 import {
   listModels,
   ollamaChatUrl,
@@ -20,8 +20,9 @@ import {
 } from "./chunk-S5MWOFHZ.js";
 
 // vendor/notch-cli/src/desktop-harness.ts
-import path23 from "path";
+import path24 from "path";
 import fs21 from "fs/promises";
+import os7 from "os";
 
 // vendor/notch-cli/src/config.ts
 import fs5 from "fs/promises";
@@ -612,7 +613,7 @@ function resolveByokModel(spec) {
   }
   const provider = createOpenAI({
     ...providerInfo.id === "ollama" ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startMlx } = await import("./local-runner-BQ6ZF23V.js");
+      const { startMlx } = await import("./local-runner-GG2B6WZJ.js");
       const ready = await startMlx(modelId, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
@@ -1663,7 +1664,7 @@ import { execFile } from "child_process";
 import { promisify } from "util";
 function openRouterTaskContext(ctx, model) {
   const cloud = typeof model === "string" ? /^openrouter[/:]/.test(model) : /^openrouter(?:\.|$)/.test(model.provider);
-  return { ...ctx, isolateTasks: () => cloud && (ctx.workspaceMode?.() === "isolated" || !ctx.workspaceMode && !!ctx.isolateTasks?.()) };
+  return { ...ctx, isolateTasks: () => !ctx.remoteWorkspace && cloud && (ctx.workspaceMode?.() === "isolated" || !ctx.workspaceMode && !!ctx.isolateTasks?.()) };
 }
 function parseWorkspaceMode(value) {
   if (value !== "shared" && value !== "isolated") throw new Error("Workspace mode must be shared or isolated.");
@@ -2020,6 +2021,19 @@ var TaskWorkspace = class _TaskWorkspace {
   }
 };
 async function withTaskWorkspace(ctx, run) {
+  if (ctx.remoteWorkspace) {
+    const release2 = await acquireLease(ctx.remoteWorkspace.leaseKey, ctx.abortSignal, (waiting) => ctx.onQueue?.(waiting ? "Waiting for another task in this SSH workspace\u2026" : null));
+    try {
+      return await run(ctx);
+    } finally {
+      try {
+        await ctx.workspaceCheckpoints?.finish?.();
+      } finally {
+        ctx.onQueue?.(null);
+        await release2();
+      }
+    }
+  }
   if (ctx.accessMode === "read-only" || ctx.dryRun || ctx.taskWorkspace) return run(ctx);
   if (!ctx.isolateTasks?.()) {
     if (ctx.sharedTask && sharedWorkers.has(ctx.sharedTask)) return run(ctx);
@@ -2933,7 +2947,7 @@ var parameters5 = z5.object({
   command: z5.string().describe("Shell command to execute"),
   timeout: z5.number().optional().describe("Timeout in ms (default 30s, max 10m)")
 });
-function validateCommand(command, cwd) {
+function validateCommand(command, cwd, paths = path10) {
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(command)) {
       return `Blocked: this command is too dangerous to execute.`;
@@ -2966,7 +2980,7 @@ function validateCommand(command, cwd) {
   const fileOpRegex = /(?:^|\s)(?:>|>>|cat|cp|mv|ln|tee|tar|zip|scp|rsync|chmod|chown|rm)\s+(\/(?!tmp\b|dev\/null\b)[^\s]+)/g;
   let match;
   while ((match = fileOpRegex.exec(command)) !== null) {
-    const targetPath = path10.normalize(match[1]);
+    const targetPath = paths.normalize(match[1]);
     if (!targetPath.startsWith(cwd) && !targetPath.startsWith("/tmp")) {
       return `Blocked: command targets path outside project root: ${targetPath}`;
     }
@@ -3028,6 +3042,9 @@ ${trimmed || "(no output)"}${suffix}`,
     }
   }
 };
+
+// vendor/notch-cli/src/tools/index.ts
+import path20 from "path";
 
 // vendor/notch-cli/src/tools/git.ts
 import { simpleGit } from "simple-git";
@@ -3824,7 +3841,7 @@ var GITHUB_API = "https://api.github.com";
 function getToken() {
   return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
 }
-async function ghFetch(path24, opts = {}) {
+async function ghFetch(path25, opts = {}) {
   const token = getToken();
   const headers = {
     "Accept": "application/vnd.github+json",
@@ -3832,7 +3849,7 @@ async function ghFetch(path24, opts = {}) {
     ...opts.headers ?? {}
   };
   if (token) headers["Authorization"] = `Bearer ${token}`;
-  return fetch(`${GITHUB_API}${path24}`, { ...opts, headers });
+  return fetch(`${GITHUB_API}${path25}`, { ...opts, headers });
 }
 var parameters11 = z13.object({
   action: z13.enum([
@@ -5907,6 +5924,7 @@ function listBuiltinAgents() {
 import { tool } from "ai";
 import { z as z22 } from "zod";
 function toolValidationFeedback(tools) {
+  if (Object.keys(tools).length === 0) return { tools, repair: void 0 };
   const name = "notch_tool_error";
   const withFeedback = { ...tools, [name]: tool({
     description: "Report an invalid tool request without executing it. Use the error to correct the next request.",
@@ -6796,7 +6814,7 @@ function getAllTools(ctx) {
     allowed.push(...COORDINATOR_ONLY_TOOLS);
     return ctx?.onlyTools ? allowed.filter((tool3) => ctx.onlyTools.includes(tool3.name)) : allowed;
   }
-  const all = ctx?.taskWorkspace ? BUILTIN_TOOLS : [...BUILTIN_TOOLS.filter((t) => t !== taskChangesTool), ...mcpTools, ...pluginManager.getTools()];
+  const all = ctx?.remoteWorkspace ? BUILTIN_TOOLS.filter((t) => ["read", "write", "edit", "shell", "grep", "glob"].includes(t.name)) : ctx?.taskWorkspace ? BUILTIN_TOOLS : [...BUILTIN_TOOLS.filter((t) => t !== taskChangesTool), ...mcpTools, ...pluginManager.getTools()];
   return ctx?.onlyTools ? all.filter((tool3) => ctx.onlyTools.includes(tool3.name) || ctx.taskWorkspace && tool3 === taskChangesTool && ctx.onlyTools.includes("read")) : all;
 }
 function buildToolMap(ctx) {
@@ -6820,6 +6838,10 @@ ${JSON.stringify(params, null, 2).slice(0, 500)}` };
           return { content: `Invalid arguments for ${t.name}: ${validated.error.message}`, isError: true };
         }
         params = validated.data;
+        if (ctx.remoteWorkspace && t.name === "shell") {
+          const problem = validateCommand(params.command, ctx.cwd, path20.posix);
+          if (problem) return { content: problem, isError: true };
+        }
         if (ctx.checkPermission) {
           await ctx.runHook?.("permission-request", { tool: t.name, args: params });
           const argRecord = params;
@@ -6905,14 +6927,14 @@ ${JSON.stringify(params, null, 2).slice(0, 500)}` };
             }
           }
         }
-        return guardedFileAccess(t.name, params, ctx, async () => {
+        const execute2 = async () => {
           await ctx.runHook?.("pre-tool", { tool: t.name, args: params, toolCallId: execution?.toolCallId });
           ctx.abortSignal?.throwIfAborted();
           const mayChangeFiles = !["read", "glob", "grep", "web_fetch", "web_search", "browser_read", "browser_interact"].includes(t.name);
           if (mayChangeFiles) ctx._readCache?.clear();
           let result;
           try {
-            result = await t.execute(params, ctx);
+            result = ctx.remoteWorkspace ? await ctx.remoteWorkspace.execute(t.name, params, ctx.abortSignal) : await t.execute(params, ctx);
           } finally {
             if (mayChangeFiles) ctx._readCache?.clear();
           }
@@ -6924,7 +6946,8 @@ ${JSON.stringify(params, null, 2).slice(0, 500)}` };
             toolCallId: execution?.toolCallId
           });
           return result;
-        });
+        };
+        return ctx.remoteWorkspace ? execute2() : guardedFileAccess(t.name, params, ctx, execute2);
       }
     });
   }
@@ -7274,14 +7297,14 @@ async function autoCompressWithStats(messages, model, contextWindow, signal, his
 
 // vendor/notch-cli/src/context/project-instructions.ts
 import fs17 from "fs/promises";
-import path20 from "path";
+import path21 from "path";
 import os5 from "os";
 var INSTRUCTION_FILES = [".notch.md", "NOTCH.md", ".notch/instructions.md"];
 async function loadProjectInstructions(projectRoot) {
   const sources = [];
   const homeDir = os5.homedir();
   for (const file2 of INSTRUCTION_FILES) {
-    const globalPath = path20.join(homeDir, file2);
+    const globalPath = path21.join(homeDir, file2);
     const content = await safeRead(globalPath);
     if (content) {
       sources.push({ path: globalPath, content, scope: "global" });
@@ -7289,7 +7312,7 @@ async function loadProjectInstructions(projectRoot) {
     }
   }
   for (const file2 of INSTRUCTION_FILES) {
-    const projectPath = path20.join(projectRoot, file2);
+    const projectPath = path21.join(projectRoot, file2);
     const content = await safeRead(projectPath);
     if (content) {
       sources.push({ path: projectPath, content, scope: "project" });
@@ -7320,13 +7343,13 @@ async function safeRead(filePath) {
 
 // vendor/notch-cli/src/memory/store.ts
 import fs18 from "fs/promises";
-import path21 from "path";
+import path22 from "path";
 import os6 from "os";
 import { generateText as generateText4 } from "ai";
-var MEMORY_DIR = path21.join(os6.homedir(), ".notch", "memory");
-var INDEX_FILE = path21.join(MEMORY_DIR, "MEMORY.md");
-var SUMMARY_FILE = path21.join(MEMORY_DIR, "SUMMARY.md");
-var SUMMARY_FILENAME = path21.basename(SUMMARY_FILE);
+var MEMORY_DIR = path22.join(os6.homedir(), ".notch", "memory");
+var INDEX_FILE = path22.join(MEMORY_DIR, "MEMORY.md");
+var SUMMARY_FILE = path22.join(MEMORY_DIR, "SUMMARY.md");
+var SUMMARY_FILENAME = path22.basename(SUMMARY_FILE);
 var DEFAULT_PROMPT_CHAR_BUDGET = Number(process.env.NOTCH_MEMORY_PROMPT_CHARS ?? 6e3);
 var MAX_SINGLE_MEMORY_CHARS = Number(process.env.NOTCH_MEMORY_ITEM_CHARS ?? 4e3);
 var MAX_COMPACTION_INPUT_CHARS = Number(process.env.NOTCH_MEMORY_COMPACT_INPUT_CHARS ?? 3e4);
@@ -7340,7 +7363,7 @@ async function loadMemories() {
   for (const file2 of files2) {
     if (!file2.endsWith(".md") || file2 === "MEMORY.md" || file2 === SUMMARY_FILENAME) continue;
     try {
-      const content = await fs18.readFile(path21.join(MEMORY_DIR, file2), "utf-8");
+      const content = await fs18.readFile(path22.join(MEMORY_DIR, file2), "utf-8");
       const memory = parseMemoryFile(content, file2);
       if (memory) memories.push(memory);
     } catch {
@@ -8330,9 +8353,13 @@ ${memoryStr}`, {
 
 // vendor/notch-cli/src/agent/checkpoints.ts
 import fs20 from "fs/promises";
-import path22 from "path";
+import path23 from "path";
 import { randomUUID as randomUUID4 } from "crypto";
 var CheckpointManager = class _CheckpointManager {
+  remote;
+  get paths() {
+    return this.remote ? path23.posix : path23;
+  }
   checkpoints = [];
   nextId = 1;
   pendingFiles = /* @__PURE__ */ new Map();
@@ -8342,10 +8369,12 @@ var CheckpointManager = class _CheckpointManager {
   storage;
   saving = Promise.resolve();
   restoring;
-  static async open(cwd, file2) {
+  static async open(cwd, file2, remote) {
     const manager = new _CheckpointManager();
-    const realCwd = await fs20.realpath(cwd), stat = await fs20.stat(realCwd, { bigint: true });
-    manager.storage = { cwd: realCwd, file: path22.resolve(file2), identity: `${stat.dev}:${stat.ino}` };
+    manager.remote = remote;
+    const realCwd = remote ? path23.posix.normalize(cwd) : await fs20.realpath(cwd);
+    const stat = remote ? void 0 : await fs20.stat(realCwd, { bigint: true });
+    manager.storage = { cwd: realCwd, file: path23.resolve(file2), identity: remote ? remote.identity : `${stat.dev}:${stat.ino}` };
     let raw;
     try {
       raw = await fs20.readFile(file2, "utf8");
@@ -8357,7 +8386,7 @@ var CheckpointManager = class _CheckpointManager {
     const state = JSON.parse(raw);
     if (state.version !== 1 || state.cwd !== manager.storage.cwd || state.identity !== manager.storage.identity || !Array.isArray(state.checkpoints) || !Array.isArray(state.pending)) throw new Error("Invalid undo history or workspace mismatch; history was preserved.");
     const snapshot2 = (row, pending = false) => {
-      if (!row || typeof row.path !== "string" || !path22.isAbsolute(row.path) || !manager.isWithin(row.path) || !(row.before === null || typeof row.before === "string") || !(row.after === null || typeof row.after === "string" || pending && row.after === void 0) || row.uncertain !== void 0 && typeof row.uncertain !== "boolean") throw new Error("Invalid undo snapshot; history was preserved.");
+      if (!row || typeof row.path !== "string" || !manager.paths.isAbsolute(row.path) || !manager.isWithin(row.path) || !(row.before === null || typeof row.before === "string") || !(row.after === null || typeof row.after === "string" || pending && row.after === void 0) || row.uncertain !== void 0 && typeof row.uncertain !== "boolean") throw new Error("Invalid undo snapshot; history was preserved.");
     };
     let previous = 0;
     for (const row of state.checkpoints) {
@@ -8402,14 +8431,15 @@ var CheckpointManager = class _CheckpointManager {
   }
   isWithin(file2) {
     if (!this.storage) return true;
-    const relative = path22.relative(this.storage.cwd, file2);
-    return !!relative && relative !== ".." && !relative.startsWith(".." + path22.sep) && !path22.isAbsolute(relative) && (process.platform !== "win32" || !relative.includes(":"));
+    const paths = this.paths, relative = paths.relative(this.storage.cwd, file2);
+    return !!relative && relative !== ".." && !relative.startsWith(".." + paths.sep) && !paths.isAbsolute(relative) && (!!this.remote || process.platform !== "win32" || !relative.includes(":"));
   }
   async safePath(file2) {
     if (!this.isWithin(file2)) throw new Error("Undo path is outside this workspace.");
+    if (this.remote) return this.remote.safePath(file2);
     if (this.storage) {
-      const relative = path22.relative(path22.dirname(this.storage.file), file2);
-      if (path22.resolve(file2) === this.storage.file || this.isWithin(path22.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path22.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
+      const relative = path23.relative(path23.dirname(this.storage.file), file2);
+      if (path23.resolve(file2) === this.storage.file || this.isWithin(path23.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path23.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
     }
     let cursor = file2;
     while (true) {
@@ -8419,12 +8449,13 @@ var CheckpointManager = class _CheckpointManager {
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      if (cursor === this.storage?.cwd || path22.dirname(cursor) === cursor) break;
-      cursor = path22.dirname(cursor);
+      if (cursor === this.storage?.cwd || path23.dirname(cursor) === cursor) break;
+      cursor = path23.dirname(cursor);
     }
   }
   async read(file2) {
     await this.safePath(file2);
+    if (this.remote) return this.remote.read(file2);
     try {
       const bytes = await fs20.readFile(file2), content = bytes.toString("utf8");
       if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${file2}`);
@@ -8442,14 +8473,14 @@ var CheckpointManager = class _CheckpointManager {
       identity: this.storage.identity,
       nextId: this.nextId,
       checkpoints: this.checkpoints,
-      pending: [...this.pendingFiles].map(([path24, before]) => ({ path: path24, before, after: this.pendingAfter.get(path24) })),
+      pending: [...this.pendingFiles].map(([path25, before]) => ({ path: path25, before, after: this.pendingAfter.get(path25) })),
       messageId: this.messageId,
       restoring: this.restoring
     });
     if (Buffer.byteLength(data) > 64 * 2 ** 20) throw new Error("Undo history exceeds 64 MiB; no further writes are allowed.");
     const file2 = this.storage.file;
     const save2 = this.saving.then(async () => {
-      await fs20.mkdir(path22.dirname(file2), { recursive: true });
+      await fs20.mkdir(path23.dirname(file2), { recursive: true });
       const temporary = `${file2}.${randomUUID4()}.tmp`;
       try {
         await fs20.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
@@ -8471,7 +8502,7 @@ var CheckpointManager = class _CheckpointManager {
   }
   /** Call before a file is modified — records its current content */
   async recordBefore(filePath) {
-    filePath = path22.resolve(filePath);
+    filePath = this.paths.resolve(filePath);
     const existing = this.pendingReads.get(filePath);
     if (existing) return existing;
     const read = (async () => {
@@ -8483,15 +8514,7 @@ var CheckpointManager = class _CheckpointManager {
         await this.persist();
         return;
       }
-      try {
-        const bytes = await fs20.readFile(filePath);
-        const content = bytes.toString("utf8");
-        if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${filePath}`);
-        this.pendingFiles.set(filePath, content);
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-        this.pendingFiles.set(filePath, null);
-      }
+      this.pendingFiles.set(filePath, await this.read(filePath));
       await this.persist();
     })();
     this.pendingReads.set(filePath, read);
@@ -8504,7 +8527,7 @@ var CheckpointManager = class _CheckpointManager {
   async recordAfter(filePath) {
     await Promise.all(this.pendingReads.values());
     if (filePath !== void 0) {
-      filePath = path22.resolve(filePath);
+      filePath = this.paths.resolve(filePath);
       if (!this.pendingFiles.has(filePath)) throw new Error("Capture the file before recording its completed write.");
       this.pendingAfter.set(filePath, await this.read(filePath));
     } else for (const filePath2 of this.pendingFiles.keys()) if (!this.pendingAfter.has(filePath2)) this.pendingAfter.set(filePath2, await this.read(filePath2));
@@ -8562,7 +8585,7 @@ var CheckpointManager = class _CheckpointManager {
     return { canRewind: true, filesChanged: selected.files.map((row) => row.path), insertions: 0, deletions: 0 };
   }
   async undo(messageId) {
-    const projectRelease = this.storage ? await acquireProjectLease(this.storage.cwd) : void 0;
+    const projectRelease = this.remote ? await acquireLease(this.remote.leaseKey) : this.storage ? await acquireProjectLease(this.storage.cwd) : void 0;
     try {
       const release = await acquireLease("file-mutations");
       try {
@@ -8589,6 +8612,10 @@ var CheckpointManager = class _CheckpointManager {
       const current = await this.read(snap.path);
       if (current !== snap.after && current !== snap.before) throw new Error(`Undo blocked: ${snap.path} changed since this checkpoint.`);
       if (current === snap.before) continue;
+      if (this.remote) {
+        await this.remote.write(snap.path, snap.before, current);
+        continue;
+      }
       if (snap.before === null) {
         try {
           await fs20.unlink(snap.path);
@@ -8596,7 +8623,7 @@ var CheckpointManager = class _CheckpointManager {
           if (error.code !== "ENOENT") throw error;
         }
       } else {
-        await fs20.mkdir(path22.dirname(snap.path), { recursive: true });
+        await fs20.mkdir(path23.dirname(snap.path), { recursive: true });
         const temporary = `${snap.path}.${randomUUID4()}.undo-tmp`;
         const mode = current === null ? 384 : (await fs20.stat(snap.path)).mode & 511;
         try {
@@ -8642,8 +8669,8 @@ var CheckpointManager = class _CheckpointManager {
         }
       }
     }
-    return Array.from(fileMap.entries()).map(([path24, { before, after }]) => ({
-      path: path24,
+    return Array.from(fileMap.entries()).map(([path25, { before, after }]) => ({
+      path: path25,
       before,
       after
     }));
@@ -8664,11 +8691,12 @@ function definitionRules(values = [], level) {
   });
 }
 async function runDesktopTurn(turn) {
-  const cwd = await fs21.realpath(turn.cwd);
-  if (!(await fs21.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
+  const cwd = turn.remoteWorkspace ? turn.cwd : await fs21.realpath(turn.cwd);
+  if (!turn.remoteWorkspace && !(await fs21.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
   if (!["approve", "read-only", "full-access"].includes(turn.accessMode)) throw new Error("Invalid desktop access mode.");
   turn.signal.throwIfAborted();
-  const config = await loadConfig({ projectRoot: cwd });
+  const configRoot = turn.remoteWorkspace ? os7.homedir() : cwd;
+  const config = await loadConfig({ projectRoot: configRoot });
   const selection = {
     ...turn.model && turn.model !== "auto" ? selectModel(config.models.chat, { model: turn.model }) : config.models.chat,
     ...turn.baseUrl ? { baseUrl: turn.baseUrl } : {},
@@ -8689,17 +8717,18 @@ async function runDesktopTurn(turn) {
     await managedOllama("0.40.3", turn.signal);
   }
   if (provider === "mlx") {
-    const { startMlx } = await import("./local-runner-BQ6ZF23V.js");
+    const { startMlx } = await import("./local-runner-GG2B6WZJ.js");
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
-  const permissions = await loadPermissions(cwd);
+  const permissions = await loadPermissions(configRoot);
   const delivered = /* @__PURE__ */ new Set();
   const allowed = definitionRules(turn.allowedTools, "allow"), denied = definitionRules(turn.disallowedTools, "deny");
   const ctx = {
+    remoteWorkspace: turn.remoteWorkspace,
     webSettings: turn.webSettings ?? (async () => ({ enabled: true, searchProvider: "duckduckgo", browser: "auto" })),
     workspaceMode: () => turn.workspaceMode ?? config.workspaceMode ?? "shared",
-    isolateTasks: () => provider === "openrouter" && (turn.workspaceMode ?? config.workspaceMode) === "isolated",
+    isolateTasks: () => !turn.remoteWorkspace && provider === "openrouter" && (turn.workspaceMode ?? config.workspaceMode) === "isolated",
     workspaceCheckpoints: {
       finish: async () => {
         await turn.checkpoints.commit("Desktop turn");
@@ -8740,10 +8769,10 @@ async function runDesktopTurn(turn) {
       if (event === "post-tool") await turn.checkpoints.recordAfter();
       if (event !== "pre-tool") return;
       const args = payload.args;
-      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore(path23.resolve(cwd, args.path));
+      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path24.posix : path24).resolve(cwd, args.path));
       if (payload.tool === "apply_patch" && typeof args.input === "string") for (const action of parsePatch(args.input)) {
-        await turn.checkpoints.recordBefore(path23.resolve(cwd, action.target));
-        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path23.resolve(cwd, action.moveTo));
+        await turn.checkpoints.recordBefore(path24.resolve(cwd, action.target));
+        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path24.resolve(cwd, action.moveTo));
       }
     }
   };
@@ -8751,7 +8780,8 @@ async function runDesktopTurn(turn) {
     return await runAgentLoop(turn.messages, {
       model: resolveModel(selection),
       modelId: selection.model,
-      systemPrompt: await buildSystemPrompt(cwd, selection.model, ctx) + (turn.instructions ? `
+      systemPrompt: (turn.remoteWorkspace ? `You are Notch, an AI coding assistant. All workspace tools operate over SSH on the user's host.
+${turn.remoteWorkspace.instructions}` : await buildSystemPrompt(cwd, selection.model, ctx)) + (turn.instructions ? `
 
 Desktop agent instructions:
 ${turn.instructions}` : ""),
@@ -8772,6 +8802,7 @@ ${turn.instructions}` : ""),
 export {
   CheckpointManager,
   LOCAL_MODEL_CATALOG,
+  acquireLease,
   autoCompress,
   contextBudget,
   definitionRules,

@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 /** Validation feedback is a tool result, not a reason to replay prior actions. */
 export function toolValidationFeedback(tools: ToolSet) {
+  if (Object.keys(tools).length === 0) return { tools, repair: undefined };
   const name = 'notch_tool_error';
   const withFeedback: ToolSet = { ...tools, [name]: tool({
     description: 'Report an invalid tool request without executing it. Use the error to correct the next request.',

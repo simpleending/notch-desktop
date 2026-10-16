@@ -29,7 +29,18 @@ export interface Checkpoint {
   messageId?: string;
 }
 
+/** SSH supplies safe, conditional filesystem operations; history stays on this device. */
+export interface CheckpointFiles {
+  leaseKey: string;
+  identity: string;
+  safePath(file: string): Promise<void>;
+  read(file: string): Promise<string | null>;
+  write(file: string, content: string | null, expected: string | null): Promise<void>;
+}
+
 export class CheckpointManager {
+  private remote?: CheckpointFiles;
+  private get paths() { return this.remote ? path.posix : path; }
   private checkpoints: Checkpoint[] = [];
   private nextId = 1;
   private pendingFiles = new Map<string, string | null>();
@@ -40,10 +51,12 @@ export class CheckpointManager {
   private saving = Promise.resolve();
   private restoring?: { index: number; files: FileSnapshot[] };
 
-  static async open(cwd: string, file: string): Promise<CheckpointManager> {
+  static async open(cwd: string, file: string, remote?: CheckpointFiles): Promise<CheckpointManager> {
     const manager = new CheckpointManager();
-    const realCwd = await fs.realpath(cwd), stat = await fs.stat(realCwd, { bigint: true });
-    manager.storage = { cwd: realCwd, file: path.resolve(file), identity: `${stat.dev}:${stat.ino}` };
+    manager.remote = remote;
+    const realCwd = remote ? path.posix.normalize(cwd) : await fs.realpath(cwd);
+    const stat = remote ? undefined : await fs.stat(realCwd, { bigint: true });
+    manager.storage = { cwd: realCwd, file: path.resolve(file), identity: remote ? remote.identity : `${stat!.dev}:${stat!.ino}` };
     let raw: string;
     try { raw = await fs.readFile(file, 'utf8'); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return manager; throw error; }
@@ -51,7 +64,7 @@ export class CheckpointManager {
     const state = JSON.parse(raw);
     if (state.version !== 1 || state.cwd !== manager.storage.cwd || state.identity !== manager.storage.identity || !Array.isArray(state.checkpoints) || !Array.isArray(state.pending)) throw new Error('Invalid undo history or workspace mismatch; history was preserved.');
     const snapshot = (row: FileSnapshot, pending = false) => {
-      if (!row || typeof row.path !== 'string' || !path.isAbsolute(row.path) || !manager.isWithin(row.path) ||
+      if (!row || typeof row.path !== 'string' || !manager.paths.isAbsolute(row.path) || !manager.isWithin(row.path) ||
         !(row.before === null || typeof row.before === 'string') ||
         !(row.after === null || typeof row.after === 'string' || (pending && row.after === undefined)) ||
         (row.uncertain !== undefined && typeof row.uncertain !== 'boolean')) throw new Error('Invalid undo snapshot; history was preserved.');
@@ -94,11 +107,12 @@ export class CheckpointManager {
   }
   private isWithin(file: string): boolean {
     if (!this.storage) return true;
-    const relative = path.relative(this.storage.cwd, file);
-    return !!relative && relative !== '..' && !relative.startsWith('..' + path.sep) && !path.isAbsolute(relative) && (process.platform !== 'win32' || !relative.includes(':'));
+    const paths = this.paths, relative = paths.relative(this.storage.cwd, file);
+    return !!relative && relative !== '..' && !relative.startsWith('..' + paths.sep) && !paths.isAbsolute(relative) && (!!this.remote || process.platform !== 'win32' || !relative.includes(':'));
   }
   private async safePath(file: string): Promise<void> {
     if (!this.isWithin(file)) throw new Error('Undo path is outside this workspace.');
+    if (this.remote) return this.remote.safePath(file);
     if (this.storage) {
       const relative = path.relative(path.dirname(this.storage.file), file);
       if (path.resolve(file) === this.storage.file || (this.isWithin(path.dirname(this.storage.file)) && (!relative || (!relative.startsWith('..') && !path.isAbsolute(relative))))) throw new Error('Agent changes cannot overwrite undo history.');
@@ -113,6 +127,7 @@ export class CheckpointManager {
   }
   private async read(file: string): Promise<string | null> {
     await this.safePath(file);
+    if (this.remote) return this.remote.read(file);
     try {
       const bytes = await fs.readFile(file), content = bytes.toString('utf8');
       if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${file}`);
@@ -141,7 +156,7 @@ export class CheckpointManager {
 
   /** Call before a file is modified — records its current content */
   async recordBefore(filePath: string): Promise<void> {
-    filePath = path.resolve(filePath);
+    filePath = this.paths.resolve(filePath);
     const existing = this.pendingReads.get(filePath);
     if (existing) return existing;
     const read = (async () => {
@@ -151,15 +166,7 @@ export class CheckpointManager {
         if (this.pendingAfter.has(filePath) && await this.read(filePath) !== this.pendingAfter.get(filePath)) throw new Error(`File changed during this turn: ${filePath}`);
         this.pendingAfter.delete(filePath); await this.persist(); return;
       }
-      try {
-        const bytes = await fs.readFile(filePath);
-        const content = bytes.toString('utf8');
-        if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${filePath}`);
-        this.pendingFiles.set(filePath, content);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        this.pendingFiles.set(filePath, null);
-      }
+      this.pendingFiles.set(filePath, await this.read(filePath));
       await this.persist();
     })();
     this.pendingReads.set(filePath, read);
@@ -169,7 +176,7 @@ export class CheckpointManager {
   async recordAfter(filePath?: string): Promise<void> {
     await Promise.all(this.pendingReads.values());
     if (filePath !== undefined) {
-      filePath = path.resolve(filePath);
+      filePath = this.paths.resolve(filePath);
       if (!this.pendingFiles.has(filePath)) throw new Error('Capture the file before recording its completed write.');
       this.pendingAfter.set(filePath, await this.read(filePath));
     } else for (const filePath of this.pendingFiles.keys()) if (!this.pendingAfter.has(filePath)) this.pendingAfter.set(filePath, await this.read(filePath));
@@ -228,7 +235,7 @@ export class CheckpointManager {
     return { canRewind: true, filesChanged: selected.files.map(row => row.path), insertions: 0, deletions: 0 };
   }
   async undo(messageId?: string): Promise<Checkpoint | null> {
-    const projectRelease = this.storage ? await acquireProjectLease(this.storage.cwd) : undefined;
+    const projectRelease = this.remote ? await acquireLease(this.remote.leaseKey) : this.storage ? await acquireProjectLease(this.storage.cwd) : undefined;
     try {
       const release = await acquireLease('file-mutations');
       try { return await this.undoLocked(messageId); } finally { await release(); }
@@ -251,6 +258,7 @@ export class CheckpointManager {
       const current = await this.read(snap.path);
       if (current !== snap.after && current !== snap.before) throw new Error(`Undo blocked: ${snap.path} changed since this checkpoint.`);
       if (current === snap.before) continue;
+      if (this.remote) { await this.remote.write(snap.path, snap.before, current); continue; }
       if (snap.before === null) {
         // File was created — delete it
         try { await fs.unlink(snap.path); }

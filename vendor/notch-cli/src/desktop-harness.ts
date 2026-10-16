@@ -1,5 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import type { ModelMessage } from 'ai';
 import { loadConfig, selectModel } from './config.js';
 import { resolveModel } from './providers/registry.js';
@@ -13,11 +14,13 @@ import { checkAccess, type AccessMode } from './permissions/access.js';
 import type { ToolContext } from './tools/types.js';
 
 export { CheckpointManager };
+export { acquireLease } from './concurrency/lease.js';
 export { detectLocalHardware, parseNvidiaMemory, linuxGpuMemory, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
 export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
 export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };
 export interface DesktopTurn {
+  remoteWorkspace?: ToolContext['remoteWorkspace'] & { instructions: string };
   webSettings?: ToolContext['webSettings'];
   workspaceSearch?: ToolContext['workspaceSearch'];
   ripgrepPath?: string;
@@ -64,11 +67,12 @@ export function definitionRules(values: string[] = [], level: 'allow' | 'deny'):
 
 /** The desktop uses the CLI's real provider, tool and permission implementation. */
 export async function runDesktopTurn(turn: DesktopTurn) {
-  const cwd = await fs.realpath(turn.cwd);
-  if (!(await fs.stat(cwd)).isDirectory()) throw new Error('Choose a workspace directory.');
+  const cwd = turn.remoteWorkspace ? turn.cwd : await fs.realpath(turn.cwd);
+  if (!turn.remoteWorkspace && !(await fs.stat(cwd)).isDirectory()) throw new Error('Choose a workspace directory.');
   if (!['approve', 'read-only', 'full-access'].includes(turn.accessMode)) throw new Error('Invalid desktop access mode.');
   turn.signal.throwIfAborted();
-  const config = await loadConfig({ projectRoot: cwd });
+  const configRoot = turn.remoteWorkspace ? os.homedir() : cwd;
+  const config = await loadConfig({ projectRoot: configRoot });
   const selection = { ...(turn.model && turn.model !== 'auto' ? selectModel(config.models.chat, { model: turn.model }) : config.models.chat),
     ...(turn.baseUrl ? { baseUrl: turn.baseUrl } : {}),
     ...(turn.apiKey ? { apiKey: turn.apiKey } : {}),
@@ -90,13 +94,14 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   if (provider === 'ollama' || provider === 'ollama-anthropic') selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
-  const permissions = await loadPermissions(cwd);
+  const permissions = await loadPermissions(configRoot);
   const delivered = new Set<string>();
   const allowed = definitionRules(turn.allowedTools, 'allow'), denied = definitionRules(turn.disallowedTools, 'deny');
   const ctx: ToolContext = {
+    remoteWorkspace: turn.remoteWorkspace,
     webSettings: turn.webSettings ?? (async () => ({ enabled: true, searchProvider: 'duckduckgo', browser: 'auto' })),
     workspaceMode: () => turn.workspaceMode ?? config.workspaceMode ?? 'shared',
-    isolateTasks: () => provider === 'openrouter' && (turn.workspaceMode ?? config.workspaceMode) === 'isolated',
+    isolateTasks: () => !turn.remoteWorkspace && provider === 'openrouter' && (turn.workspaceMode ?? config.workspaceMode) === 'isolated',
     workspaceCheckpoints: {
       finish: async () => { await turn.checkpoints.commit('Desktop turn'); },
       recordBefore: async file => {
@@ -126,7 +131,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
       if (event === 'post-tool') await turn.checkpoints.recordAfter();
       if (event !== 'pre-tool') return;
       const args = payload.args as Record<string, unknown>;
-      if ((payload.tool === 'write' || payload.tool === 'edit') && typeof args.path === 'string') await turn.checkpoints.recordBefore(path.resolve(cwd, args.path));
+      if ((payload.tool === 'write' || payload.tool === 'edit') && typeof args.path === 'string') await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path.posix : path).resolve(cwd, args.path));
       if (payload.tool === 'apply_patch' && typeof args.input === 'string') for (const action of parsePatch(args.input)) {
         await turn.checkpoints.recordBefore(path.resolve(cwd, action.target));
         if (action.kind === 'update' && action.moveTo) await turn.checkpoints.recordBefore(path.resolve(cwd, action.moveTo));
@@ -136,7 +141,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   try {
     return await runAgentLoop(turn.messages, {
       model: resolveModel(selection), modelId: selection.model,
-      systemPrompt: (await buildSystemPrompt(cwd, selection.model, ctx)) + (turn.instructions ? `\n\nDesktop agent instructions:\n${turn.instructions}` : ''), toolContext: ctx,
+      systemPrompt: (turn.remoteWorkspace ? `You are Notch, an AI coding assistant. All workspace tools operate over SSH on the user's host.\n${turn.remoteWorkspace.instructions}` : await buildSystemPrompt(cwd, selection.model, ctx)) + (turn.instructions ? `\n\nDesktop agent instructions:\n${turn.instructions}` : ''), toolContext: ctx,
       maxIterations: turn.maxIterations, contextWindow: selection.contextWindow,
       onTextChunk: turn.onText, onToolCall: turn.onToolCall, onToolResult: turn.onToolResult,
       onUsage: turn.onUsage,

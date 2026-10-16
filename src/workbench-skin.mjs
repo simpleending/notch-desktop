@@ -82,7 +82,7 @@ export function createNotchWorkbench(React, useTheme) {
       select('File icons', preferences.fileIconStyle, preferences.setFileIconStyle, [['notch','Minimal'],['material','Material']], 'Choose simple symbols or language-specific file icons.'),
       select('Terminal appearance', preferences.terminalThemeMode, preferences.setTerminalThemeMode, [['follow','Follow workspace'],['manual','Manual']], 'Keep the terminal in step with your workspace, or select it separately.'),
       select('Terminal links', preferences.terminalLinkOpenTarget, preferences.setTerminalLinkOpenTarget, [['external','System browser'],['internal','Built-in browser']], 'Choose where web links from the terminal open.'),
-      select('Language', language, setLanguage, [['en','English'],['zh','简体中文']], 'Select the interface language.'));
+      select('Language', language, setLanguage, [['en','English'],['zh','Chinese (Simplified)']], 'Select the interface language.'));
   }
   function LocalProfile({ name }) {
     return h('section', { className: 'notch-appearance notch-local-profile', 'aria-labelledby': 'notch-profile-title' },
