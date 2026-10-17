@@ -1,9 +1,11 @@
 import { createWebSettings } from './web-settings-view.mjs';
+import { createUpdateSettings } from './update-settings-view.mjs';
 const darkWordmark = new URL('./notch-wordmark-dark.svg', import.meta.url).href;
 const lightWordmark = new URL('./notch-wordmark-light.svg', import.meta.url).href;
 export function createNotchWorkbench(React, useTheme) {
   const h = React.createElement;
   const WebSettings = createWebSettings(React);
+  const UpdateSettings = createUpdateSettings(React);
   function Brand() {
     const { resolvedTheme } = useTheme();
     const [queued, setQueued] = React.useState([]);
@@ -69,6 +71,7 @@ export function createNotchWorkbench(React, useTheme) {
       h('label', { className: 'notch-setting-row' }, h('span', null, h('strong',null,'Task workspace'), h('small',null,'Project folder is the default; writable tasks take turns. Isolated worktrees allow parallel OpenRouter tasks. Changes apply to new turns; unfinished isolated files stay saved.')),
         h('select', { 'aria-label':'Task workspace', value:workspace, disabled:savingWorkspace, onChange:event=>changeWorkspace(event.target.value) }, h('option',{value:'shared'},'Project folder'),h('option',{value:'isolated'},'Isolated worktrees'))),
       workspaceError ? h('p',{role:'alert'},workspaceError) : null,
+      h(UpdateSettings),
       h(WebSettings),
       h('fieldset', { className: 'notch-appearance-modes' }, h('legend', null, 'Appearance'),
         ...[['dark','Dark'],['light','Light'],['auto','System']].map(([value,label]) =>

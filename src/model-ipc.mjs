@@ -10,6 +10,10 @@ export function registerModelIpc(ipcMain, host) {
     return { ...status, models, defaultModel: host.getDefaultModel(), discoveryWarning:host.getModelDiscoveryWarning(), hardware: await detectLocalHardware() };
   };
   const handlers = {
+    updates: (action='status',value) => {
+      if(!['status','check','automatic','download','quit'].includes(action))throw new Error('Choose a supported update action.');
+      return host.updates[action](value);
+    },
     voice: () => host.voice.status(),
     voiceInstall: () => host.voice.install(),
     voiceCancel: () => host.voice.cancelInstall(),
@@ -39,6 +43,7 @@ export const modelPreload = `\n/* notch model settings bridge */
 if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location.search).has('surface')){
  const {contextBridge,ipcRenderer}=require('electron');
  contextBridge.exposeInMainWorld('notchModels',Object.freeze({
+  updates:(action,value)=>ipcRenderer.invoke('notch-models:updates',action,value),
   state:refresh=>ipcRenderer.invoke('notch-models:state',refresh),
   connect:(provider,key)=>ipcRenderer.invoke('notch-models:connect',provider,key),
   disconnect:provider=>ipcRenderer.invoke('notch-models:disconnect',provider),
@@ -59,6 +64,7 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
 
 export function patchModelPreload(source) {
   if(!source.includes('/* notch model settings bridge */'))return source+modelPreload;
+  if(!source.includes('updates:(action,value)=>'))source=source.replace('state:refresh=>','updates:(action,value)=>ipcRenderer.invoke(\'notch-models:updates\',action,value),\n  state:refresh=>');
   const current="hub:(runner,options)=>ipcRenderer.invoke('notch-models:hub',runner,options)",previous="hub:runner=>ipcRenderer.invoke('notch-models:hub',runner)";
   if(!source.includes(current)){
     if(source.split(previous).length!==2)throw new Error('The model search bridge differs from the expected version.');

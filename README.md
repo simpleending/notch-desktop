@@ -12,6 +12,8 @@ notch by [freesyntax.dev](https://freesyntax.dev) is a free coding workspace for
 
 The Windows release supports x64 PCs running Windows 10 or 11. Check the release notes for current limitations. macOS and Linux downloads are not available yet.
 
+Windows releases check GitHub for new stable versions after opening, download updates in the background and install after a normal quit. They do not close your work to apply an update, and installation is deferred during Windows shutdown. In **Settings → Appearance → Updates**, turn automatic updates off, check manually or choose **Quit and install** when an update is ready. Preview builds and separate test profiles do not automatically install updates.
+
 ## Make yourself at home
 
 - **Bring your own model.** Choose an installed model or search Hugging Face by name, including Gemma and DeepSeek, with newest results first and more pages available. Public guided downloads need no account. Downloads use compatible Q4_K_M GGUF or MLX weights; memory fit and tool support are checked before use.
