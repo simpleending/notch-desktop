@@ -2,12 +2,44 @@ import { readFile, writeFile, cp, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { patchFunction } from './bundle-patch.mjs';
 import { readFileSync } from 'node:fs';
-import { parse } from 'acorn';
+import { parse, tokenizer } from 'acorn';
 import { patchLocalOnlyRenderer } from './local-only-patch.mjs';
 import { patchEnglishRenderer } from './english-renderer-patch.mjs';
 
 const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
+const brandCardUrl = 'data:image/svg+xml;base64,' + readFileSync(new URL('../assets/notch-brand-card.svg',import.meta.url)).toString('base64');
+const symbolUrl = 'data:image/svg+xml;base64,' + Buffer.from(symbolMarkup).toString('base64');
+export const legacyBrandAsset = /^(?:duck|Qoduck|userCard|voice_|activeDays\d+Sticker|(?:automationFirstCreate|desktopPetFirstUse|forkFirstUse|goalFirstUse|mobileMessageFirstReceive|snakeFirstPlay|voiceFirstUse)Sticker|notch(?:Anniversary|Pioneer|-(?:loading-line|metal|mobile-download-visual))|profileStickerSparseState|quickNote(?:AddButton|EmptyState|OnboardingFirstNote|TitleQuick)|onboardingWallpaper|parchmentDoodle|(?:bird|crocodile|dog|gorilla)-|planAgentAvatar|agent(?:-team)?-creation-figure|Login_poster|update-notification-card|feedbackWatermark|(?:failed|idle|jumping|look|review|running|waiting|waving|glass)(?:-|_))/;
 export function patchSecondaryArtwork(source) {
+  for (const name of ['appleTreeIllustration', 'appleTreeIllustrationColor', 'appleTreeStampGray', 'beeDoodle', 'mintDoodle', 'exploreAgentAvatarUrl']) {
+    const match = new RegExp(`\\b${name}=`).exec(source);
+    if (!match) continue;
+    const start = match.index + match[0].length, node = tokenizer(source.slice(start), { ecmaVersion: 'latest' }).getToken();
+    if (node.type.label !== 'string' || !node.value.startsWith('data:image/')) throw new Error(`Inline brand artwork anchor changed: ${name}`);
+    source = source.slice(0, start) + JSON.stringify(name === 'exploreAgentAvatarUrl' ? symbolUrl : brandCardUrl) + source.slice(start + node.end);
+  }
+  if (source.includes('function QuickNoteWindowSurface(')) {
+    if (!source.includes('from "./notes-branding.mjs"')) source = 'import {welcomeNote as notchWelcomeNote,refreshBuiltinWelcomeNotes as notchRefreshBuiltinNotes} from "./notes-branding.mjs";\n' + source;
+    source = patchFunction(source, 'createQuickNoteOnboardingPresentation', 'function createQuickNoteOnboardingPresentation(){return structuredClone(notchWelcomeNote);}');
+    source = patchFunction(source, 'createQuickNoteOnboardingInput', 'function createQuickNoteOnboardingInput(note){return {...note,attachments:[]};}');
+    source = patchFunction(source, 'QuickNoteWindowSurface', body => body.includes('notchRefreshBuiltinNotes(') ? body : replaceOnce(body, 'let Y1=await listQuickNotes();', 'let Y1=await notchRefreshBuiltinNotes(await listQuickNotes(),updateQuickNote);'));
+  }
+  source = source.replace('Symbol:NotchSymbol}=createNotchWorkbench', 'Symbol:NotchSymbol,Wordmark:NotchWordmark}=createNotchWorkbench');
+  if (source.includes('function QuickNoteEmptyState(')) source = patchFunction(source, 'QuickNoteEmptyState', 'function QuickNoteEmptyState(){return jsxRuntimeExports.jsxs("div",{"data-quick-note-empty-state":!0,className:"notch-notes-empty",role:"status",children:[jsxRuntimeExports.jsx(NotchWordmark,{width:112}),jsxRuntimeExports.jsx("p",{children:"No notes yet. Save an idea or add a note to a task."})]});}');
+  if (source.includes('function QuickNoteWindowHeader(')) source = patchFunction(source, 'QuickNoteWindowHeader', body => {
+    if (body.includes('className:"notch-notes-title"')) return body;
+    const tree = parse(body, { ecmaVersion: 'latest' }); let heading;
+    function visit(node) {
+      if (!node || typeof node !== 'object') return;
+      if (node.type === 'CallExpression' && node.arguments?.[0]?.value === 'h1') { heading = node; return; }
+      for (const value of Object.values(node)) if (Array.isArray(value)) value.forEach(visit); else visit(value);
+    }
+    visit(tree);
+    const children = heading?.arguments[1]?.properties.find(prop => prop.key.name === 'children')?.value;
+    if (!children) throw new Error('Notes header artwork anchor changed.');
+    return body.slice(0, children.start) + '[jsxRuntimeExports.jsx(NotchWordmark,{width:86}),jsxRuntimeExports.jsx("span",{className:"notch-notes-title",children:"Notes"})]' + body.slice(children.end);
+  });
+  source = source.replace('quickNotes:{open:"Open Quick Note",close:"Close Quick Note",title:"Quick Notes",description:"Saved snippets from Agent replies."', 'quickNotes:{open:"Open notes",close:"Close notes",title:"Notes",description:"Notes saved on this device."').replaceAll('addPlaceholder:"What’s on your mind…"', 'addPlaceholder:"Write a note…"');
   for (const name of ['SidebarSessionStateIndicator', 'SessionMiniIndicator', 'TaskMonitorRunningIndicator']) {
     if (!source.includes(`function ${name}(`)) continue;
     source = patchFunction(source, name, body => body
@@ -194,7 +226,7 @@ export async function verifyWorkbenchImports(assets, checkExports = true) {
 
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'update-settings-view.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'update-settings-view.mjs', 'notes-branding.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
   await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root, 'assets/fonts'), path.join(assets, 'fonts'), { recursive: true });
@@ -202,6 +234,12 @@ export async function installWorkbenchAssets(application, root) {
   await cp(path.join(root, 'assets/notch-symbol.png'), path.join(assets, 'notch-symbol.png'));
   const symbol = await readFile(path.join(root, 'assets/notch-symbol.svg'));
   for (const name of await readdir(assets)) if (/^notch(?:CnIdeLogo|DoorLogo|IdeLogo|Logo|workCnLogo|workLogo|worklogo)-[\w-]+\.svg$/.test(name)) await writeFile(path.join(assets, name), symbol);
+  const cards = {}, symbols = {};
+  for (const extension of ['svg', 'png', 'webp']) { cards[extension] = await readFile(path.join(root, `assets/notch-brand-card.${extension}`)); symbols[extension] = await readFile(path.join(root, `assets/notch-symbol.${extension}`)); }
+  for (const name of await readdir(assets)) {
+    const extension = path.extname(name).slice(1);
+    if (legacyBrandAsset.test(name) && cards[extension]) await writeFile(path.join(assets, name), /^(?:duck|Qoduck|(?:bird|crocodile|dog|gorilla)-|planAgentAvatar|userCard(?:Duck|SilverDuck))/.test(name) ? symbols[extension] : cards[extension]);
+  }
   const htmlFile = path.join(renderer, 'index.html'), html = await readFile(htmlFile, 'utf8');
   if (!html.includes('href="./assets/workbench-skin.css"')) await writeFile(htmlFile, html.replace('</head>', '<link rel="stylesheet" href="./assets/workbench-skin.css">\n</head>'));
   const icon = await readFile(path.join(root, 'assets/notch-symbol.png'));

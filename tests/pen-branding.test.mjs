@@ -23,12 +23,18 @@ test('packaged brand logos all contain the canonical mark without replacing prov
     await fs.mkdir(assets, { recursive: true }); await fs.mkdir(path.join(temporary, 'resources/application-icons'), { recursive: true });
     await fs.writeFile(path.join(renderer, 'index.html'), '<head></head>');
     const names = ['CnIdeLogo', 'DoorLogo', 'IdeLogo', 'Logo', 'workCnLogo', 'workLogo', 'worklogo'].map(name => 'notch' + name + '-fixture.svg');
-    for (const name of [...names, 'providerLogo-fixture.svg']) await fs.writeFile(path.join(assets, name), 'old artwork');
+    const otherBrand = ['duckHead-fixture.png', 'dog-fixture.svg', 'voice_thinking_00001-fixture.webp', 'quickNoteOnboardingFirstNote-fixture.webp', 'profileStickerSparseState-fixture.svg', 'notch-loading-line-fixture.svg'];
+    for (const name of [...names, ...otherBrand, 'providerLogo-fixture.svg', 'yarn-fixture.svg']) await fs.writeFile(path.join(assets, name), 'old artwork');
     const project = fileURLToPath(new URL('..', import.meta.url));
     await installWorkbenchAssets(application, project);
     const canonical = await fs.readFile(path.join(project, 'assets/notch-symbol.svg'), 'utf8');
     for (const name of names) assert.equal(await fs.readFile(path.join(assets, name), 'utf8'), canonical);
+    for (const name of otherBrand) {
+      const extension = path.extname(name), expected = /^(?:duckHead|dog)-/.test(name) ? 'notch-symbol' : 'notch-brand-card';
+      assert.deepEqual(await fs.readFile(path.join(assets, name)), await fs.readFile(path.join(project, 'assets', expected + extension)));
+    }
     assert.equal(await fs.readFile(path.join(assets, 'providerLogo-fixture.svg'), 'utf8'), 'old artwork');
+    assert.equal(await fs.readFile(path.join(assets, 'yarn-fixture.svg'), 'utf8'), 'old artwork');
   } finally {
     assert.ok(path.resolve(temporary).startsWith(path.resolve(os.tmpdir()) + path.sep));
     await fs.rm(temporary, { recursive: true, force: true });

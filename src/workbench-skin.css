@@ -106,3 +106,4 @@ html[data-notch-workbench=true] :is(button,input,select,[role=menu],[role=listbo
 .notch-update-settings input[type=checkbox]{width:16px;height:16px;flex-shrink:0;padding:0;accent-color:var(--notch-accent)}.notch-update-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.notch-update-settings progress{width:100%;height:4px;accent-color:var(--notch-accent)}
 .notch-task-dot{display:block;width:7px;height:7px;border-radius:50%;background:var(--notch-accent,#dab5d1);animation:none!important}
 .notch-quick-note-create{display:block;background:var(--notch-accent-fill);color:var(--notch-accent)}
+.notch-notes-title{font-family:inherit;font-size:14px;font-weight:500;line-height:1.4;color:var(--notch-muted)}.notch-notes-empty{pointer-events:none;position:absolute;inset:40% 24px auto;display:flex;flex-direction:column;align-items:center;gap:14px;text-align:center;color:var(--notch-muted);font-size:12px;line-height:1.6}.notch-notes-empty p{max-width:250px;margin:0}

@@ -6,6 +6,10 @@ export function createNotchWorkbench(React, useTheme) {
   const h = React.createElement;
   const WebSettings = createWebSettings(React);
   const UpdateSettings = createUpdateSettings(React);
+  function Wordmark({ width = 100, className = '' } = {}) {
+    const { resolvedTheme } = useTheme();
+    return h('img', { src: resolvedTheme.endsWith('-dark') ? darkWordmark : lightWordmark, alt: 'notch', width, height: width * 100 / 336, className });
+  }
   function Brand() {
     const { resolvedTheme } = useTheme();
     const [queued, setQueued] = React.useState([]);
@@ -98,5 +102,5 @@ export function createNotchWorkbench(React, useTheme) {
       h('path', { d: 'M25 76V29H40V39C44 31 51 29 58 29 70 29 77 38 77 51V76H62V53C62 47 59 43 54 43 46 43 40 49 40 56V76z' }),
       h('path', { d: 'M77 18h10v10H77z', className: 'notch-symbol-cut' }));
   }
-  return { Brand, ThemeControls, ModeSwitch, Welcome, QuickStart, PanelLauncher, Appearance, LocalProfile, Symbol };
+  return { Brand, ThemeControls, ModeSwitch, Welcome, QuickStart, PanelLauncher, Appearance, LocalProfile, Symbol, Wordmark };
 }
