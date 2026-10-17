@@ -8,9 +8,12 @@
  */
 
 import { execFile } from 'node:child_process';
+import { once } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import ignore from 'ignore';
+import { minimatch } from 'minimatch';
 import { z } from 'zod';
 import type { NotchTool, ToolResult } from './types.js';
 
@@ -35,6 +38,7 @@ export const grepTool: NotchTool<typeof parameters> = {
       ? path.isAbsolute(params.path) ? params.path : path.resolve(ctx.cwd, params.path)
       : ctx.cwd;
 
+    let child: import('node:child_process').ChildProcess | undefined;
     try {
       ctx.abortSignal?.throwIfAborted();
       if (ctx.workspaceSearch) {
@@ -54,7 +58,7 @@ export const grepTool: NotchTool<typeof parameters> = {
         searchPath,
       ];
 
-      const { stdout } = await execFileAsync(ctx.ripgrepPath || 'rg', rgArgs, {
+      const pending = execFileAsync(ctx.ripgrepPath || 'rg', rgArgs, {
         cwd: ctx.cwd,
         encoding: 'utf-8',
         timeout: 15_000,
@@ -62,10 +66,15 @@ export const grepTool: NotchTool<typeof parameters> = {
         windowsHide: true,
         signal: ctx.abortSignal,
       });
+      child = pending.child;
+      const { stdout } = await pending;
 
       return { content: stdout || '(no matches)' };
     } catch (err: any) {
-      if (ctx.abortSignal?.aborted) return { content: 'Search cancelled.', isError: true };
+      if (ctx.abortSignal?.aborted) {
+        if (child && child.exitCode === null && child.signalCode === null) await once(child, 'close').catch(() => {});
+        return { content: 'Search cancelled.', isError: true };
+      }
       // ripgrep uses exit 1 for a successful search with no matches.
       if (err.code === 1) return { content: '(no matches)' };
       if (err.code !== 'ENOENT') {
@@ -73,16 +82,21 @@ export const grepTool: NotchTool<typeof parameters> = {
       }
     }
 
-    // shortcut: fallback only handles extension globs and omits context, replace it if full ripgrep parity is needed.
+    // shortcut: the JavaScript fallback omits context; install ripgrep for full regex/context parity.
     try {
       ctx.abortSignal?.throwIfAborted();
       const regex = new RegExp(params.pattern);
       const results: string[] = [];
 
-      async function searchDir(dir: string) {
+      async function searchDir(dir: string, inherited: { base: string; rules: ReturnType<typeof ignore> }[] = []) {
         ctx.abortSignal?.throwIfAborted();
         if (results.length >= (params.max_results ?? 50)) return;
-
+        const rules = ignore();
+        for (const name of ['.gitignore', '.ignore']) {
+          try { rules.add(await fs.readFile(path.join(dir, name), 'utf8')); }
+          catch (error: any) { if (error.code !== 'ENOENT') throw error; }
+        }
+        const filters = [...inherited, { base: dir, rules }];
         const entries = await fs.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
           ctx.abortSignal?.throwIfAborted();
@@ -90,14 +104,11 @@ export const grepTool: NotchTool<typeof parameters> = {
           if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
 
           const full = path.join(dir, entry.name);
+          if (filters.some(({ base, rules }) => rules.ignores(path.relative(base, full).replaceAll('\\', '/') + (entry.isDirectory() ? '/' : '')))) continue;
           if (entry.isDirectory()) {
-            await searchDir(full);
+            await searchDir(full, filters);
           } else if (entry.isFile()) {
-            if (params.glob) {
-              // Simple glob check: *.ext
-              const ext = params.glob.replace(/^\*+\.?/, '');
-              if (ext && !entry.name.endsWith(ext)) continue;
-            }
+            if (params.glob && !minimatch(path.relative(searchPath, full).replaceAll('\\', '/'), params.glob, { matchBase: !params.glob.includes('/') })) continue;
             try {
               const content = await fs.readFile(full, 'utf-8');
               ctx.abortSignal?.throwIfAborted();

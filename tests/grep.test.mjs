@@ -84,6 +84,16 @@ test('grep rejects negative, fractional and empty result limits', () => {
   }
 });
 
+test('missing ripgrep still honors nested ignore rules and brace globs',async t=>{
+  const cwd=await fixture(t);await fs.mkdir(path.join(cwd,'nested'));
+  await fs.writeFile(path.join(cwd,'nested/.ignore'),'private.ts\n');
+  await fs.writeFile(path.join(cwd,'nested/private.ts'),'ignored_marker');
+  await fs.writeFile(path.join(cwd,'nested/visible.ts'),'needle');
+  const ctx={cwd,ripgrepPath:path.join(cwd,'missing-rg')};
+  assert.deepEqual(await grepTool.execute(grepTool.parameters.parse({pattern:'ignored_marker'}),ctx),{content:'(no matches)'});
+  assert.match((await grepTool.execute(grepTool.parameters.parse({pattern:'needle',glob:'**/*.{ts,tsx}'}),ctx)).content,/visible.ts:1:needle/);
+});
+
 test('the rebuilt desktop harness executes grep through its real tool loop', async t => {
   const { runDesktopTurn, CheckpointManager } = await import('../vendor/notch-core/desktop-harness.js');
   const cwd = await fixture(t);

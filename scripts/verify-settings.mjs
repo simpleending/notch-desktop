@@ -19,9 +19,11 @@ try {
   const workspace=page.getByRole('combobox',{name:'Task workspace',exact:true});
   await workspace.waitFor();await page.waitForFunction(()=>!document.querySelector('select[aria-label="Task workspace"]').disabled);
   assert.equal(await workspace.inputValue(),'shared');
-  await workspace.selectOption('isolated');await page.waitForFunction(async()=>await window.notchModels.workspace()==='isolated');
+  await workspace.selectOption('isolated');await page.waitForFunction(()=>{const field=document.querySelector('select[aria-label="Task workspace"]');return !field.disabled&&field.value==='isolated';});
+  assert.equal(await page.evaluate(()=>window.notchModels.workspace()),'isolated');
   assert.equal(JSON.parse(await fs.readFile(path.join(profile,'task-workspace.json'),'utf8')).mode,'isolated');
-  await workspace.selectOption('shared');await page.waitForFunction(async()=>await window.notchModels.workspace()==='shared');
+  await workspace.selectOption('shared');await page.waitForFunction(()=>{const field=document.querySelector('select[aria-label="Task workspace"]');return !field.disabled&&field.value==='shared';});
+  assert.equal(await page.evaluate(()=>window.notchModels.workspace()),'shared');
   assert.equal(JSON.parse(await fs.readFile(path.join(profile,'task-workspace.json'),'utf8')).mode,'shared');
   const navigation=page.getByRole('navigation',{name:'Settings',exact:true}),names=await navigation.getByRole('button').allTextContents();
   for(const name of names){

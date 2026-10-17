@@ -297,3 +297,15 @@ export function patchMcpShutdownBudget(source) {
   for(const participant of participants)source=source.replace(participant,participants[2]);
   return source.replace(previous,next);
 }
+
+export function patchProfileIcons(source) {
+  return patchFunction(source, 'HUt', original => {
+    if (original.includes('__notchProfileOverride')) return original;
+    for (const start of ['g=()=>{', 'p=async()=>{', 'm=()=>{']) {
+      if (original.split(start).length !== 2) throw new Error('Application icon integration differs from the inspected baseline.');
+      // Explicit profiles keep window branding but cannot rewrite shared OS shortcuts.
+      original = original.replace(start, start + 'if(globalThis.__notchProfileOverride)return;');
+    }
+    return original;
+  });
+}

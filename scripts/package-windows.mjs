@@ -12,7 +12,7 @@ import { installSetupRenderer } from '../src/renderer-patch.mjs';
 import { verifyRendererBranding } from '../src/branding-verification.mjs';
 import { rebrandTree } from '../src/rebrand-tree.mjs';
 import { verifyWorkbenchImports } from '../src/workbench-patch.mjs';
-import { patchDirectStartup, patchUndoIntegration, patchPersistedContextUsage, patchStartupShutdown, patchRecapLanguage } from '../src/bundle-patch.mjs';
+import { patchDirectStartup, patchUndoIntegration, patchPersistedContextUsage, patchStartupShutdown, patchRecapLanguage, patchProfileIcons } from '../src/bundle-patch.mjs';
 import { rebuildPluginCatalog, verifyPluginCatalog } from '../src/plugin-integrity.mjs';
 import { installLocalFeatures } from '../src/local-feature-bundles.mjs';
 import { patchLocalOnlyMain } from '../src/local-only-patch.mjs';
@@ -52,7 +52,7 @@ await fs.copyFile(path.join(ripgrepSource,'rg.exe'),path.join(app,'resources/bin
 assert.match((await promisify(execFile)(path.join(app,'resources/bin/notch-rg.exe'),['--version'],{windowsHide:true})).stdout,/^ripgrep 15\.2\.0[\s\S]*PCRE2 10\.45 is available/,'Packaged ripgrep must support the pinned PCRE2 engine.');
 extractAll(path.join(app,'resources/app.asar'),unpacked);
 const mainFile=path.join(unpacked,'out/main/index.js');
-await fs.writeFile(mainFile,patchRecapLanguage(patchLocalOnlyMain(patchStartupShutdown(patchPersistedContextUsage(patchUndoIntegration(patchWebToolCatalog(patchDirectStartup(await fs.readFile(mainFile,'utf8')))))))));
+await fs.writeFile(mainFile,patchProfileIcons(patchRecapLanguage(patchLocalOnlyMain(patchStartupShutdown(patchPersistedContextUsage(patchUndoIntegration(patchWebToolCatalog(patchDirectStartup(await fs.readFile(mainFile,'utf8'))))))))));
 await fs.cp(path.join(root,'src'),path.join(unpacked,'notch/src'),{recursive:true});
 const coreTarget=path.join(unpacked,'notch/vendor/notch-core');
 if(!path.resolve(coreTarget).startsWith(path.resolve(staging)+path.sep))throw new Error('Invalid harness target.');

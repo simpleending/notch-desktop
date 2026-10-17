@@ -3419,9 +3419,12 @@ Proceed?`
 
 // vendor/notch-cli/src/tools/grep.ts
 import { execFile as execFile2 } from "child_process";
+import { once } from "events";
 import fs11 from "fs/promises";
 import path12 from "path";
 import { promisify as promisify2 } from "util";
+import ignore from "ignore";
+import { minimatch as minimatch2 } from "minimatch";
 import { z as z7 } from "zod";
 var execFileAsync = promisify2(execFile2);
 var parameters7 = z7.object({
@@ -3437,6 +3440,7 @@ var grepTool = {
   parameters: parameters7,
   async execute(params, ctx) {
     const searchPath = params.path ? path12.isAbsolute(params.path) ? params.path : path12.resolve(ctx.cwd, params.path) : ctx.cwd;
+    let child;
     try {
       ctx.abortSignal?.throwIfAborted();
       if (ctx.workspaceSearch) {
@@ -3455,7 +3459,7 @@ var grepTool = {
         params.pattern,
         searchPath
       ];
-      const { stdout } = await execFileAsync(ctx.ripgrepPath || "rg", rgArgs, {
+      const pending = execFileAsync(ctx.ripgrepPath || "rg", rgArgs, {
         cwd: ctx.cwd,
         encoding: "utf-8",
         timeout: 15e3,
@@ -3463,9 +3467,15 @@ var grepTool = {
         windowsHide: true,
         signal: ctx.abortSignal
       });
+      child = pending.child;
+      const { stdout } = await pending;
       return { content: stdout || "(no matches)" };
     } catch (err) {
-      if (ctx.abortSignal?.aborted) return { content: "Search cancelled.", isError: true };
+      if (ctx.abortSignal?.aborted) {
+        if (child && child.exitCode === null && child.signalCode === null) await once(child, "close").catch(() => {
+        });
+        return { content: "Search cancelled.", isError: true };
+      }
       if (err.code === 1) return { content: "(no matches)" };
       if (err.code !== "ENOENT") {
         return { content: `Search error: ${err.stderr?.trim() || err.message}`, isError: true };
@@ -3475,22 +3485,29 @@ var grepTool = {
       ctx.abortSignal?.throwIfAborted();
       const regex = new RegExp(params.pattern);
       const results = [];
-      async function searchDir(dir) {
+      async function searchDir(dir, inherited = []) {
         ctx.abortSignal?.throwIfAborted();
         if (results.length >= (params.max_results ?? 50)) return;
+        const rules = ignore();
+        for (const name of [".gitignore", ".ignore"]) {
+          try {
+            rules.add(await fs11.readFile(path12.join(dir, name), "utf8"));
+          } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+          }
+        }
+        const filters = [...inherited, { base: dir, rules }];
         const entries = await fs11.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
           ctx.abortSignal?.throwIfAborted();
           if (results.length >= (params.max_results ?? 50)) return;
           if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
           const full = path12.join(dir, entry.name);
+          if (filters.some(({ base, rules: rules2 }) => rules2.ignores(path12.relative(base, full).replaceAll("\\", "/") + (entry.isDirectory() ? "/" : "")))) continue;
           if (entry.isDirectory()) {
-            await searchDir(full);
+            await searchDir(full, filters);
           } else if (entry.isFile()) {
-            if (params.glob) {
-              const ext = params.glob.replace(/^\*+\.?/, "");
-              if (ext && !entry.name.endsWith(ext)) continue;
-            }
+            if (params.glob && !minimatch2(path12.relative(searchPath, full).replaceAll("\\", "/"), params.glob, { matchBase: !params.glob.includes("/") })) continue;
             try {
               const content = await fs11.readFile(full, "utf-8");
               ctx.abortSignal?.throwIfAborted();
@@ -4242,15 +4259,18 @@ var githubTool = {
 };
 
 // vendor/notch-cli/src/tools/lsp.ts
-import { execFileSync } from "child_process";
+import { execFile as execFile3 } from "child_process";
+import { createRequire as createRequire2 } from "module";
+import { promisify as promisify3 } from "util";
 import fs13 from "fs/promises";
 import path15 from "path";
 import { z as z14 } from "zod";
+var execFileAsync2 = promisify3(execFile3);
 var parameters12 = z14.object({
   action: z14.enum(["definition", "references", "diagnostics", "hover"]).describe("LSP action: definition (go-to-def), references (find usages), diagnostics (type errors), hover (type info)"),
   file: z14.string().describe("File path (relative or absolute)"),
-  line: z14.number().optional().describe("Line number (1-based) \u2014 required for definition, references, hover"),
-  character: z14.number().optional().describe("Column number (0-based) \u2014 required for definition, references, hover"),
+  line: z14.number().int().positive().optional().describe("Line number (1-based) \u2014 required for definition, references, hover"),
+  character: z14.number().int().nonnegative().optional().describe("Column number (0-based) \u2014 required for definition, references, hover"),
   symbol: z14.string().optional().describe("Symbol name to search for (alternative to line/character)")
 });
 function detectLanguage(filePath) {
@@ -4273,45 +4293,49 @@ function detectLanguage(filePath) {
       return { lang: "unknown", server: null, tsconfig: false };
   }
 }
-function isAvailable(cmd) {
+async function isAvailable(cmd, signal) {
   try {
     const which = process.platform === "win32" ? "where" : "which";
-    execFileSync(which, [cmd], { stdio: "pipe", timeout: 3e3 });
+    await execFileAsync2(which, [cmd], { timeout: 3e3, windowsHide: true, signal });
     return true;
   } catch {
+    signal?.throwIfAborted();
     return false;
   }
 }
-async function tsDiagnostics(filePath, cwd) {
+async function tsDiagnostics(filePath, cwd, signal) {
+  let compiler;
   try {
-    const result = execFileSync("npx", ["tsc", "--noEmit", "--pretty", "false", filePath], {
+    compiler = createRequire2(path15.join(cwd, "package.json")).resolve("typescript/bin/tsc");
+  } catch {
+    throw new Error("TypeScript is not installed in this project. Install its development dependencies before checking diagnostics.");
+  }
+  const project = await fs13.stat(path15.join(cwd, "tsconfig.json")).then((s) => s.isFile(), (error) => {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  });
+  try {
+    const { stdout: result } = await execFileAsync2(process.execPath, [compiler, "--noEmit", "--pretty", "false", ...project ? ["--project", cwd] : [filePath]], {
       cwd,
       encoding: "utf-8",
-      timeout: 3e4
+      windowsHide: true,
+      signal,
+      timeout: 3e4,
+      maxBuffer: 5 * 1024 ** 2,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }
     });
     return result.trim() || "No type errors found.";
   } catch (err) {
+    signal?.throwIfAborted();
     const output = err.stdout || err.stderr || "";
-    if (output.includes("error TS")) {
+    if (typeof err.code === "number" && !err.signal && output.includes("error TS")) {
       const lines = output.split("\n").filter((l) => l.includes("error TS"));
       return lines.slice(0, 20).join("\n") || "No type errors found.";
     }
-    try {
-      const result = execFileSync("npx", ["tsc", "--noEmit", "--pretty", "false"], {
-        cwd,
-        encoding: "utf-8",
-        timeout: 3e4
-      });
-      const allLines = result.trim().split("\n").slice(0, 30).join("\n");
-      return allLines || "No type errors found.";
-    } catch (err2) {
-      const out = err2.stdout || err2.stderr || "";
-      const errLines = out.split("\n").filter((l) => l.includes("error TS"));
-      return errLines.slice(0, 20).join("\n") || "Could not run type checker.";
-    }
+    throw err;
   }
 }
-async function findDefinition(symbol, cwd) {
+async function findDefinition(symbol, cwd, signal, ripgrep = "rg") {
   if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(symbol)) {
     return `Invalid symbol name: "${symbol}"`;
   }
@@ -4327,7 +4351,8 @@ async function findDefinition(symbol, cwd) {
   ];
   const combinedPattern = patterns.join("|");
   try {
-    const result = execFileSync("rg", [
+    const { stdout: result } = await execFileAsync2(ripgrep, [
+      "--no-require-git",
       "--no-heading",
       "--line-number",
       "-e",
@@ -4337,12 +4362,16 @@ async function findDefinition(symbol, cwd) {
       "--type",
       "code",
       "-m",
-      "10"
-    ], { cwd, encoding: "utf-8", timeout: 1e4, maxBuffer: 1024 * 1024 });
+      "10",
+      "."
+    ], { cwd, encoding: "utf-8", windowsHide: true, signal, timeout: 1e4, maxBuffer: 1024 * 1024 });
     return result.trim() || `No definition found for "${symbol}"`;
-  } catch {
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error.code === 1) return `No definition found for "${symbol}"`;
+    if (error.code !== "ENOENT") throw error;
     try {
-      const result = execFileSync("grep", [
+      const { stdout: result } = await execFileAsync2("grep", [
         "-rn",
         "-E",
         combinedPattern,
@@ -4353,20 +4382,23 @@ async function findDefinition(symbol, cwd) {
         "--include=*.go",
         "--include=*.rs",
         "."
-      ], { cwd, encoding: "utf-8", timeout: 1e4, maxBuffer: 1024 * 1024 });
+      ], { cwd, encoding: "utf-8", windowsHide: true, signal, timeout: 1e4, maxBuffer: 1024 * 1024 });
       const lines = result.trim().split("\n").slice(0, 10).join("\n");
       return lines || `No definition found for "${symbol}"`;
-    } catch {
+    } catch (error2) {
+      signal?.throwIfAborted();
+      if (error2.code !== 1) throw error2;
       return `No definition found for "${symbol}"`;
     }
   }
 }
-async function findReferences(symbol, cwd) {
+async function findReferences(symbol, cwd, signal, ripgrep = "rg") {
   if (!/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(symbol)) {
     return `Invalid symbol name: "${symbol}"`;
   }
   try {
-    const result = execFileSync("rg", [
+    const { stdout: result } = await execFileAsync2(ripgrep, [
+      "--no-require-git",
       "--no-heading",
       "--line-number",
       "-w",
@@ -4376,15 +4408,19 @@ async function findReferences(symbol, cwd) {
       "--type",
       "code",
       "-m",
-      "30"
-    ], { cwd, encoding: "utf-8", timeout: 1e4, maxBuffer: 1024 * 1024 });
+      "30",
+      "."
+    ], { cwd, encoding: "utf-8", windowsHide: true, signal, timeout: 1e4, maxBuffer: 1024 * 1024 });
     const lines = result.trim().split("\n");
     return `Found ${lines.length} reference(s) for "${symbol}":
 
 ${lines.join("\n")}`;
-  } catch {
+  } catch (error) {
+    signal?.throwIfAborted();
+    if (error.code === 1) return `No references found for "${symbol}"`;
+    if (error.code !== "ENOENT") throw error;
     try {
-      const result = execFileSync("grep", [
+      const { stdout: result } = await execFileAsync2("grep", [
         "-rn",
         "-w",
         symbol,
@@ -4395,17 +4431,19 @@ ${lines.join("\n")}`;
         "--include=*.go",
         "--include=*.rs",
         "."
-      ], { cwd, encoding: "utf-8", timeout: 1e4, maxBuffer: 1024 * 1024 });
+      ], { cwd, encoding: "utf-8", windowsHide: true, signal, timeout: 1e4, maxBuffer: 1024 * 1024 });
       const lines = result.trim().split("\n").slice(0, 30);
       return `Found ${lines.length} reference(s) for "${symbol}":
 
 ${lines.join("\n")}`;
-    } catch {
+    } catch (error2) {
+      signal?.throwIfAborted();
+      if (error2.code !== 1) throw error2;
       return `No references found for "${symbol}"`;
     }
   }
 }
-async function getHoverInfo(symbol, filePath, line, cwd) {
+async function getHoverInfo(symbol, filePath, line, cwd, signal, ripgrep = "rg") {
   try {
     const absPath = path15.isAbsolute(filePath) ? filePath : path15.resolve(cwd, filePath);
     const content = await fs13.readFile(absPath, "utf-8");
@@ -4413,7 +4451,7 @@ async function getHoverInfo(symbol, filePath, line, cwd) {
     const startLine = Math.max(0, line - 3);
     const endLine = Math.min(lines.length, line + 2);
     const context = lines.slice(startLine, endLine).map((l, i) => `${startLine + i + 1}: ${l}`).join("\n");
-    const def = await findDefinition(symbol, cwd);
+    const def = await findDefinition(symbol, cwd, signal, ripgrep);
     return `## Context at ${filePath}:${line}
 \`\`\`
 ${context}
@@ -4422,61 +4460,78 @@ ${context}
 ## Definition
 ${def}`;
   } catch (err) {
+    signal?.throwIfAborted();
     return `Could not get hover info: ${err.message}`;
   }
 }
-async function getDiagnostics(filePath, cwd) {
+async function getDiagnostics(filePath, cwd, signal) {
   const absPath = path15.isAbsolute(filePath) ? filePath : path15.resolve(cwd, filePath);
   const { lang } = detectLanguage(absPath);
   switch (lang) {
     case "typescript":
-      return tsDiagnostics(absPath, cwd);
+      return tsDiagnostics(absPath, cwd, signal);
     case "python": {
-      if (isAvailable("pyright")) {
+      if (await isAvailable("pyright", signal)) {
         try {
-          const result = execFileSync("pyright", [absPath], {
+          const { stdout: result } = await execFileAsync2("pyright", [absPath], {
             cwd,
             encoding: "utf-8",
+            windowsHide: true,
+            signal,
             timeout: 3e4
           });
           return result.trim() || "No errors found.";
         } catch (err) {
+          signal?.throwIfAborted();
+          if (typeof err.code !== "number" || err.signal) throw err;
           return err.stdout || err.stderr || "Pyright check failed.";
         }
       }
       try {
-        execFileSync("python", ["-m", "py_compile", absPath], {
+        await execFileAsync2("python", ["-m", "py_compile", absPath], {
           cwd,
           encoding: "utf-8",
+          windowsHide: true,
+          signal,
           timeout: 1e4
         });
         return "No syntax errors found.";
       } catch (err) {
+        signal?.throwIfAborted();
+        if (typeof err.code !== "number" || err.signal) throw err;
         return err.stderr || err.stdout || "Syntax check failed.";
       }
     }
     case "go": {
       try {
-        const result = execFileSync("go", ["vet", absPath], {
+        const { stdout: result } = await execFileAsync2("go", ["vet", absPath], {
           cwd,
           encoding: "utf-8",
+          windowsHide: true,
+          signal,
           timeout: 15e3
         });
         return result.trim() || "No issues found.";
       } catch (err) {
+        signal?.throwIfAborted();
+        if (typeof err.code !== "number" || err.signal) throw err;
         return err.stderr || err.stdout || "Go vet failed.";
       }
     }
     case "rust": {
       try {
-        const result = execFileSync("cargo", ["check", "--message-format", "short"], {
+        const { stdout: result } = await execFileAsync2("cargo", ["check", "--message-format", "short"], {
           cwd,
           encoding: "utf-8",
+          windowsHide: true,
+          signal,
           timeout: 6e4
         });
         const lines = result.trim().split("\n").slice(0, 30).join("\n");
         return lines || "No issues found.";
       } catch (err) {
+        signal?.throwIfAborted();
+        if (typeof err.code !== "number" || err.signal) throw err;
         return err.stderr || err.stdout || "Cargo check failed.";
       }
     }
@@ -4486,19 +4541,20 @@ async function getDiagnostics(filePath, cwd) {
 }
 var lspTool = {
   name: "lsp",
-  description: "Code intelligence: find definitions, references, type errors, and hover info. Uses TypeScript compiler, pyright, gopls, or grep-based heuristics. Actions: definition (go-to-def), references (find usages), diagnostics (type errors), hover (type info). Provide either line/character position or a symbol name.",
+  description: "Code intelligence: find definitions, references, type errors, and hover info. Uses installed compilers and grep-based heuristics, not a persistent language server. Actions: definition (go-to-def), references (find usages), diagnostics (type errors), hover (type info). Provide either line/character position or a symbol name.",
   parameters: parameters12,
   async execute(params, ctx) {
     const filePath = params.file;
     const absPath = path15.isAbsolute(filePath) ? filePath : path15.resolve(ctx.cwd, filePath);
     try {
+      ctx.abortSignal?.throwIfAborted();
       switch (params.action) {
         case "definition": {
           const symbol = params.symbol || await extractSymbol(absPath, params.line, params.character);
           if (!symbol) {
             return { content: "Provide a symbol name or line/character position.", isError: true };
           }
-          const result = await findDefinition(symbol, ctx.cwd);
+          const result = await findDefinition(symbol, ctx.cwd, ctx.abortSignal, ctx.ripgrepPath);
           return { content: result };
         }
         case "references": {
@@ -4506,11 +4562,11 @@ var lspTool = {
           if (!symbol) {
             return { content: "Provide a symbol name or line/character position.", isError: true };
           }
-          const result = await findReferences(symbol, ctx.cwd);
+          const result = await findReferences(symbol, ctx.cwd, ctx.abortSignal, ctx.ripgrepPath);
           return { content: result };
         }
         case "diagnostics": {
-          const result = await getDiagnostics(filePath, ctx.cwd);
+          const result = await getDiagnostics(filePath, ctx.cwd, ctx.abortSignal);
           return { content: result };
         }
         case "hover": {
@@ -4518,14 +4574,14 @@ var lspTool = {
           if (!symbol) {
             return { content: "Provide a symbol name or line/character position.", isError: true };
           }
-          const result = await getHoverInfo(symbol, filePath, params.line ?? 1, ctx.cwd);
+          const result = await getHoverInfo(symbol, filePath, params.line ?? 1, ctx.cwd, ctx.abortSignal, ctx.ripgrepPath);
           return { content: result };
         }
         default:
           return { content: `Unknown action: ${params.action}`, isError: true };
       }
     } catch (err) {
-      return { content: `LSP error: ${err.message}`, isError: true };
+      return { content: ctx.abortSignal?.aborted ? "Code intelligence cancelled." : `LSP error: ${err.message}`, isError: true };
     }
   }
 };
@@ -7204,7 +7260,8 @@ import { generateText as generateText3 } from "ai";
 
 // vendor/notch-cli/src/agent/context-budget.ts
 function estimateTextTokens(text2) {
-  const nonAscii = [...text2].filter((char) => char.charCodeAt(0) > 127).length;
+  let nonAscii = 0;
+  for (const char of text2) if (char.charCodeAt(0) > 127) nonAscii++;
   return Math.ceil((text2.length - nonAscii) / 3 + nonAscii);
 }
 function contextBudget(window, overhead = 0, outputLimit) {

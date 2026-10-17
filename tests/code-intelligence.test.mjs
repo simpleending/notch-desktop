@@ -1,0 +1,21 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import {createRequire} from 'node:module';
+import {lspTool} from '../vendor/notch-cli/src/tools/lsp.ts';
+test('desktop code intelligence yields and uses project TypeScript settings with real diagnostics',async t=>{
+  const cwd=await fs.mkdtemp(path.join(os.tmpdir(),'notch-desktop-lsp-'));
+  t.after(()=>fs.rm(cwd,{recursive:true,force:true,maxRetries:5,retryDelay:100}));
+  await fs.mkdir(path.join(cwd,'node_modules'));
+  await fs.symlink(path.dirname(createRequire(import.meta.url).resolve('typescript/package.json')),path.join(cwd,'node_modules/typescript'),'junction');
+  await fs.writeFile(path.join(cwd,'tsconfig.json'),JSON.stringify({compilerOptions:{target:'ES2022',types:[]},files:['test.ts']}));
+  await fs.writeFile(path.join(cwd,'test.ts'),'export const answer: bigint = 1n;');
+  const run=(params,signal)=>lspTool.execute(lspTool.parameters.parse({file:'test.ts',...params}),{cwd,abortSignal:signal});
+  let yielded=false;setImmediate(()=>{yielded=true;});
+  assert.equal((await run({action:'definition',symbol:'answer'})).isError,undefined);assert.equal(yielded,true);
+  assert.deepEqual(await run({action:'diagnostics'}),{content:'No type errors found.'});
+  await fs.writeFile(path.join(cwd,'test.ts'),'const broken: string = 42;');assert.match((await run({action:'diagnostics'})).content,/TS2322/);
+  const controller=new AbortController();controller.abort();assert.equal((await run({action:'diagnostics'},controller.signal)).isError,true);
+});

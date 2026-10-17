@@ -25,10 +25,8 @@ async function index(root, content) {
     if (indexes.size >= 2) { const oldest = indexes.keys().next().value; destroy(indexes.get(oldest)); indexes.delete(oldest); }
     const finder = value(FileFinder.create({ basePath: root, followSymlinks: false, disableMmapCache: !content, disableContentIndexing: !content, cacheBudgetMaxBytes: 64 * 1024 ** 2, enableHomeDirScanning: true }));
     entry = { finder, content, dirty: true, revision: 0 };
-    if (content) {
-      entry.watcher = watch(root, { recursive: true }, () => { entry.dirty = true; entry.revision++; });
-      entry.watcher.on('error', () => { entry.dirty = true; entry.watchFailed = true; });
-    }
+    entry.watcher = watch(root, { recursive: true }, () => { entry.dirty = true; entry.revision++; });
+    entry.watcher.on('error', () => { entry.dirty = true; entry.watchFailed = true; });
     indexes.set(root, entry);
   } else { indexes.delete(root); indexes.set(root, entry); }
   if (entry.dirty && entry.ready) value(entry.finder.scanFiles());
@@ -81,8 +79,9 @@ async function search({ root, query, operation = 'search', params, active = () =
   root = await fs.realpath(root);
   if (!(await fs.stat(root)).isDirectory()) throw new Error('File search root is not a directory.');
   if (operation !== 'search') return tool(operation, root, params, active);
-  const { finder } = await index(root, false);
+  const entry = await index(root, false), { finder } = entry, revision = entry.revision;
   const complete = value(await finder.waitForScan(5000));
+  if (complete) { entry.ready = true; entry.dirty = entry.revision !== revision || !!entry.watchFailed; }
   const found = value(finder.fileSearch(query.replaceAll('\\', '/'), { pageSize: 200, maxThreads: 2 }));
   const entries = [];
   for (const item of found.items) {

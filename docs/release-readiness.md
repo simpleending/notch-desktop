@@ -1,5 +1,9 @@
 # Windows release verification
 
+Version 0.1.22 shares CLI 0.7.25's cancellable code-intelligence commands and safer grep fallback. Explicit profiles retain window branding but cannot watch or rewrite shared Windows shortcuts; competing test profiles previously caused repeated native shortcut work. Filename-only fff indexes now use explicit file watchers and rescan after invalidation, so new files and ignore changes remain visible.
+
+The current performance audit uses real Windows processes and distinguishes model inference from application overhead. See [the bottleneck audit](performance-audit.md) for measurements, Rust recommendations, and verification limits.
+
 Version 0.1.15 fixes background launches from native desktop chats. The supervisor uses Electron's Node mode instead of starting another IDE window, then restores the original environment before running the user's command. CLI npm 0.7.18 is unchanged. Source tests and typecheck pass; the GUI-specific regression checks real background readiness, stdout/stderr logs, original environment values, and serving after app exit.
 
 The frozen package passed 167 source tests and the typecheck. Its GUI Electron regression passed both absent and explicitly preserved environment cases: native shell tools started real servers, foreground readiness checks passed, both log streams contained their proof values, and both servers remained available after GUI exit. This test deliberately starts without inherited Node mode; the earlier Electron-as-Node CLI checks did not cover the failing desktop path.

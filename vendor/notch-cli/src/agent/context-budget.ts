@@ -1,6 +1,7 @@
 /** Token estimates include message framing; provider counts remain the UI's source of truth. */
 export function estimateTextTokens(text: string): number {
-  const nonAscii = [...text].filter(char => char.charCodeAt(0) > 127).length;
+  let nonAscii = 0;
+  for (const char of text) if (char.charCodeAt(0) > 127) nonAscii++;
   return Math.ceil((text.length - nonAscii) / 3 + nonAscii);
 }
 
