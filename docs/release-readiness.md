@@ -1,5 +1,9 @@
 # Windows release verification
 
+Version 0.1.15 fixes background launches from native desktop chats. The supervisor uses Electron's Node mode instead of starting another IDE window, then restores the original environment before running the user's command. CLI npm 0.7.18 is unchanged. Source tests and typecheck pass; the GUI-specific regression checks real background readiness, stdout/stderr logs, original environment values, and serving after app exit.
+
+The frozen package passed 167 source tests and the typecheck. Its GUI Electron regression passed both absent and explicitly preserved environment cases: native shell tools started real servers, foreground readiness checks passed, both log streams contained their proof values, and both servers remained available after GUI exit. This test deliberately starts without inherited Node mode; the earlier Electron-as-Node CLI checks did not cover the failing desktop path.
+
 Version 0.1.14 embeds the public CLI 0.7.18 and shares its execution guards with the native IDE agent. Duplicate tool calls are skipped, dependent tools execute in order, unchanged failed retries are bounded, and failed verification receipts survive compaction and restart. The desktop result adapter reports stalled or failed-verification turns as failures. A successful model statement cannot clear a recorded failed check; an actual passing rerun is required.
 
 The source checks passed 167 desktop tests, including native-host real-shell failure/restart/recovery and retry cases, plus the typecheck. The embedded CLI passed eight OS/protocol reliability checks. Local background servers return a PID and log paths and require a separate readiness check. SSH retains foreground execution; its adapter explicitly rejects the new local-only background option rather than silently ignoring it. Live paid OpenRouter inference remains deferred.

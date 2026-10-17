@@ -2957,6 +2957,7 @@ var LocalTerminal = class {
       const bootstrap = String.raw`
 const {spawn}=require('node:child_process'),fs=require('node:fs');
 const p=JSON.parse(process.argv[1]),win=process.platform==='win32';
+if(p.runAsNode===undefined)delete process.env.ELECTRON_RUN_AS_NODE;else process.env.ELECTRON_RUN_AS_NODE=p.runAsNode;
 const child=spawn(win?(process.env.COMSPEC||'cmd.exe'):'/bin/sh',win?['/d','/s','/c','"'+p.command+'"']:['-lc',p.command],{cwd:p.cwd,windowsHide:true,windowsVerbatimArguments:win});
 child.stdin.end();
 child.stdout.on('data',data=>fs.appendFileSync(p.stdoutFile,data));
@@ -2964,9 +2965,10 @@ child.stderr.on('data',data=>fs.appendFileSync(p.stderrFile,data));
 child.on('error',error=>{fs.appendFileSync(p.stderrFile,error.message);process.exitCode=1;});
 child.on('close',code=>{process.exitCode=code??1;});
 `;
-      child = spawn(process.execPath, ["-e", bootstrap, JSON.stringify({ command: req.command, cwd: req.cwd, stdoutFile, stderrFile })], {
+      const env = { ...process.env, ...req.env };
+      child = spawn(process.execPath, ["-e", bootstrap, JSON.stringify({ command: req.command, cwd: req.cwd, stdoutFile, stderrFile, runAsNode: env.ELECTRON_RUN_AS_NODE })], {
         cwd: req.cwd,
-        env: { ...process.env, ...req.env },
+        env: { ...env, ...process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {} },
         windowsHide: true,
         detached: true,
         stdio: "ignore"

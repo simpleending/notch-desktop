@@ -1,5 +1,7 @@
 # Developing notch desktop
 
+`npm run verify:gui-background -- <packaged-executable> <report.json>` runs native shell tools in the actual GUI Electron process with `ELECTRON_RUN_AS_NODE` absent. It checks background server readiness, both log streams, preservation of the user's original environment, and continued serving after the GUI exits. This covers the desktop supervisor path that Electron-as-Node CLI checks do not exercise.
+
 The vendored desktop core and embedded CLI share the 0.7.18 execution guard. `tests/execution-reliability.test.mjs` exercises the native host and real OS shell with deterministic provider responses: a failed check cannot become success through model text, receipts survive host restart, real repairs and passing reruns clear failures, and duplicate calls/retries do not repeat indefinitely. The workbench adapter preserves failure statuses. SSH background launches are not implemented; use an explicit remote service manager and verify it separately.
 
 `node scripts/verify-openrouter-config.mjs <packaged-executable> <report.json>` checks the actual UI and packaged provider loop using a simulated OpenRouter catalog and responses in an isolated profile. It verifies semantic compaction with a 512-token output ceiling, model switching, real file-tool results, and history/model selection after restart. It makes no paid requests and leaves the user's profile untouched.
