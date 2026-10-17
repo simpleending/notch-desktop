@@ -11,6 +11,11 @@ const brandCardUrl = 'data:image/svg+xml;base64,' + readFileSync(new URL('../ass
 const symbolUrl = 'data:image/svg+xml;base64,' + Buffer.from(symbolMarkup).toString('base64');
 export const legacyBrandAsset = /^(?:duck|Qoduck|userCard|voice_|activeDays\d+Sticker|(?:automationFirstCreate|desktopPetFirstUse|forkFirstUse|goalFirstUse|mobileMessageFirstReceive|snakeFirstPlay|voiceFirstUse)Sticker|notch(?:Anniversary|Pioneer|-(?:loading-line|metal|mobile-download-visual))|profileStickerSparseState|quickNote(?:AddButton|EmptyState|OnboardingFirstNote|TitleQuick)|onboardingWallpaper|parchmentDoodle|(?:bird|crocodile|dog|gorilla)-|planAgentAvatar|agent(?:-team)?-creation-figure|Login_poster|update-notification-card|feedbackWatermark|(?:failed|idle|jumping|look|review|running|waiting|waving|glass)(?:-|_))/;
 export function patchSecondaryArtwork(source) {
+  if (source.includes('function QuickNoteThemeSync(')) source = patchFunction(source, 'QuickNoteThemeSync', body => {
+    if (body.includes('root.dataset.notchNotes')) return body;
+    body = replaceOnce(body, '{setWindowThemeMode:t1}', '{setWindowThemeMode:t1,resolvedTheme:notchNotesTheme}');
+    return replaceOnce(body, 'return reactExports.useEffect(', 'reactExports.useEffect(()=>{const root=document.documentElement;root.dataset.notchNotes="true";root.dataset.notchAppearance=notchNotesTheme.endsWith("-dark")?"dark":"light"},[notchNotesTheme]);return reactExports.useEffect(');
+  });
   for (const name of ['appleTreeIllustration', 'appleTreeIllustrationColor', 'appleTreeStampGray', 'beeDoodle', 'mintDoodle', 'exploreAgentAvatarUrl']) {
     const match = new RegExp(`\\b${name}=`).exec(source);
     if (!match) continue;

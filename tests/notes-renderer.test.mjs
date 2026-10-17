@@ -19,3 +19,15 @@ test('Notes uses a themed wordmark, plain welcome and empty state while retainin
     assert.ok(image.props.src.endsWith(theme.endsWith('dark') ? 'notch-wordmark-dark.svg' : 'notch-wordmark-light.svg'));
   }
 });
+test('Notes follows the theme palette without enabling workbench layout rules in its window', () => {
+  const source = 'function QuickNoteThemeSync(){const{setWindowThemeMode:t1}=useTheme();return reactExports.useEffect(()=>{},[]);}';
+  const patched = patchSecondaryArtwork(source);
+  assert.equal(patchSecondaryArtwork(rebrandWorkbenchText(patched)), rebrandWorkbenchText(patched));
+  for (const appearance of ['light', 'dark']) {
+    const document = { documentElement: { dataset: {} } };
+    new Function('document', 'reactExports', 'useTheme', patched + ';QuickNoteThemeSync();')(document, { useEffect: action => action() }, () => ({ resolvedTheme: 'forest-' + appearance, setWindowThemeMode() {} }));
+    assert.equal(document.documentElement.dataset.notchNotes, 'true');
+    assert.equal(document.documentElement.dataset.notchAppearance, appearance);
+    assert.equal(document.documentElement.dataset.notchWorkbench, undefined);
+  }
+});
