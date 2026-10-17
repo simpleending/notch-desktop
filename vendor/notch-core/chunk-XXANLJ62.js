@@ -29,9 +29,12 @@ function colibriAsset(platform = process.platform, arch = process.arch) {
   if (!asset) throw new Error("Experimental Colibri supports Windows x64, Linux x64 and Apple Silicon. Choose Ollama on this system.");
   return { name: `colibri-v${COLIBRI_VERSION}-${asset[0]}`, sha256: asset[1] };
 }
+function colibriModelEnvironment(env) {
+  return Object.fromEntries(Object.entries(env).filter(([key]) => !/^(?:TOK|TOKENS|SNAP(?:_MIRROR)?|MODEL|CHAT_TEMPLATE|THINK|Q(?:36|38)_EOS|K3_THINK|CLEF_(?:TOKENIZE|RECORDS|IDS)|K3_VALIDATE_TOKEN)$/i.test(key) && (!/^COLI_/i.test(key) || /^COLI_(?:VULKAN|VK_SHADERS|NO_OMP_TUNE)$/i.test(key))));
+}
 function environment(token) {
   return {
-    ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api.?key|^COLI_|^HF_/i.test(key))),
+    ...colibriModelEnvironment(Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api.?key|^COLI_|^HF_/i.test(key)))),
     COLI_SETUP_HOME: path.join(root(), "state"),
     HF_HOME: path.join(root(), "hf"),
     PYTHONUTF8: "1",
@@ -308,6 +311,7 @@ async function startColibri(modelId, contextWindow = COLIBRI_DEFAULT_CONTEXT, si
       cfg.backend = "cpu";
       cfg.env = {};
     }
+    cfg.env = colibriModelEnvironment(cfg.env || {});
     cfg.args = ["web", "--model", cfg.model_dir, "--host", "127.0.0.1", "--port", "11437", "--ctx", String(contextWindow), "--cap", String(plan.tiers.ram.cache_slots_per_layer), "--kv-slots", "1", "--max-queue", "8", "--no-think"];
     if (cfg.model?.id?.startsWith("local-")) cfg.args.push("--model-id", `notch-${cfg.model.id}`);
     await atomic(setupFile(), cfg);
@@ -405,6 +409,7 @@ export {
   COLIBRI_VERSION,
   COLIBRI_URL,
   colibriAsset,
+  colibriModelEnvironment,
   prepareColibri,
   colibriCatalog,
   colibriPlanFits,

@@ -12,7 +12,7 @@ import {closeQaApp} from './process-tree.mjs';
 const executable=path.resolve(process.argv[2]),reportFile=path.resolve(process.argv[3]);
 const workspace=await fs.mkdtemp(path.join(os.tmpdir(),'notch-colibri-real-workspace-'));
 const profile=await fs.mkdtemp(path.join(os.tmpdir(),'notch-colibri-real-profile-'));
-const receipt='COLIBRI_IDE_'+randomUUID().replaceAll('-','');
+const receipt='COLIBRI_IDE_'+randomUUID().replaceAll('-','')+'_café_λ_東京';
 const report={passed:false,executable,workspace,profile,receipt,method:'Real packaged IDE renderer/model picker and native query harness; real local Colibri inference, no model responses mocked.'};
 let app,page;
 try {

@@ -32,8 +32,14 @@ export function colibriAsset(platform = process.platform, arch = process.arch) {
   if (!asset) throw new Error('Experimental Colibri supports Windows x64, Linux x64 and Apple Silicon. Choose Ollama on this system.');
   return { name: `colibri-v${COLIBRI_VERSION}-${asset[0]}`, sha256: asset[1] };
 }
+export function colibriModelEnvironment(env: NodeJS.ProcessEnv) {
+  // The selected checkpoint owns its tokenizer, template and stop tokens.
+  return Object.fromEntries(Object.entries(env).filter(([key]) =>
+    !/^(?:TOK|TOKENS|SNAP(?:_MIRROR)?|MODEL|CHAT_TEMPLATE|THINK|Q(?:36|38)_EOS|K3_THINK|CLEF_(?:TOKENIZE|RECORDS|IDS)|K3_VALIDATE_TOKEN)$/i.test(key) &&
+    (!/^COLI_/i.test(key) || /^COLI_(?:VULKAN|VK_SHADERS|NO_OMP_TUNE)$/i.test(key))));
+}
 function environment(token?: string) {
-  return { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api.?key|^COLI_|^HF_/i.test(key))),
+  return { ...colibriModelEnvironment(Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api.?key|^COLI_|^HF_/i.test(key)))),
     COLI_SETUP_HOME: path.join(root(), 'state'), HF_HOME: path.join(root(), 'hf'), PYTHONUTF8: '1', PYTHONUNBUFFERED: '1',
     COLI_COLOR: '0', ...(token ? { HF_TOKEN: token } : {}) };
 }
@@ -208,6 +214,7 @@ export async function startColibri(modelId?: string, contextWindow = COLIBRI_DEF
     if (!fits) throw new Error('Colibri cannot safely load this context with current free memory. Close other applications or choose a smaller context. Downloaded weights are retained.');
     const cfg = await json(setupFile());
     if(backend==='cpu'){cfg.backend='cpu';cfg.env={};}
+    cfg.env = colibriModelEnvironment(cfg.env || {});
     cfg.args = ['web', '--model', cfg.model_dir, '--host', '127.0.0.1', '--port', '11437', '--ctx', String(contextWindow), '--cap', String(plan.tiers.ram.cache_slots_per_layer), '--kv-slots', '1', '--max-queue', '8', '--no-think'];
     if(cfg.model?.id?.startsWith('local-'))cfg.args.push('--model-id',`notch-${cfg.model.id}`);
     await atomic(setupFile(), cfg);
