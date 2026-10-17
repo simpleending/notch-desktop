@@ -24,8 +24,8 @@ export function patchSecondaryArtwork(source) {
     source = patchFunction(source, 'createQuickNoteOnboardingInput', 'function createQuickNoteOnboardingInput(note){return {...note,attachments:[]};}');
     source = patchFunction(source, 'QuickNoteWindowSurface', body => body.includes('notchRefreshBuiltinNotes(') ? body : replaceOnce(body, 'let Y1=await listQuickNotes();', 'let Y1=await notchRefreshBuiltinNotes(await listQuickNotes(),updateQuickNote);'));
   }
-  source = source.replace('Symbol:NotchSymbol}=createNotchWorkbench', 'Symbol:NotchSymbol,Wordmark:NotchWordmark}=createNotchWorkbench');
-  if (source.includes('function QuickNoteEmptyState(')) source = patchFunction(source, 'QuickNoteEmptyState', 'function QuickNoteEmptyState(){return jsxRuntimeExports.jsxs("div",{"data-quick-note-empty-state":!0,className:"notch-notes-empty",role:"status",children:[jsxRuntimeExports.jsx(NotchWordmark,{width:112}),jsxRuntimeExports.jsx("p",{children:"No notes yet. Save an idea or add a note to a task."})]});}');
+  source = source.replace('Symbol:NotchSymbol}=createNotchWorkbench', 'Symbol:NotchSymbol,Wordmark:notchNotesWordmark}=createNotchWorkbench');
+  if (source.includes('function QuickNoteEmptyState(')) source = patchFunction(source, 'QuickNoteEmptyState', 'function QuickNoteEmptyState(){return jsxRuntimeExports.jsxs("div",{"data-quick-note-empty-state":!0,className:"notch-notes-empty",role:"status",children:[jsxRuntimeExports.jsx(notchNotesWordmark,{width:112}),jsxRuntimeExports.jsx("p",{children:"No notes yet. Save an idea or add a note to a task."})]});}');
   if (source.includes('function QuickNoteWindowHeader(')) source = patchFunction(source, 'QuickNoteWindowHeader', body => {
     if (body.includes('className:"notch-notes-title"')) return body;
     const tree = parse(body, { ecmaVersion: 'latest' }); let heading;
@@ -37,7 +37,7 @@ export function patchSecondaryArtwork(source) {
     visit(tree);
     const children = heading?.arguments[1]?.properties.find(prop => prop.key.name === 'children')?.value;
     if (!children) throw new Error('Notes header artwork anchor changed.');
-    return body.slice(0, children.start) + '[jsxRuntimeExports.jsx(NotchWordmark,{width:86}),jsxRuntimeExports.jsx("span",{className:"notch-notes-title",children:"Notes"})]' + body.slice(children.end);
+    return body.slice(0, children.start) + '[jsxRuntimeExports.jsx(notchNotesWordmark,{width:86}),jsxRuntimeExports.jsx("span",{className:"notch-notes-title",children:"Notes"})]' + body.slice(children.end);
   });
   source = source.replace('quickNotes:{open:"Open Quick Note",close:"Close Quick Note",title:"Quick Notes",description:"Saved snippets from Agent replies."', 'quickNotes:{open:"Open notes",close:"Close notes",title:"Notes",description:"Notes saved on this device."').replaceAll('addPlaceholder:"What’s on your mind…"', 'addPlaceholder:"Write a note…"');
   for (const name of ['SidebarSessionStateIndicator', 'SessionMiniIndicator', 'TaskMonitorRunningIndicator']) {
