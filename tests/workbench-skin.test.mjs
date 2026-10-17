@@ -6,6 +6,20 @@ import { patchWorkbenchRenderer, patchSecondaryArtwork, patchVoiceOverlayArtwork
 const React = { useState(value){return [value,()=>{}];},useEffect(){}, createElement(type, props, ...children) { return { type, props: props || {}, children }; } };
 function all(tree) { return [tree, ...tree.children.flat(Infinity).filter(child => child && typeof child === 'object').flatMap(all)]; }
 
+test('About uses the theme-aware wordmark and installed version with a working close action', () => {
+  const patched = patchSecondaryArtwork('function AboutDialog(){return oldStickerAndSlogan();}');
+  assert.doesNotMatch(patched, /oldStickerAndSlogan|StickerPeel|commitHash|buildDate/);
+  assert.equal(patchSecondaryArtwork(patched), patched);
+  const jsx = (type, props) => ({ type, props }), changes = [];
+  const render = new Function('jsxRuntimeExports', 'ContentDialog', 'notchNotesWordmark', patched + ';return AboutDialog;')({ jsx, jsxs: jsx }, 'dialog', 'wordmark');
+  const tree = render({ open: true, application: { version: '0.1.19' }, onOpenChange: value => changes.push(value) });
+  const children = tree.props.children.props.children;
+  assert.equal(children[0].type, 'wordmark');
+  assert.equal(children[1].props.children, 'Version 0.1.19');
+  assert.equal(children[2].props.children, 'by freesyntax.dev');
+  tree.props.onClose();assert.deepEqual(changes, [false]);
+});
+
 test('secondary windows request and follow the main window theme without rebroadcasting or leaking channels',()=>{
   const source='function ThemeProvider(){const n1="light";const m1=reactExports.useMemo(()=>({}),[]);return m1;}';
   const patched=patchThemeBroadcast(source);parse(patched,{ecmaVersion:'latest'});assert.equal(patchThemeBroadcast(patched),patched);

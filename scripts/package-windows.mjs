@@ -68,6 +68,7 @@ if(!path.resolve(cliTarget).startsWith(path.resolve(staging)+path.sep))throw new
 await fs.rm(cliTarget,{recursive:true,force:true});
 await fs.cp(cliSource,cliTarget,{recursive:true});
 assert.equal(JSON.parse(await fs.readFile(path.join(cliTarget,'package.json'),'utf8')).version,JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')).dependencies['@freesyntax/notch-cli'],'The packaged CLI must match the pinned tested version.');
+assert.deepEqual(JSON.parse(await fs.readFile(path.join(cliTarget,'dist/working-messages.json'),'utf8')),JSON.parse(await fs.readFile(path.join(root,'vendor/notch-cli/src/ui/working-messages.json'),'utf8')),'CLI and IDE working messages must match.');
 await installSetupRenderer(unpacked,root);
 for(const folder of ['out/main','out/renderer','out/preload'])await rebrandTree(path.join(unpacked,folder));
 await verifyWorkbenchImports(path.join(unpacked,'out/renderer/assets'));

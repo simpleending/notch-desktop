@@ -21,6 +21,7 @@ import { createCliProgram } from './cli-options.js';
 import { checkAccess, parseAccessMode } from './permissions/access.js';
 import chalk from 'chalk';
 import ora from './ui/spinner.js';
+import { workingMessage } from './ui/working-messages.js';
 import * as readline from 'node:readline';
 import { PassThrough } from 'node:stream';
 import * as nodePath from 'node:path';
@@ -1230,7 +1231,7 @@ async function main() {
       if (attachments.length > 0) console.log('');
     }
 
-    const spinner = jsonMode ? null : ora('Thinking...').start();
+    const spinner = jsonMode ? null : ora(workingMessage()).start();
     try {
       const response = await withRetry(() =>
         runLoop(messages, {
@@ -2285,7 +2286,7 @@ async function main() {
         lastResponse: lastAssistantResponse,
         log: (msg) => console.log(chalk.gray(`  ${msg}`)),
         runPrompt: async (prompt, msgs) => {
-          const spinner = ora('Thinking...').start();
+          const spinner = ora(workingMessage()).start();
           const response = await withRetry(() =>
             runLoop(msgs, {
               model,
@@ -2398,16 +2399,12 @@ async function main() {
     await rollout.append({ type: 'user-message', msgId: userMsgId, payload: { content: finalPrompt } });
     await rollout.append({ type: 'active-stream', streamId: turnStreamId });
 
-    const spinner = ora('Thinking...').start();
+    const spinner = ora(workingMessage()).start();
     const spinnerStart = Date.now();
     const spinnerTimer = setInterval(() => {
       if (!spinner.isSpinning) { clearInterval(spinnerTimer); return; }
       const elapsed = Math.floor((Date.now() - spinnerStart) / 1000);
-      if (elapsed >= 30) {
-        spinner.text = `Waiting for model... (${elapsed}s — endpoint may be cold-starting)`;
-      } else if (elapsed >= 10) {
-        spinner.text = `Thinking... (${elapsed}s)`;
-      }
+      spinner.text = `${workingMessage(elapsed)} (${elapsed}s)`;
     }, 2000);
 
     try {

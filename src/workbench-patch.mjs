@@ -5,12 +5,19 @@ import { readFileSync } from 'node:fs';
 import { parse, tokenizer } from 'acorn';
 import { patchLocalOnlyRenderer } from './local-only-patch.mjs';
 import { patchEnglishRenderer } from './english-renderer-patch.mjs';
+import { patchWorkingStatus } from './working-status-patch.mjs';
 
 const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
 const brandCardUrl = 'data:image/svg+xml;base64,' + readFileSync(new URL('../assets/notch-brand-card.svg',import.meta.url)).toString('base64');
 const symbolUrl = 'data:image/svg+xml;base64,' + Buffer.from(symbolMarkup).toString('base64');
 export const legacyBrandAsset = /^(?:duck|Qoduck|userCard|voice_|activeDays\d+Sticker|(?:automationFirstCreate|desktopPetFirstUse|forkFirstUse|goalFirstUse|mobileMessageFirstReceive|snakeFirstPlay|voiceFirstUse)Sticker|notch(?:Anniversary|Pioneer|-(?:loading-line|metal|mobile-download-visual))|profileStickerSparseState|quickNote(?:AddButton|EmptyState|OnboardingFirstNote|TitleQuick)|onboardingWallpaper|parchmentDoodle|(?:bird|crocodile|dog|gorilla)-|planAgentAvatar|agent(?:-team)?-creation-figure|Login_poster|update-notification-card|feedbackWatermark|(?:failed|idle|jumping|look|review|running|waiting|waving|glass)(?:-|_))/;
 export function patchSecondaryArtwork(source) {
+  source = patchWorkingStatus(source);
+  source = source.replace('backgroundImage:`url(${keyboardBackgroundSrc})`', 'backgroundImage:"linear-gradient(135deg,var(--notch-panel),var(--notch-accent-fill))"')
+    .replaceAll('No task data yet :)', 'No tasks yet.')
+    .replace('Choose whether new input from the main composer or desktop pet waits in the queue or steers the active turn.', 'Choose whether new input waits in the queue or steers the active turn.')
+    .replace('Generate a short task recap. Sessions using your own API key or an external model provider keep their session model. Otherwise, use the selected model or automatically choose the cheapest platform model. Charges depend on the model used.', 'Generate a short task recap with the task’s model. Local models run on your device; cloud usage follows your provider’s pricing.');
+  if (source.includes('function AboutDialog(')) source = patchFunction(source, 'AboutDialog', 'function AboutDialog({open,application,onOpenChange}){return jsxRuntimeExports.jsx(ContentDialog,{open,onClose:()=>onOpenChange(!1),title:"About notch",description:"Local models first. Your workspace, your choice.",closeLabel:"Close",maxWidth:440,children:jsxRuntimeExports.jsxs("div",{className:"flex flex-col items-start gap-5 py-4",children:[jsxRuntimeExports.jsx(notchNotesWordmark,{width:148}),jsxRuntimeExports.jsx("p",{children:"Version "+(application?.version??"—")}),jsxRuntimeExports.jsx("p",{className:"text-text-secondary",children:"by freesyntax.dev"})]})});}');
   if (source.includes('function QuickNoteThemeSync(')) source = patchFunction(source, 'QuickNoteThemeSync', body => {
     if (body.includes('root.dataset.notchNotes')) return body;
     body = replaceOnce(body, '{setWindowThemeMode:t1}', '{setWindowThemeMode:t1,resolvedTheme:notchNotesTheme}');
