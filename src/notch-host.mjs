@@ -186,7 +186,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
               await turn.onLifecycle?.(event, payload);
             },
             ripgrepPath: process.resourcesPath ? path.join(process.resourcesPath, 'bin', 'notch-rg.exe') : undefined,
-            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || 8192, nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
+            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || (model.startsWith('colibri/') ? 16384 : 8192), nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
         },
       });
       queries.set(query.id, query);

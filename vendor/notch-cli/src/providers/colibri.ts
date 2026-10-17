@@ -9,6 +9,7 @@ import { withLocalInference } from '../concurrency/local-inference.js';
 import { acquireLease } from '../concurrency/lease.js';
 
 const exec = promisify(execFile);
+export const COLIBRI_DEFAULT_CONTEXT = 16384;
 export const COLIBRI_VERSION = '2.0.0';
 export const COLIBRI_URL = 'http://127.0.0.1:11437/v1';
 const root = () => path.join(os.homedir(), '.notch', 'runtimes', 'colibri');
@@ -124,7 +125,7 @@ export function colibriPlanFits(plan: any): boolean {
     Number.isSafeInteger(ram.runtime_bytes) && ram.runtime_bytes > 0 && Number.isSafeInteger(ram.cache_slots_per_layer) && (ram.cache_slots_per_layer > 0 || (ram.cache_slots_per_layer === 0 && plan.model?.configured_experts === 0)) &&
     ram.dense_bytes + runtimeBytes <= ram.budget_bytes && Array.isArray(plan.warnings) && !plan.warnings.some((line: string) => typeof line !== 'string' || (/cannot hold|do not fit|not enough|not detected/.test(line) && !(smallDense && line.startsWith('a dense model keeps every weight resident:'))));
 }
-export async function colibriPlan(contextWindow = 4096, signal?: AbortSignal) {
+export async function colibriPlan(contextWindow = COLIBRI_DEFAULT_CONTEXT, signal?: AbortSignal) {
   if (!Number.isSafeInteger(contextWindow) || contextWindow < 2048 || contextWindow > 262144) throw new Error('Choose a Colibri context from 2K through 256K.');
   const cfg = await json(setupFile());
   if (cfg?.status !== 'ready') throw new Error('Install a Colibri coding model first: notch models install --runner colibri.');
@@ -159,7 +160,7 @@ export async function colibriStatus() {
   const nativeContext = config?.text_config?.max_position_embeddings ?? config?.max_position_embeddings;
   return { installed, version: COLIBRI_VERSION, configured: cfg?.status === 'ready', model: cfg?.model ?? null, nativeContext,
     verified: cfg?.status === 'ready' && !!verified && verified.modelDir === cfg?.model_dir && verified.version === COLIBRI_VERSION,
-    modelId: verified?.modelId, contextWindow: verified?.contextWindow ?? 4096, running: !!running,
+    modelId: verified?.modelId, contextWindow: verified?.contextWindow ?? COLIBRI_DEFAULT_CONTEXT, running: !!running,
     modelDir: cfg?.model_dir, backend: cfg?.backend, log: path.join(root(), 'state', 'logs', 'serve.log') };
 }
 
@@ -182,7 +183,7 @@ export async function installColibri(model: string, options: { signal?: AbortSig
     await unlink(receiptFile()).catch(error => { if (error.code !== 'ENOENT') throw error; });
     options.output?.('Checking current memory, loading, and validating coding tools…\n');
     validating=true;
-    const ready=await validateColibri(4096,options.signal);
+    const ready=await validateColibri(COLIBRI_DEFAULT_CONTEXT,options.signal);
     await unlink(transactionFile());return ready;
     } catch(error) {if(validating)await stopInternal().catch(()=>{});await restoreSelection(previous);throw error;}
   } finally { await release(); }
@@ -196,7 +197,7 @@ async function stopInternal() {
 }
 export async function stopColibri() { return withLocalInference(stopInternal); }
 
-export async function startColibri(modelId?: string, contextWindow = 4096, signal?: AbortSignal): Promise<string> {
+export async function startColibri(modelId?: string, contextWindow = COLIBRI_DEFAULT_CONTEXT, signal?: AbortSignal): Promise<string> {
   return withLocalInference(async () => {
     await checkCpu(signal);
     const state = await colibriStatus();
@@ -229,7 +230,7 @@ export async function startColibri(modelId?: string, contextWindow = 4096, signa
   }, signal);
 }
 
-export async function validateColibri(contextWindow = 4096, signal?: AbortSignal) {
+export async function validateColibri(contextWindow = COLIBRI_DEFAULT_CONTEXT, signal?: AbortSignal) {
   return withLocalInference(async () => {
     await startColibri(undefined, contextWindow, signal);
     const inventory = await (await fetch(`${COLIBRI_URL}/models`, {signal: AbortSignal.timeout(3000)})).json(); const modelId = inventory.data[0].id;
@@ -267,5 +268,5 @@ export async function colibriModels(_hardware?: LocalHardware) {
     enabled: fits, description: state.running ? 'Colibri · experimental · loaded' : fits ? 'Colibri · experimental' : 'Close applications to free memory before loading Colibri',
     bytes, isDefault: false, isNew: false, priceFactor: 0, tags: ['local', 'experimental'], maxInputTokens: native, maxOutputTokens: 2048,
     availableContextWindows: [2048,4096,8192,16384,32768,65536,131072,262144].filter(n => n <= native), defaultContextWindow: state.contextWindow,
-    recommendedContextWindow: 4096, efforts: [], defaultEffort: null, supportsDisabled: true }];
+    recommendedContextWindow: COLIBRI_DEFAULT_CONTEXT, efforts: [], defaultEffort: null, supportsDisabled: true }];
 }

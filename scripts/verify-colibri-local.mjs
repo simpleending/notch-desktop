@@ -42,7 +42,7 @@ try {
     };
   });
   report.events=await app.evaluate(async(_electron,{model,workspace,receipt})=>{
-    const host=globalThis.__notchHost,query=host.query({cwd:workspace,model,permissionMode:'bypassPermissions',tools:['Write','Read'],maxTurns:6,
+    const host=globalThis.__notchHost,query=host.query({cwd:workspace,model,permissionMode:'bypassPermissions',maxTurns:6,
       prompt:`Use write to create colibri-ide-check.txt containing exactly ${receipt}. Then read that file. Do not use commands. Report the receipt you read.`});
     const events=[];for await(const event of query)events.push(event);await query.task;return events;
   },{model,workspace,receipt});

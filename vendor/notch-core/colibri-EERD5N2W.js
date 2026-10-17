@@ -1,4 +1,5 @@
 import {
+  COLIBRI_DEFAULT_CONTEXT,
   COLIBRI_URL,
   COLIBRI_VERSION,
   colibriAsset,
@@ -12,9 +13,10 @@ import {
   startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-KMCKGUER.js";
+} from "./chunk-ONCSGSZ5.js";
 import "./chunk-OBJXRYDA.js";
 export {
+  COLIBRI_DEFAULT_CONTEXT,
   COLIBRI_URL,
   COLIBRI_VERSION,
   colibriAsset,

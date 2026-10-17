@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "crypto";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 var exec = promisify(execFile);
+var COLIBRI_DEFAULT_CONTEXT = 16384;
 var COLIBRI_VERSION = "2.0.0";
 var COLIBRI_URL = "http://127.0.0.1:11437/v1";
 var root = () => path.join(os.homedir(), ".notch", "runtimes", "colibri");
@@ -177,7 +178,7 @@ function colibriPlanFits(plan) {
   const runtimeBytes = smallDense ? ram.runtime_bytes - 37e8 + 1.5 * 2 ** 30 : ram?.runtime_bytes;
   return Number.isSafeInteger(ram?.budget_bytes) && ram.budget_bytes > 0 && Number.isSafeInteger(ram.available_bytes) && ram.available_bytes >= ram.budget_bytes && Number.isSafeInteger(ram.dense_bytes) && ram.dense_bytes >= 0 && Number.isSafeInteger(ram.runtime_bytes) && ram.runtime_bytes > 0 && Number.isSafeInteger(ram.cache_slots_per_layer) && (ram.cache_slots_per_layer > 0 || ram.cache_slots_per_layer === 0 && plan.model?.configured_experts === 0) && ram.dense_bytes + runtimeBytes <= ram.budget_bytes && Array.isArray(plan.warnings) && !plan.warnings.some((line) => typeof line !== "string" || /cannot hold|do not fit|not enough|not detected/.test(line) && !(smallDense && line.startsWith("a dense model keeps every weight resident:")));
 }
-async function colibriPlan(contextWindow = 4096, signal) {
+async function colibriPlan(contextWindow = COLIBRI_DEFAULT_CONTEXT, signal) {
   if (!Number.isSafeInteger(contextWindow) || contextWindow < 2048 || contextWindow > 262144) throw new Error("Choose a Colibri context from 2K through 256K.");
   const cfg = await json(setupFile());
   if (cfg?.status !== "ready") throw new Error("Install a Colibri coding model first: notch models install --runner colibri.");
@@ -234,7 +235,7 @@ async function colibriStatus() {
     nativeContext,
     verified: cfg?.status === "ready" && !!verified && verified.modelDir === cfg?.model_dir && verified.version === COLIBRI_VERSION,
     modelId: verified?.modelId,
-    contextWindow: verified?.contextWindow ?? 4096,
+    contextWindow: verified?.contextWindow ?? COLIBRI_DEFAULT_CONTEXT,
     running: !!running,
     modelDir: cfg?.model_dir,
     backend: cfg?.backend,
@@ -270,7 +271,7 @@ async function installColibri(model, options = {}) {
       });
       options.output?.("Checking current memory, loading, and validating coding tools\u2026\n");
       validating = true;
-      const ready = await validateColibri(4096, options.signal);
+      const ready = await validateColibri(COLIBRI_DEFAULT_CONTEXT, options.signal);
       await unlink(transactionFile());
       return ready;
     } catch (error) {
@@ -293,7 +294,7 @@ async function stopInternal() {
 async function stopColibri() {
   return withLocalInference(stopInternal);
 }
-async function startColibri(modelId, contextWindow = 4096, signal) {
+async function startColibri(modelId, contextWindow = COLIBRI_DEFAULT_CONTEXT, signal) {
   return withLocalInference(async () => {
     await checkCpu(signal);
     const state = await colibriStatus();
@@ -332,7 +333,7 @@ async function startColibri(modelId, contextWindow = 4096, signal) {
     }
   }, signal);
 }
-async function validateColibri(contextWindow = 4096, signal) {
+async function validateColibri(contextWindow = COLIBRI_DEFAULT_CONTEXT, signal) {
   return withLocalInference(async () => {
     await startColibri(void 0, contextWindow, signal);
     const inventory = await (await fetch(`${COLIBRI_URL}/models`, { signal: AbortSignal.timeout(3e3) })).json();
@@ -392,7 +393,7 @@ async function colibriModels(_hardware) {
     maxOutputTokens: 2048,
     availableContextWindows: [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144].filter((n) => n <= native),
     defaultContextWindow: state.contextWindow,
-    recommendedContextWindow: 4096,
+    recommendedContextWindow: COLIBRI_DEFAULT_CONTEXT,
     efforts: [],
     defaultEffort: null,
     supportsDisabled: true
@@ -400,6 +401,7 @@ async function colibriModels(_hardware) {
 }
 
 export {
+  COLIBRI_DEFAULT_CONTEXT,
   COLIBRI_VERSION,
   COLIBRI_URL,
   colibriAsset,

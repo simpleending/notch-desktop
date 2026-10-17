@@ -542,7 +542,7 @@ export function resolveByokModel(spec: ByokSpec): {
     ...(providerInfo.id === 'ollama' ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) }
       : providerInfo.id === 'colibri' ? { fetch: queuedLocalFetch(async (input, init) => {
         const { startColibri } = await import('./colibri.js');
-        const ready = await startColibri(modelId, spec.contextWindow ?? 4096, init?.signal ?? undefined);
+        const ready = await startColibri(modelId, spec.contextWindow, init?.signal ?? undefined);
         const url = new URL(input instanceof Request ? input.url : String(input));
         return fetch(ready + url.pathname.replace(/^\/v1/, '') + url.search, init);
       }) }
