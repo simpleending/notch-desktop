@@ -55,16 +55,20 @@ try {
   const state=JSON.parse(await fs.readFile(path.join(profile,'notch-sessions',result.session_id+'.json'),'utf8'));assert(state.messages.some(m=>m.role==='tool'));
   report.persistedSession=result.session_id;report.savedToolResults=true;
   report.parallelReads=await app.evaluate(async(_electron,{model,workspace})=>{
-    const host=globalThis.__notchHost,run=async()=>{const q=host.query({cwd:workspace,model,permissionMode:'read-only',tools:['Read'],maxTurns:4,prompt:'Use read to read colibri-ide-check.txt, then report its receipt. Do not modify files.'});const events=[];for await(const event of q)events.push(event);return events.findLast(event=>event.type==='result');};
+    const host=globalThis.__notchHost,run=async()=>{const q=host.query({cwd:workspace,model,permissionMode:'read-only',tools:['Read'],maxTurns:4,prompt:'Use Read to read colibri-ide-check.txt. Reply with the complete file contents verbatim, including every character. Do not summarize or modify files.'});const events=[];for await(const event of q)events.push(event);await q.task;return {result:events.findLast(event=>event.type==='result'),events};};
     return Promise.all([run(),run()]);
   },{model,workspace});
-  assert(report.parallelReads.every(row=>row?.subtype==='success'&&row.result.includes(receipt)));
+  for(const row of report.parallelReads){
+    assert.equal(row.result?.subtype,'success');
+    assert(row.events.some(event=>event.message?.content?.some(block=>block.type==='tool_result'&&!block.is_error&&typeof block.content==='string'&&block.content.includes(receipt))),'The actual read result must preserve every Unicode character.');
+    assert(row.result.result.includes(receipt),'The model must return the full receipt when asked verbatim.');
+  }
   for(let i=0;i<50;i++){if(await app.evaluate(()=>globalThis.__colibriQa.active===0))break;await new Promise(r=>setTimeout(r,100));}
   report.trace=await app.evaluate(()=>globalThis.__colibriQa);assert.equal(report.trace.maxActive,1,'Local generations must take turns.');assert.equal(report.trace.active,0);
   report.memory=JSON.parse((await promisify(execFile)('powershell.exe',['-NoProfile','-NonInteractive','-Command',"@{availableKiB=(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory;engines=@(Get-Process qwen36 | Select-Object Id,WorkingSet64,PeakWorkingSet64,PrivateMemorySize64)} | ConvertTo-Json -Compress"],{windowsHide:true,timeout:15000})).stdout);
   assert(report.memory.availableKiB>512*1024,'Keep at least 512 MiB available during the real test.');
   await page.screenshot({path:reportFile.replace('.json','.png')});report.passed=true;
-} catch(error) {report.error=error.stack;if(page)await page.screenshot({path:reportFile.replace('.json','-failure.png')}).catch(()=>{});}
+} catch(error) {report.error=error.stack;if(app)report.trace=await app.evaluate(()=>globalThis.__colibriQa).catch(()=>report.trace);if(page)await page.screenshot({path:reportFile.replace('.json','-failure.png')}).catch(()=>{});}
 finally {
   if(app)await closeQaApp(app);
   await stopColibri();report.unloaded=!(await colibriStatus()).running;assert(report.unloaded);
