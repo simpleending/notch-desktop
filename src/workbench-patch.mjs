@@ -15,6 +15,21 @@ export function patchSecondaryArtwork(source) {
   source = patchWorkingStatus(source);
   source = source.replace('backgroundImage:`url(${keyboardBackgroundSrc})`', 'backgroundImage:"linear-gradient(135deg,var(--notch-panel),var(--notch-accent-fill))"')
     .replaceAll('No task data yet :)', 'No tasks yet.')
+    .replaceAll('No tasks yet :)', 'No tasks yet.')
+    .replaceAll('No artifact data yet :)', 'No artifacts yet.')
+    .replaceAll('No web reading data yet :)', 'No web activity yet.')
+    .replaceAll('No Skills & MCP data yet :)', 'No skills or MCP activity yet.')
+    .replaceAll('No source data yet :)', 'No sources yet.')
+    .replaceAll('No memory data yet :)', 'No memories yet.')
+    .replaceAll('The notch you know and use :)', 'The notch you know and use.')
+    .replaceAll('暂无产出数据 :)', 'No artifacts yet.')
+    .replaceAll('暂无网页查阅数据 :)', 'No web activity yet.')
+    .replaceAll('暂无技能与 MCP 数据 :)', 'No skills or MCP activity yet.')
+    .replaceAll('暂无来源数据 :)', 'No sources yet.')
+    .replaceAll('暂无记忆数据 :)', 'No memories yet.')
+    .replaceAll('暂无任务数据 :)', 'No tasks yet.')
+    .replaceAll('暂无任务 :)', 'No tasks yet.')
+    .replaceAll('就是你一直在用的 notch :)', 'The notch you know and use.')
     .replace('Choose whether new input from the main composer or desktop pet waits in the queue or steers the active turn.', 'Choose whether new input waits in the queue or steers the active turn.')
     .replace('Generate a short task recap. Sessions using your own API key or an external model provider keep their session model. Otherwise, use the selected model or automatically choose the cheapest platform model. Charges depend on the model used.', 'Generate a short task recap with the task’s model. Local models run on your device; cloud usage follows your provider’s pricing.');
   if (source.includes('function AboutDialog(')) source = patchFunction(source, 'AboutDialog', 'function AboutDialog({open,application,onOpenChange}){return jsxRuntimeExports.jsx(ContentDialog,{open,onClose:()=>onOpenChange(!1),title:"About notch",description:"Local models first. Your workspace, your choice.",closeLabel:"Close",maxWidth:440,children:jsxRuntimeExports.jsxs("div",{className:"flex flex-col items-start gap-5 py-4",children:[jsxRuntimeExports.jsx(notchNotesWordmark,{width:148}),jsxRuntimeExports.jsx("p",{children:"Version "+(application?.version??"—")}),jsxRuntimeExports.jsx("p",{className:"text-text-secondary",children:"by freesyntax.dev"})]})});}');
