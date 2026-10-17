@@ -20,7 +20,7 @@ app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path
 globalThis.__notchProfileOverride = requestedProfile ? { directory: app.getPath('userData'), existed: existsSync(path.join(app.getPath('userData'), 'main.sqlite')) } : null;
 globalThis.__notchHost = createHost(app.getPath('userData'));
 globalThis.__notchHost.runtimeReady = managedOllama('0.40.3', globalThis.__notchDiscovery.signal, false).catch(() => {});
-globalThis.__notchHost.voice = createLocalVoice(app.getPath('userData'));
+globalThis.__notchHost.voice = createLocalVoice(app.getPath('userData'),{getKey:async provider=>(await globalThis.__notchHost.modelManager?.key(provider))||process.env.OPENROUTER_API_KEY});
 globalThis.__notchHost.createLiveVoice = createLocalLiveVoice;
 app.on('will-quit', () => { void globalThis.__notchHost.voice.shutdown(); });
 app.on('will-quit', () => { void globalThis.__notchHost.workspaceSearch.shutdown(); });

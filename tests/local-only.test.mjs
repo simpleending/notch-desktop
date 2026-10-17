@@ -39,7 +39,7 @@ test('local edition restores voice controls while removing account actions',()=>
   const source=`function VoiceSettings(){readVoiceprint();} function DataPrivacySettings(){readCloudPolicy();}
     function NetworkDiagnosticsSettings(){probeRetiredServices();} function authorizedErrorActions(){return [];} function notchCloudAccountSettings(){readCloudToken();}
     function ChatComposer(){const {voiceInputEnabled:P3,experimentalRecordingNoteEnabled:U8,}=useWorkbenchPreferences(),_8={canStartLiveVoice:!d1&&!H3&&!!s1&&!K9};return {P3,U8,..._8};}
-    let VoiceInputService=class{setConfiguration(e1){readMicrophone();}}; let LiveVoiceService=class{async startSession(e1,t1,n1,r1,i1="live",s1){captureMicrophone();}}; let RecordingNoteService=class{async start(e1){captureMicrophone();}};
+    let VoiceInputService=class{setConfiguration(e1){readMicrophone();}async start(e1){const i1=++this.operation;try{if(await this.client.prepareVoiceInput(),i1!==this.operation)return;}catch{}}}; let LiveVoiceService=class{async startSession(e1,t1,n1,r1,i1="live",s1){captureMicrophone();}}; let RecordingNoteService=class{async start(e1){captureMicrophone();}};
     let KeybindingService=class{registerKeybinding(e1){const t1={commandId:e1.command};return this.keybindings.push(t1);}};`;
   const patched=patchLocalOnlyRenderer(source);parse(patched,{ecmaVersion:'latest'});
   assert.doesNotMatch(patched,/readCloud|readVoiceprint|probeRetired|captureMicrophone|readMicrophone/);

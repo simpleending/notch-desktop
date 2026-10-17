@@ -55,10 +55,10 @@ test('voice artwork is static notch branding while native controls, status and r
   assert.throws(()=>patchVoiceOverlayArtwork(source.replace('id:"orb-core"','id:"changed"')),/anchor changed/);
 });
 
-test('recap artwork uses the canonical symbol without changing content or handoff controls',()=>{
+test('recap artwork uses the wordmark without changing content or handoff controls',()=>{
   const source='function TaskMonitorConversationRecapCard({recap}){return jsxRuntimeExports.jsxs("section",{children:[jsxRuntimeExports.jsxs("span",{className:"relative size-5 shrink-0",children:[jsxRuntimeExports.jsx("svg",{children:"green gradient"}),jsxRuntimeExports.jsx(notchQuillPenAiLine,{color:"green"})]}),recap.text,jsxRuntimeExports.jsx(ChatSessionHandoffDialog,{})]});}';
   const patched=patchSecondaryArtwork(source);parse(patched,{ecmaVersion:'latest'});
-  assert.match(patched,/NotchSymbol,\{size:24,className:"notch-recap-mark"/);
+  assert.match(patched,/notchNotesWordmark,\{width:62,className:"notch-recap-mark"/);
   assert.doesNotMatch(patched,/notchQuillPenAiLine|green gradient/);
   assert.match(patched,/recap.text/);assert.match(patched,/ChatSessionHandoffDialog/);
   assert.equal(patchSecondaryArtwork(patched),patched);

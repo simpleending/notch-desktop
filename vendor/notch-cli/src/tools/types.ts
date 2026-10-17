@@ -17,6 +17,8 @@ export interface ToolResult {
   isError?: boolean;
   /** Preflight rejection or preview: this is not an executed command result. */
   notExecuted?: boolean;
+  /** Verified built-in file-content change; false means a no-op write. */
+  changed?: boolean;
 }
 
 export interface NotchTool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {

@@ -277,6 +277,7 @@ async function runScript(args: ExecInternalArgs): Promise<{
   status: 'completed' | 'yielded' | 'timeout' | 'error';
   returnValue?: string;
   error?: string;
+  notExecuted?: boolean;
 }> {
   const { code, yieldTimeMs, context, wireYield, registerPending } = args;
 
@@ -287,7 +288,7 @@ async function runScript(args: ExecInternalArgs): Promise<{
   try {
     script = new vm.Script(wrapped, { filename: 'code_exec.js' });
   } catch (err: unknown) {
-    return { status: 'error', error: (err as Error).message };
+    return { status: 'error', error: (err as Error).message + '\nNo JavaScript was executed. code_exec accepts JavaScript, not terminal commands. Use shell({command:"...",background:false}) for commands such as npm test or node test.mjs.', notExecuted: true };
   }
 
   const scriptPromise = (async () => {
@@ -495,6 +496,7 @@ export const codeModeExecTool: NotchTool<typeof execParams> = {
     return {
       content: formatResult(cell, maxChars, notifsForThisCall),
       isError: outcome.status === 'error',
+      ...(outcome.notExecuted ? { notExecuted: true } : {}),
     };
   },
 };

@@ -1,11 +1,13 @@
 import { createWebSettings } from './web-settings-view.mjs';
 import { createUpdateSettings } from './update-settings-view.mjs';
+import { createVoiceModels } from './voice-model-picker.mjs';
 const darkWordmark = new URL('./notch-wordmark-dark.svg', import.meta.url).href;
 const lightWordmark = new URL('./notch-wordmark-light.svg', import.meta.url).href;
-export function createNotchWorkbench(React, useTheme) {
+export function createNotchWorkbench(React, useTheme, primitives = {}) {
   const h = React.createElement;
   const WebSettings = createWebSettings(React);
   const UpdateSettings = createUpdateSettings(React);
+  const { Settings: VoiceModels, Host: VoicePickerHost } = createVoiceModels(React, primitives);
   function Wordmark({ width = 100, className = '' } = {}) {
     const { resolvedTheme } = useTheme();
     return h('img', { src: resolvedTheme.endsWith('-dark') ? darkWordmark : lightWordmark, alt: 'notch', width, height: width * 100 / 336, className });
@@ -20,8 +22,8 @@ export function createNotchWorkbench(React, useTheme) {
       update(); const timer = setInterval(update, 700);
       return () => { alive = false; clearInterval(timer); };
     }, []);
-    return h('span', { className: 'notch-window-brand' }, h('img', { src: resolvedTheme.endsWith('-dark') ? darkWordmark : lightWordmark, alt: 'notch', width: 82, height: 25 }),
-      queued.length ? h('span', { role: 'status', className: 'notch-queue-status', title: 'Stop a waiting task from its chat.' }, `${queued.length} waiting · ${queued[0].message}`) : null);
+    return h(React.Fragment,null,h('span', { className: 'notch-window-brand' }, h('img', { src: resolvedTheme.endsWith('-dark') ? darkWordmark : lightWordmark, alt: 'notch', width: 82, height: 25 }),
+      queued.length ? h('span', { role: 'status', className: 'notch-queue-status', title: 'Stop a waiting task from its chat.' }, `${queued.length} waiting · ${queued[0].message}`) : null),h(VoicePickerHost));
   }
   function ThemeControls() {
     const { resolvedTheme, setThemeMode } = useTheme();
@@ -102,5 +104,9 @@ export function createNotchWorkbench(React, useTheme) {
       h('path', { d: 'M25 76V29H40V39C44 31 51 29 58 29 70 29 77 38 77 51V76H62V53C62 47 59 43 54 43 46 43 40 49 40 56V76z' }),
       h('path', { d: 'M77 18h10v10H77z', className: 'notch-symbol-cut' }));
   }
-  return { Brand, ThemeControls, ModeSwitch, Welcome, QuickStart, PanelLauncher, Appearance, LocalProfile, Symbol, Wordmark };
+  function Dot({ size = 16, className = '' } = {}) {
+    return h('svg', { viewBox: '0 0 24 24', width: size, height: size, className: `notch-dot ${className}`, 'aria-hidden': true, fill: 'currentColor' },
+      h('circle', { cx: 12, cy: 12, r: 4 }));
+  }
+  return { Brand, ThemeControls, ModeSwitch, Welcome, QuickStart, PanelLauncher, Appearance, LocalProfile, Symbol, Dot, Wordmark, VoiceModels };
 }

@@ -153,5 +153,5 @@ export function modelFit(model: HubModel, hardware: LocalHardware) {
   const usableVram = hardware.appleSilicon ? 0 : Math.max(0, hardware.availableVram - GiB);
   const required = model.bytes * 1.2 + 1.5 * GiB;
   const budget = usableRam + usableVram;
-  return { fits: required <= budget, required, budget, contextLength: required + 2 * GiB <= budget ? 16384 : 8192, batchSize: 64 };
+  return { fits: required <= budget, required, budget, contextLength: required + 2 * GiB <= budget ? 16384 : 8192, batchSize: 128 };
 }

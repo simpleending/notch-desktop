@@ -12,7 +12,8 @@ export function ollamaContextLength(fallback?: number, nativeLimit?: number): nu
 
 export function ollamaBatchSize(fallback?: number): number | undefined {
   const raw = process.env.NOTCH_OLLAMA_BATCH;
-  const value = Number(raw || (fallback ?? 64));
+  // 64 can prevent the tested Gemma 12B projector from loading even for text.
+  const value = Number(raw || (fallback ?? 128));
   if (!Number.isInteger(value) || value < 1 || value > 2048) {
     throw new Error('NOTCH_OLLAMA_BATCH must be an integer between 1 and 2048.');
   }
@@ -27,15 +28,20 @@ interface Message {
   tool_call_id?: string;
 }
 interface Frame {
-  message?: { content?: string; tool_calls?: Call[] };
+  message?: { content?: string; thinking?: string; tool_calls?: Call[] };
   done?: boolean; done_reason?: string;
   prompt_eval_count?: number; eval_count?: number; error?: string;
 }
 
 /** Adapt SDK messages to native /api/chat and NDJSON to SSE, preserving backpressure and cancellation. */
 export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; nativeContextWindow?: number; ollamaBatch?: number } = {}): typeof fetch {
+  // The OpenAI chat adapter omits thinking; Ollama needs it between tool calls.
+  const thoughts = new Map<string, string>();
   return async (_input, init) => {
     const body = JSON.parse(String(init?.body));
+    let lastUser = body.messages.length - 1;
+    while (lastUser >= 0 && body.messages[lastUser].role !== 'user') lastUser--;
+    const activeCalls = new Set<string>((body.messages as Message[]).slice(lastUser + 1).flatMap(message => (message.tool_calls ?? []).flatMap(call => call.id ? [call.id] : [])));
     const names = new Map<string, string>();
     const messages = (body.messages as Message[]).map(message => {
       for (const call of message.tool_calls ?? []) if (call.id) names.set(call.id, call.function.name);
@@ -48,8 +54,10 @@ export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; 
         }
         return part.text || '';
       }).join('\n') : message.content || '';
+      const toolThought = message.tool_calls?.map(call => call.id && activeCalls.has(call.id) && thoughts.get(call.id)).find(Boolean);
       return {
         role: message.role, content,
+        ...(toolThought ? { thinking: toolThought } : {}),
         ...(images.length ? { images } : {}),
         ...(message.tool_call_id ? { tool_name: names.get(message.tool_call_id) } : {}),
         ...(message.tool_calls ? { tool_calls: message.tool_calls.map(call => ({ function: {
@@ -64,8 +72,9 @@ export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; 
         model: body.model, messages, stream: body.stream === true,
         ...(body.tools?.length ? { tools: body.tools } : {}),
         ...(body.response_format ? { format: body.response_format.json_schema?.schema || 'json' } : {}),
-        ...(process.env.NOTCH_OLLAMA_THINK === '0' ? { think: false } : {}),
-        options: { num_ctx: ollamaContextLength(options.contextWindow, options.nativeContextWindow), temperature: body.temperature ?? 0.2,
+        ...(['0', '1'].includes(process.env.NOTCH_OLLAMA_THINK || '') ? { think: process.env.NOTCH_OLLAMA_THINK === '1' } : {}),
+        options: { num_ctx: ollamaContextLength(options.contextWindow, options.nativeContextWindow),
+          ...(body.temperature === undefined ? {} : { temperature: body.temperature }),
           ...(ollamaBatchSize(options.ollamaBatch) === undefined ? {} : { num_batch: ollamaBatchSize(options.ollamaBatch) }),
           ...(body.max_tokens ? { num_predict: body.max_tokens } : {}),
           ...(body.stop ? { stop: body.stop } : {}) },
@@ -77,13 +86,20 @@ export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; 
     }
     let toolIndex = 0;
     let sawTools = false;
+    let thinking = '';
+    const responseCalls: string[] = [];
     const convert = (frame: Frame) => {
       if (frame.error) throw new Error(`Ollama: ${frame.error}`);
+      thinking += frame.message?.thinking || '';
       const calls = frame.message?.tool_calls?.map(call => ({
         index: toolIndex++, id: call.id || `call_${randomUUID()}`, type: 'function',
         function: { name: call.function.name, arguments: typeof call.function.arguments === 'string' ? call.function.arguments : JSON.stringify(call.function.arguments) },
       }));
       if (calls?.length) sawTools = true;
+      if (calls) responseCalls.push(...calls.map(call => call.id));
+      if (frame.done && thinking) for (const id of responseCalls) thoughts.set(id, thinking);
+      // Summary requests share this adapter; keep recent chains without growing indefinitely.
+      while (thoughts.size > 128) thoughts.delete(thoughts.keys().next().value!);
       return {
         choices: [{ index: 0, [body.stream ? 'delta' : 'message']: {
           role: 'assistant', content: frame.message?.content || '', ...(calls?.length ? { tool_calls: calls } : {}),

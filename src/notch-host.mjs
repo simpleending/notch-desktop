@@ -74,13 +74,14 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
             const mounted = result.value.mounted.find(model=>model.name===row.name && (!row.digest || model.digest===row.digest));
             const fit = localContextProfile(size,hardware,metadata,mounted);
             const contextWindow = host.modelManager?.context(key,fit.choices,fit.contextWindow) || fit.contextWindow;
-            nextProfiles.set(key, { ...fit, contextWindow });
+            const maxOutputTokens = Math.min(16384, Math.floor(contextWindow / 4));
+            nextProfiles.set(key, { ...fit, contextWindow, maxOutputTokens });
             nextEndpoints.set(key, `${result.value.root}/v1`);
             const label = metadata.model_info?.['general.base_model.0.name'];
             unique.set(key, { key, displayName: typeof label === 'string' && label ? label : row.name,
               description: fit.fits ? 'local Ollama · estimated memory fit' : fit.reason, provider: 'ollama', bytes: size, source: 'system', enabled: fit.fits,
               isDefault: row.name.startsWith('notch-hf-'), isNew: false, priceFactor: 0, tags: ['local'],
-              maxInputTokens: fit.nativeContext, maxOutputTokens: 4096, availableContextWindows: fit.choices, defaultContextWindow: contextWindow,
+              maxInputTokens: fit.nativeContext, maxOutputTokens, availableContextWindows: fit.choices, defaultContextWindow: contextWindow,
               recommendedContextWindow:fit.contextWindow, requestedContextWindow:host.modelManager?.requestedContext(key),
               efforts: [], defaultEffort: null, supportsDisabled: true });
           }
@@ -186,7 +187,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
               await turn.onLifecycle?.(event, payload);
             },
             ripgrepPath: process.resourcesPath ? path.join(process.resourcesPath, 'bin', 'notch-rg.exe') : undefined,
-            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || (model.startsWith('colibri/') ? 16384 : 8192), nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 64 });
+            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || (model.startsWith('colibri/') ? 16384 : 8192), nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 128 });
         },
       });
       queries.set(query.id, query);

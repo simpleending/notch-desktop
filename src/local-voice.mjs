@@ -4,6 +4,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';
+import { createSpeechModels } from './speech-models.mjs';
 
 const release = 'b5454'; // whisper.cpp v1.9.5 official CPU build
 const runtimeHash = '6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb';
@@ -14,11 +15,11 @@ const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/
 function run(executable, args, { signal, input, timeout = 180000, env = process.env } = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(executable, args, { windowsHide: true, signal, env, stdio: ['pipe', 'pipe', 'pipe'] });
-    let stderr = ''; child.stdout.resume();
+    let stderr = '', stdout = ''; child.stdout.on('data', value => { stdout = (stdout + value).slice(-2 * 1024 * 1024); });
     child.stderr.on('data', value => { stderr = (stderr + value).slice(-4000); });
     const timer = setTimeout(() => { child.kill(); reject(new Error('Local speech processing timed out.')); }, timeout);
     child.once('error', error => { clearTimeout(timer); reject(error); });
-    child.once('close', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(code===3221225781?'Local speech needs the Microsoft Visual C++ x64 runtime. Install it from https://aka.ms/vc14/vc_redist.x64.exe, then retry setup.':`Local speech process failed (${code}): ${stderr}`)); });
+    child.once('close', code => { clearTimeout(timer); code === 0 ? resolve(stdout) : reject(new Error(code===3221225781?'Local speech needs the Microsoft Visual C++ x64 runtime. Install it from https://aka.ms/vc14/vc_redist.x64.exe, then retry setup.':`Local speech process failed (${code}): ${stderr}`)); });
     child.stdin.on('error', () => {}); child.stdin.end(input);
   });
 }
@@ -59,18 +60,21 @@ async function download(url, destination, expected, limit, signal, progress) {
   if (hash.digest('hex') !== expected) throw new Error('Local voice download checksum mismatch.');
 }
 
-export function createLocalVoice(directory, { transcriber, synthesizer } = {}) {
+export function createLocalVoice(directory, { transcriber, synthesizer, getKey, fetcher, availableMemory } = {}) {
   const runtime = path.join(directory, 'local-voice', release), executable = path.join(runtime, 'whisper-cli.exe'), model = path.join(runtime, 'ggml-base.bin');
   const sessions = new Map(); let installing, installController, installState = { phase: 'idle', bytes: 0, error: null };
   const controller = new AbortController();
-  async function status() {
-    let ready = false;
+  async function legacyStatus() {
+    let ready = false, runtimeReady = false;
+    try { runtimeReady = (await fs.stat(executable)).isFile(); } catch {}
     try { ready = (await fs.stat(executable)).isFile() && (await fs.stat(model)).size === 147951465; } catch {}
-    return { ...installState, ready, supported: process.platform === 'win32' && process.arch === 'x64', engine: 'Whisper base (multilingual, CPU)', downloadBytes: 156880105, playback: 'Windows installed voice' };
+    return { ...installState, ready, runtimeReady, supported: process.platform === 'win32' && process.arch === 'x64', engine: 'Whisper base (multilingual, CPU)', downloadBytes: 156880105, playback: 'Windows installed voice' };
   }
-  async function install() {
-    if (installing) return status();
-    if ((await status()).ready) return status();
+  async function install(runtimeOnly = false) {
+    if (typeof runtimeOnly !== 'boolean') throw Error('Invalid speech setup request.');
+    if (installing) return legacyStatus();
+    const existing = await legacyStatus();
+    if (existing.ready || runtimeOnly && existing.runtimeReady) return legacyStatus();
     if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Automatic local voice setup currently supports Windows x64.');
     installController = new AbortController(); const signal = AbortSignal.any([controller.signal, installController.signal]);
     installState = { phase: 'downloading', bytes: 0, error: null };
@@ -79,45 +83,52 @@ export function createLocalVoice(directory, { transcriber, synthesizer } = {}) {
       const temporary = await fs.mkdtemp(path.join(parent, 'install-'));
       try {
         const archive = path.join(temporary, 'runtime.zip'), unpacked = path.join(temporary, 'files');
-        await download(`https://github.com/ggml-org/whisper.cpp/releases/download/${release}/whisper-bin-x64.zip`, archive, runtimeHash, 10000000, signal, bytes => { installState.bytes = bytes; });
-        await run(powershell, ['-NoProfile', '-NonInteractive', '-Command', 'Expand-Archive -LiteralPath $env:NOTCH_VOICE_ARCHIVE -DestinationPath $env:NOTCH_VOICE_DESTINATION'], { signal, env: { ...process.env, NOTCH_VOICE_ARCHIVE: archive, NOTCH_VOICE_DESTINATION: unpacked } });
-        const entries = await fs.readdir(unpacked, { recursive: true });
-        const cli = entries.filter(name => path.basename(name) === 'whisper-cli.exe');
-        if (cli.length !== 1) throw new Error('The official speech runtime has an unexpected layout.');
-        const binaries = path.dirname(path.join(unpacked, cli[0]));
+        let binaries = runtime;
+        if (!existing.runtimeReady) {
+          await download(`https://github.com/ggml-org/whisper.cpp/releases/download/${release}/whisper-bin-x64.zip`, archive, runtimeHash, 10000000, signal, bytes => { installState.bytes = bytes; });
+          await run(powershell, ['-NoProfile', '-NonInteractive', '-Command', 'Expand-Archive -LiteralPath $env:NOTCH_VOICE_ARCHIVE -DestinationPath $env:NOTCH_VOICE_DESTINATION'], { signal, env: { ...process.env, NOTCH_VOICE_ARCHIVE: archive, NOTCH_VOICE_DESTINATION: unpacked } });
+          const entries = await fs.readdir(unpacked, { recursive: true });
+          const cli = entries.filter(name => path.basename(name) === 'whisper-cli.exe');
+          if (cli.length !== 1) throw new Error('The official speech runtime has an unexpected layout.');
+          binaries = path.dirname(path.join(unpacked, cli[0]));
+        }
         await run(path.join(binaries,'whisper-cli.exe'),['--help'],{signal,timeout:15000});
-        await download(modelUrl, path.join(binaries, 'ggml-base.bin'), modelHash, 147951465, signal, bytes => { installState.bytes = 8928640 + bytes; });
+        if (!runtimeOnly) {
+          const pendingModel = path.join(temporary, 'ggml-base.bin');
+          await download(modelUrl, pendingModel, modelHash, 147951465, signal, bytes => { installState.bytes = (existing.runtimeReady ? 0 : 8928640) + bytes; });
+          await fs.rename(pendingModel,path.join(binaries,'ggml-base.bin'));
+        }
         await fs.writeFile(path.join(binaries, 'notch-runtime.json'), JSON.stringify({ release, runtimeHash, modelHash }));
         await fs.copyFile(fileURLToPath(new URL('./local-voice-LICENSES.txt',import.meta.url)),path.join(binaries,'LICENSES.txt'));
         signal.throwIfAborted();
         // Failed downloads never replace the last usable runtime.
-        await fs.rename(binaries, runtime);
-        installState = { phase: 'ready', bytes: 156880105, error: null };
+        if (!existing.runtimeReady) await fs.rename(binaries, runtime);
+        installState = { phase: 'ready', bytes: (existing.runtimeReady ? 0 : 8928640) + (runtimeOnly ? 0 : 147951465), error: null };
       } catch (error) { installState = { ...installState, phase: 'error', error: signal.aborted ? 'Local voice setup cancelled.' : error.message }; }
-      finally { await fs.rm(temporary, { recursive: true, force: true }); installing = undefined; }
+      finally { if(!path.resolve(temporary).startsWith(path.resolve(parent)+path.sep))throw Error('Invalid speech setup directory.');await fs.rm(temporary, { recursive: true, force: true }); installing = undefined; }
     })();
-    return status();
+    return legacyStatus();
   }
   async function ensureReady() {
     controller.signal.throwIfAborted();
-    if (transcriber || (await status()).ready) return;
-    throw new Error('Install local voice in Settings → Voice before recording. No account is required.');
+    if (transcriber) return;
+    await models.ensureReady('stt');
   }
-  async function transcribe(pcm, { signal, hotwords = [] } = {}) {
+  async function localTranscribe(pcm, { signal, hotwords = [], model: selectedModel } = {}) {
     signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-    await ensureReady(); signal?.throwIfAborted();
+    signal?.throwIfAborted();
     if (pcm.length < 6400) return '';
     if (transcriber) return transcriber(pcm, { signal });
     const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-speech-'));
     try {
       const input = path.join(temporary, 'input.wav'), output = path.join(temporary, 'transcript');
       await fs.writeFile(input, pcmWave(pcm), { mode: 0o600 });
-      await run(executable, ['-m', model, '-f', input, '-l', 'auto', '-t', String(Math.min(4, os.availableParallelism())), '-ng', '-nt', '-np', '-otxt', '-of', output,
+      await run(executable, ['-m', selectedModel || model, '-f', input, '-l', 'auto', '-t', String(Math.min(4, os.availableParallelism())), '-ng', '-nt', '-np', '-otxt', '-of', output,
         ...(hotwords.length ? ['--prompt', hotwords.filter(value => typeof value === 'string').join(', ').slice(0, 1000)] : [])], { signal });
       return (await fs.readFile(output + '.txt', 'utf8')).trim();
     } finally { await fs.rm(temporary, { recursive: true, force: true }); }
   }
-  async function synthesize(text, { signal, rate = 'normal' } = {}) {
+  async function systemSpeak(text, { signal, rate = 'normal', voice = '' } = {}) {
     signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     if (synthesizer) return synthesizer(text, { signal, rate });
     const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-speech-'));
@@ -125,10 +136,23 @@ export function createLocalVoice(directory, { transcriber, synthesizer } = {}) {
       const file = path.join(temporary, 'speech.wav');
       const script = await fs.readFile(fileURLToPath(new URL('./local-speech.ps1', import.meta.url)), 'utf8');
       await run(powershell, ['-NoProfile', '-NonInteractive', '-Command', script], {
-        signal, input: JSON.stringify({ file, text: text.slice(0, 6000), rate: rate === 'fast' ? 2 : rate === 'slow' ? -2 : 0 }),
+        signal, input: JSON.stringify({ file, text: text.slice(0, 6000), voice, rate: rate === 'fast' ? 2 : rate === 'slow' ? -2 : 0 }),
       });
       return wavePcm(await fs.readFile(file));
     } finally { await fs.rm(temporary, { recursive: true, force: true }); }
+  }
+  const models=createSpeechModels(directory,{run,legacyStatus,legacyInstall:install,legacyTranscribe:localTranscribe,systemSpeak,pcmWave,legacyCancel:()=>installController?.abort(),getKey,fetcher,availableMemory});
+  const status=async()=>({...await legacyStatus(),...await models.status()});
+  async function transcribe(pcm, options={}) {
+    const signal=AbortSignal.any([controller.signal,...(options.signal?[options.signal]:[])]);
+    if(transcriber)return transcriber(pcm,{...options,signal});
+    if(pcm.length<6400)return '';
+    return models.transcribe(pcm,{...options,signal});
+  }
+  async function synthesize(text,options={}) {
+    const signal=AbortSignal.any([controller.signal,...(options.signal?[options.signal]:[])]);
+    if(synthesizer)return synthesizer(text,{...options,signal});
+    return models.synthesize(text,{...options,signal});
   }
   function audioBytes(audio) {
     if (!(audio instanceof Uint8Array) || audio.byteLength > 64000 || audio.byteLength % 2) return null;
@@ -138,20 +162,20 @@ export function createLocalVoice(directory, { transcriber, synthesizer } = {}) {
     const id = randomUUID(), abort = new AbortController();
     for (const current of sessions.values()) { current.abort.abort(); current.emit({type:'status',sessionId:current.id,status:'closed'}); }
     sessions.clear();
-    const session = { id, abort, chunks: [], bytes: 0, pending: 0, queue: Promise.resolve(), emit, hotwords: options.hotwords || [], closed: false };
+    const session = { id, abort, chunks: [], bytes: 0, pending: 0, queue: Promise.resolve(), emit, hotwords: options.hotwords || [], chosen:models.snapshot().stt, closed: false };
     sessions.set(id, session); return id;
   }
   function flushRecognition(session) {
     const pcm = Buffer.concat(session.chunks); session.chunks = []; session.bytes = 0;
     if (++session.pending > 4) return Promise.reject(new Error('Local transcription is falling behind. Stop recording and try a shorter recording.'));
     session.queue = session.queue.then(async () => {
-      const text = await transcribe(pcm, { signal: session.abort.signal, hotwords: session.hotwords });
+      const text = await transcribe(pcm, { signal: session.abort.signal, hotwords: session.hotwords, chosen:session.chosen });
       if (text && !session.abort.signal.aborted) session.emit({ type: 'result', sessionId: session.id, text: text + ' ', isFinal: true });
     }).finally(() => { session.pending--; });
     session.queue.catch(() => {}); return session.queue;
   }
   return {
-    status, install, ensureReady, transcribe, synthesize,
+    status, install, ensureReady, transcribe, synthesize, models: (action,input)=>models.action(action,input),
     cancelInstall() { installController?.abort(); return status(); },
     async startRecognition(emit, options) { await ensureReady(); return startRecognition(emit, options); },
     sendRecognition(id, audio) {
@@ -167,6 +191,6 @@ export function createLocalVoice(directory, { transcriber, synthesizer } = {}) {
       try { if (complete) await flushRecognition(session); else { session.abort.abort(); await session.queue.catch(() => {}); } }
       finally { sessions.delete(id); session.abort.abort(); session.emit({ type: 'status', sessionId: id, status: 'closed' }); }
     },
-    async shutdown() { controller.abort(); const pending=[...sessions.values()]; for (const session of pending) session.abort.abort(); sessions.clear(); await Promise.allSettled([...pending.map(session=>session.queue),installing]); },
+    async shutdown() { controller.abort(); await models.shutdown(); const pending=[...sessions.values()]; for (const session of pending) session.abort.abort(); sessions.clear(); await Promise.allSettled([...pending.map(session=>session.queue),installing]); },
   };
 }

@@ -17,6 +17,7 @@ export function registerModelIpc(ipcMain, host) {
     voice: () => host.voice.status(),
     voiceInstall: () => host.voice.install(),
     voiceCancel: () => host.voice.cancelInstall(),
+    voiceModels: (action,input) => host.voice.models(action,input),
     web: patch => patch === undefined ? host.webResearch.status() : host.webResearch.update(patch),
     webInstall: () => host.webResearch.install(),
     workspace: async mode => mode === undefined ? manager.getWorkspaceMode() : manager.setWorkspaceMode(mode),
@@ -58,7 +59,7 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
   web:patch=>ipcRenderer.invoke('notch-models:web',patch),
   webInstall:()=>ipcRenderer.invoke('notch-models:webInstall'),
   workspace:mode=>ipcRenderer.invoke('notch-models:workspace',mode)
-  ,voice:()=>ipcRenderer.invoke('notch-models:voice'),voiceInstall:()=>ipcRenderer.invoke('notch-models:voiceInstall'),voiceCancel:()=>ipcRenderer.invoke('notch-models:voiceCancel')
+  ,voice:()=>ipcRenderer.invoke('notch-models:voice'),voiceInstall:()=>ipcRenderer.invoke('notch-models:voiceInstall'),voiceCancel:()=>ipcRenderer.invoke('notch-models:voiceCancel'),voiceModels:(action,input)=>ipcRenderer.invoke('notch-models:voiceModels',action,input)
  }));
 }\n`;
 
@@ -78,5 +79,9 @@ export function patchModelPreload(source) {
   if(!source.includes("workspace:mode=>"))source=source.replace(queue,queue+",\n  workspace:mode=>ipcRenderer.invoke('notch-models:workspace',mode)");
   if(!source.includes("web:patch=>"))source=source.replace("workspace:mode=>", "web:patch=>ipcRenderer.invoke('notch-models:web',patch),\n  webInstall:()=>ipcRenderer.invoke('notch-models:webInstall'),\n  workspace:mode=>");
   if(!source.includes('voiceInstall:()=>'))source=source.replace("workspace:mode=>", "voice:()=>ipcRenderer.invoke('notch-models:voice'),voiceInstall:()=>ipcRenderer.invoke('notch-models:voiceInstall'),voiceCancel:()=>ipcRenderer.invoke('notch-models:voiceCancel'),\n  workspace:mode=>");
+  if(!source.includes('voiceModels:(action,input)=>')){
+    if(source.split('voiceInstall:()=>').length!==2)throw new Error('The speech model bridge differs from the expected version.');
+    source=source.replace('voiceInstall:()=>',"voiceModels:(action,input)=>ipcRenderer.invoke('notch-models:voiceModels',action,input),voiceInstall:()=>");
+  }
   return source;
 }

@@ -41,6 +41,9 @@ export function patchSecondaryArtwork(source) {
     });
   }
   source = source.replace('Symbol:NotchSymbol}=createNotchWorkbench', 'Symbol:NotchSymbol,Wordmark:notchNotesWordmark}=createNotchWorkbench');
+  source = source.replace(/Symbol:([Nn]otchSymbol),(?!Dot:)/, 'Symbol:$1,Dot:notchDot,');
+  source = source.replace(/Wordmark:notchNotesWordmark(?=}=createNotchWorkbench)/i,'Wordmark:notchNotesWordmark,VoiceModels:notchVoiceModels')
+    .replace(/createNotchWorkbench\(reactExports,useTheme\)/gi,match=>match.slice(0,-1)+',{ContentDialog})');
   if (source.includes('function QuickNoteEmptyState(')) source = patchFunction(source, 'QuickNoteEmptyState', 'function QuickNoteEmptyState(){return jsxRuntimeExports.jsxs("div",{"data-quick-note-empty-state":!0,className:"notch-notes-empty",role:"status",children:[jsxRuntimeExports.jsx(notchNotesWordmark,{width:112}),jsxRuntimeExports.jsx("p",{children:"No notes yet. Save an idea or add a note to a task."})]});}');
   if (source.includes('function QuickNoteWindowHeader(')) source = patchFunction(source, 'QuickNoteWindowHeader', body => {
     if (body.includes('className:"notch-notes-title"')) return body;
@@ -64,7 +67,7 @@ export function patchSecondaryArtwork(source) {
   }
   if (source.includes('function LiveVoiceOverlaySurface(')) source = patchVoiceOverlayArtwork(source);
   if (source.includes('function TaskMonitorConversationRecapCard(')) source = patchFunction(source, 'TaskMonitorConversationRecapCard', body => {
-    if(body.includes('className:"notch-recap-mark"'))return body;
+    if(body.includes('className:"notch-recap-mark"'))return body.replace(/[Nn]otchSymbol,\{size:24,className:"notch-recap-mark"/, 'notchNotesWordmark,{width:62,className:"notch-recap-mark"');
     const spans=[];
     function visit(node){
       if(!node||typeof node!=='object')return;
@@ -74,14 +77,18 @@ export function patchSecondaryArtwork(source) {
     visit(parse(body,{ecmaVersion:'latest'}));
     if(spans.length!==1)throw new Error('Recap artwork anchor changed.');
     const span=spans[0];
-    return body.slice(0,span.start)+'jsxRuntimeExports.jsx(NotchSymbol,{size:24,className:"notch-recap-mark","aria-hidden":!0})'+body.slice(span.end);
+    return body.slice(0,span.start)+'jsxRuntimeExports.jsx(notchNotesWordmark,{width:62,className:"notch-recap-mark","aria-hidden":!0})'+body.slice(span.end);
   });
   if (source.includes('function QuickNoteCreateButton(')) source = patchFunction(source, 'QuickNoteCreateButton', body => {
+    body = body.replace(/jsxRuntimeExports\.jsx\([Nn]otchSymbol,/g, 'jsxRuntimeExports.jsx(notchDot,');
     if (!body.includes('"data-quick-note-create-raster"')) return body;
     body = replaceOnce(body, 'jsxRuntimeExports.jsx("img",{"data-quick-note-create-raster":!0,src:t1,alt:"",className:`pointer-events-none absolute left-1/2 top-1/2 size-14 max-w-none -translate-x-1/2 -translate-y-1/2 object-cover ${n1?"brightness-[1.08] saturate-[0.92]":""}`})', 'null');
     return body.replace('className:"relative size-10 overflow-hidden"', 'className:"relative size-10 overflow-hidden notch-quick-note-create"').replace('className:"text-white"', 'className:"notch-quick-note-mark"');
   });
-  source = source.replaceAll('jsxRuntimeExports.jsx(notchQuillPenAiLine,', 'jsxRuntimeExports.jsx(NotchSymbol,').replaceAll('jsxRuntimeExports.jsx(notchQuillPenLine,', 'jsxRuntimeExports.jsx(NotchSymbol,');
+  for (const icon of ['notchQuillPenAiLine', 'notchQuillPenLine', 'FeatherIcon', 'CustomInputWritingPen']) {
+    source = source.replaceAll(`jsxRuntimeExports.jsx(${icon},`, 'jsxRuntimeExports.jsx(notchDot,');
+  }
+  source = source.replace(/jsxRuntimeExports\.jsx\([Nn]otchSymbol,\{className:"size-3\.5",/g, 'jsxRuntimeExports.jsx(notchDot,{className:"size-3.5",');
   source=source.replaceAll('https://github.com/simpleending/notch-desktop/commits/main/','https://github.com/simpleending/notch-desktop/releases');
   for(const name of ['emptyIllustrationRaw','renderErrorIllustrationRaw','liveVoiceEmptyIllustration','emptyTimelineIllustration','failedMarkRaw','applePromptTitleRaw','workspaceFilesEmptyIllustrationRaw']) {
     const expression=new RegExp(`\\b${name}=\x60([\\s\\S]*?)\x60`,'g');
@@ -242,7 +249,7 @@ export async function verifyWorkbenchImports(assets, checkExports = true) {
 
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'update-settings-view.mjs', 'notes-branding.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'update-settings-view.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
   await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root, 'assets/fonts'), path.join(assets, 'fonts'), { recursive: true });

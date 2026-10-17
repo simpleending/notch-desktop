@@ -16,6 +16,7 @@ export async function verifyRendererBranding(application) {
         bundles++;
         if(!text.includes('/* notch workbench skin */') || !text.includes('/* notch setup renderer */'))throw new Error('The notch renderer patches are missing.');
         if(patchSecondaryArtwork(text)!==text)throw new Error('An inherited illustration remains in the renderer.');
+        if(/jsxRuntimeExports\.jsx\((?:notchQuillPenAiLine|notchQuillPenLine|FeatherIcon|CustomInputWritingPen),/.test(text))throw new Error('An inherited assistant pen icon remains active.');
         for(const name of ['AppleTreeDoodle','ImageDoodle','PartnerPlanGreetingMark','MobileAppDownloadPromo','FeedbackFloatingButton','FeedbackDialog','DesktopPetSurface','ProfileStickerCanvas'])if(!text.includes(`function ${name}(){return null;}`))throw new Error(`An inherited surface remains active: ${name}.`);
         if(!text.includes('function ProfileStickerExperience({children}){return children;}'))throw new Error('The original profile decoration remains active.');
         for(const module of ['notch-setup.mjs','workbench-skin.mjs','model-menu.mjs']) {

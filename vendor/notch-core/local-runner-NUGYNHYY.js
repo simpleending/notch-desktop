@@ -1,6 +1,6 @@
 import {
   detectLocalHardware
-} from "./chunk-VNTSJMDJ.js";
+} from "./chunk-HYM4YPRM.js";
 import {
   withLocalInference
 } from "./chunk-OBJXRYDA.js";

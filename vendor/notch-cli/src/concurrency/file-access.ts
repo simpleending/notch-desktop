@@ -59,9 +59,17 @@ export async function guardedFileAccess(name: string, params: Record<string, any
       }
     }
     const result = await execute();
+    const after = reading ? before : await Promise.all(files.map(file => fingerprint(file, ctx.abortSignal)));
     for (let i = 0; i < files.length; i++) {
-      if (result.isError) versions.delete(files[i]!);
-      else versions.set(files[i]!, reading ? before[i]! : await fingerprint(files[i]!, ctx.abortSignal));
+      if (result.isError) {
+        // A rejected edit did not make an unchanged, previously read file stale.
+        if (reading || after[i] !== before[i]) versions.delete(files[i]!);
+      }
+      else versions.set(files[i]!, after[i]!);
+    }
+    if (!reading && files.length && !result.isError) {
+      const changed = before.some((value, index) => value !== after[index]);
+      return { ...result, changed, ...(changed ? {} : { content: `No file contents changed: ${targets.join(', ')}. Do not repeat the same write. Inspect the current file and any failed checks before changing the approach.` }) };
     }
     return result;
   } finally { await release(); }

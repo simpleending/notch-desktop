@@ -18,7 +18,7 @@ import {
   linuxGpuMemory,
   modelFit,
   parseNvidiaMemory
-} from "./chunk-VNTSJMDJ.js";
+} from "./chunk-HYM4YPRM.js";
 import {
   acquireLease,
   executionContext,
@@ -160,15 +160,19 @@ function ollamaContextLength(fallback, nativeLimit) {
 }
 function ollamaBatchSize(fallback) {
   const raw = process.env.NOTCH_OLLAMA_BATCH;
-  const value = Number(raw || (fallback ?? 64));
+  const value = Number(raw || (fallback ?? 128));
   if (!Number.isInteger(value) || value < 1 || value > 2048) {
     throw new Error("NOTCH_OLLAMA_BATCH must be an integer between 1 and 2048.");
   }
   return value;
 }
 function ollamaFetch(baseUrl, options = {}) {
+  const thoughts = /* @__PURE__ */ new Map();
   return async (_input, init) => {
     const body = JSON.parse(String(init?.body));
+    let lastUser = body.messages.length - 1;
+    while (lastUser >= 0 && body.messages[lastUser].role !== "user") lastUser--;
+    const activeCalls = new Set(body.messages.slice(lastUser + 1).flatMap((message) => (message.tool_calls ?? []).flatMap((call) => call.id ? [call.id] : [])));
     const names = /* @__PURE__ */ new Map();
     const messages = body.messages.map((message) => {
       for (const call of message.tool_calls ?? []) if (call.id) names.set(call.id, call.function.name);
@@ -181,9 +185,11 @@ function ollamaFetch(baseUrl, options = {}) {
         }
         return part.text || "";
       }).join("\n") : message.content || "";
+      const toolThought = message.tool_calls?.map((call) => call.id && activeCalls.has(call.id) && thoughts.get(call.id)).find(Boolean);
       return {
         role: message.role,
         content,
+        ...toolThought ? { thinking: toolThought } : {},
         ...images.length ? { images } : {},
         ...message.tool_call_id ? { tool_name: names.get(message.tool_call_id) } : {},
         ...message.tool_calls ? { tool_calls: message.tool_calls.map((call) => ({ function: {
@@ -200,10 +206,10 @@ function ollamaFetch(baseUrl, options = {}) {
         stream: body.stream === true,
         ...body.tools?.length ? { tools: body.tools } : {},
         ...body.response_format ? { format: body.response_format.json_schema?.schema || "json" } : {},
-        ...process.env.NOTCH_OLLAMA_THINK === "0" ? { think: false } : {},
+        ...["0", "1"].includes(process.env.NOTCH_OLLAMA_THINK || "") ? { think: process.env.NOTCH_OLLAMA_THINK === "1" } : {},
         options: {
           num_ctx: ollamaContextLength(options.contextWindow, options.nativeContextWindow),
-          temperature: body.temperature ?? 0.2,
+          ...body.temperature === void 0 ? {} : { temperature: body.temperature },
           ...ollamaBatchSize(options.ollamaBatch) === void 0 ? {} : { num_batch: ollamaBatchSize(options.ollamaBatch) },
           ...body.max_tokens ? { num_predict: body.max_tokens } : {},
           ...body.stop ? { stop: body.stop } : {}
@@ -216,8 +222,11 @@ function ollamaFetch(baseUrl, options = {}) {
     }
     let toolIndex = 0;
     let sawTools = false;
+    let thinking = "";
+    const responseCalls = [];
     const convert = (frame) => {
       if (frame.error) throw new Error(`Ollama: ${frame.error}`);
+      thinking += frame.message?.thinking || "";
       const calls = frame.message?.tool_calls?.map((call) => ({
         index: toolIndex++,
         id: call.id || `call_${randomUUID()}`,
@@ -225,6 +234,9 @@ function ollamaFetch(baseUrl, options = {}) {
         function: { name: call.function.name, arguments: typeof call.function.arguments === "string" ? call.function.arguments : JSON.stringify(call.function.arguments) }
       }));
       if (calls?.length) sawTools = true;
+      if (calls) responseCalls.push(...calls.map((call) => call.id));
+      if (frame.done && thinking) for (const id of responseCalls) thoughts.set(id, thinking);
+      while (thoughts.size > 128) thoughts.delete(thoughts.keys().next().value);
       return {
         choices: [{ index: 0, [body.stream ? "delta" : "message"]: {
           role: "assistant",
@@ -649,7 +661,7 @@ function resolveByokModel(spec) {
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
     }) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startMlx } = await import("./local-runner-EBC2INO6.js");
+      const { startMlx } = await import("./local-runner-NUGYNHYY.js");
       const ready = await startMlx(modelId, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
@@ -2391,7 +2403,7 @@ var ExecutionGuard = class {
   pending = Promise.resolve();
   batch = /* @__PURE__ */ new Map();
   failures = /* @__PURE__ */ new Map();
-  failedSinceChange = 0;
+  failedSinceChange = /* @__PURE__ */ new Map();
   ownership = new AsyncLocalStorage();
   checks = /* @__PURE__ */ new Map();
   unrunChecks = /* @__PURE__ */ new Set();
@@ -2437,23 +2449,25 @@ var ExecutionGuard = class {
       const key = name + ":" + JSON.stringify(canonical(input));
       const duplicate = this.batch.get(key);
       if (duplicate) return { ...duplicate, content: "Duplicate call skipped; previous result:\n" + duplicate.content };
-      if ((this.failures.get(key) ?? 0) >= 2 || this.failedSinceChange >= 5) {
+      if ((this.failures.get(key) ?? 0) >= 2 || (this.failedSinceChange.get(name) ?? 0) >= 5) {
         this.stopped = "Stopped retrying: " + name + " repeatedly failed without a successful change. Inspect the error and change the approach before continuing.";
         return { content: this.stopped, isError: true };
       }
       const record = (result) => {
         this.batch.set(key, result);
         if (name === "shell") this.recordCheck(args, result);
+        if (name === "code_exec" && result.notExecuted && typeof args.code === "string" && isVerificationCommand(args.code)) this.unrunChecks.add(args.code.trim());
         if (result.isError) {
           this.failures.set(key, (this.failures.get(key) ?? 0) + 1);
-          this.failedSinceChange++;
+          this.failedSinceChange.set(name, (this.failedSinceChange.get(name) ?? 0) + 1);
         } else if (name === "read") {
           for (const failed of this.failures.keys()) if (/^(?:write|edit|apply_patch):/.test(failed)) this.failures.delete(failed);
+          for (const tool3 of ["write", "edit", "apply_patch"]) this.failedSinceChange.delete(tool3);
         } else if (name === "shell") {
-          if (this.failures.delete(key)) this.failedSinceChange = 0;
-        } else if (["write", "edit", "apply_patch", "git", "notebook"].includes(name)) {
+          if (this.failures.delete(key)) this.failedSinceChange.delete(name);
+        } else if (["write", "edit", "apply_patch", "notebook"].includes(name) && result.changed !== false && args.action !== "read" || name === "git" && ["checkout", "pull", "stash"].includes(String(args.operation))) {
           this.failures.clear();
-          this.failedSinceChange = 0;
+          this.failedSinceChange.clear();
         }
         return name === "code_exec" && (this.checks.size || this.unrunChecks.size) ? { ...result, notchChecks: [...this.checks.values()], notchUnrunChecks: [...this.unrunChecks] } : result;
       };
@@ -2660,7 +2674,7 @@ var parameters3 = z3.object({
 });
 var editTool = {
   name: "edit",
-  description: "Perform exact string replacement in a file. old_string must match exactly and be unique unless replace_all is true. Use for surgical edits.",
+  description: "Perform exact string replacement in a file. old_string must match exactly and be unique unless replace_all is true. Use small exact matches, without read-output line numbers. Use actual newlines for multiple lines; literal backslash sequences are preserved.",
   parameters: parameters3,
   async execute(params, ctx) {
     const filePath = path8.isAbsolute(params.path) ? params.path : path8.resolve(ctx.cwd, params.path);
@@ -2668,7 +2682,7 @@ var editTool = {
       const content = await fs8.readFile(filePath, "utf-8");
       if (!content.includes(params.old_string)) {
         return {
-          content: `old_string not found in ${filePath}. Make sure it matches exactly (including whitespace and indentation).`,
+          content: `old_string not found in ${filePath}. No files changed. Read the file again and use a smaller exact match, including whitespace and indentation.` + (params.old_string.includes("\\n") ? " Your match contains literal backslash-n characters; use actual newlines when matching line breaks." : ""),
           isError: true
         };
       }
@@ -2682,7 +2696,7 @@ var editTool = {
           };
         }
       }
-      const newContent = params.replace_all ? content.replaceAll(params.old_string, params.new_string) : content.replace(params.old_string, params.new_string);
+      const newContent = params.replace_all ? content.replaceAll(params.old_string, () => params.new_string) : content.replace(params.old_string, () => params.new_string);
       await fs8.writeFile(filePath, newContent, "utf-8");
       const oldLines = params.old_string.split("\n").length;
       const newLines = params.new_string.split("\n").length;
@@ -4901,7 +4915,7 @@ ${code}
   try {
     script = new vm.Script(wrapped, { filename: "code_exec.js" });
   } catch (err) {
-    return { status: "error", error: err.message };
+    return { status: "error", error: err.message + '\nNo JavaScript was executed. code_exec accepts JavaScript, not terminal commands. Use shell({command:"...",background:false}) for commands such as npm test or node test.mjs.', notExecuted: true };
   }
   const scriptPromise = (async () => {
     try {
@@ -5075,7 +5089,8 @@ var codeModeExecTool = {
     const notifsForThisCall = notifBuf.splice(0, notifBuf.length);
     return {
       content: formatResult(cell, maxChars, notifsForThisCall),
-      isError: outcome.status === "error"
+      isError: outcome.status === "error",
+      ...outcome.notExecuted ? { notExecuted: true } : {}
     };
   }
 };
@@ -6120,6 +6135,9 @@ Correct the arguments and call the intended tool again.`, isError: true })
 function missingToolCallFeedback(finishReason, callCount) {
   return finishReason === "tool-calls" && callCount === 0 ? "Your previous response requested tool execution, but no valid tool call could be parsed. No tool was executed in that response. Retry with a valid native tool name and complete JSON arguments matching its schema." : null;
 }
+function truncatedResponseFeedback(finishReason, callCount) {
+  return finishReason === "length" && callCount === 0 ? "The model reached its response limit before finishing. This task is incomplete. Increase the context or response limit, or try another model." : null;
+}
 
 // vendor/notch-cli/src/agent/subagent.ts
 function subagentRolloutId(parentSessionId, subagentId) {
@@ -6332,7 +6350,10 @@ ${describeToolSchemas(subagentCtx, { includeNames: Object.keys(tools) })}`;
       }
       toolContext.abortSignal?.throwIfAborted();
       totalToolCalls += toolCalls.length;
-      const missingCall = missingToolCallFeedback(await result.finishReason, toolCalls.length);
+      const finishReason = await result.finishReason;
+      const truncated = truncatedResponseFeedback(finishReason, toolCalls.length);
+      if (truncated) throw new Error(truncated);
+      const missingCall = missingToolCallFeedback(finishReason, toolCalls.length);
       if (missingCall) {
         messages.push({ role: "user", content: missingCall });
         continue;
@@ -6926,9 +6947,15 @@ async function guardedFileAccess(name, params, ctx, execute2) {
       }
     }
     const result = await execute2();
+    const after = reading ? before : await Promise.all(files2.map((file2) => fingerprint(file2, ctx.abortSignal)));
     for (let i = 0; i < files2.length; i++) {
-      if (result.isError) versions.delete(files2[i]);
-      else versions.set(files2[i], reading ? before[i] : await fingerprint(files2[i], ctx.abortSignal));
+      if (result.isError) {
+        if (reading || after[i] !== before[i]) versions.delete(files2[i]);
+      } else versions.set(files2[i], after[i]);
+    }
+    if (!reading && files2.length && !result.isError) {
+      const changed = before.some((value, index) => value !== after[index]);
+      return { ...result, changed, ...changed ? {} : { content: `No file contents changed: ${targets.join(", ")}. Do not repeat the same write. Inspect the current file and any failed checks before changing the approach.` } };
     }
     return result;
   } finally {
@@ -8158,7 +8185,8 @@ async function runAgentLoopInternal(messages, config) {
   ].join("\n") : "";
   const schemaText = JSON.stringify(await Promise.all(Object.entries(tools).map(async ([name, value]) => ({ name, description: value.description, schema: await asSchema(value.inputSchema).jsonSchema }))));
   let overhead = estimateTextTokens(`${config.systemPrompt}${templateFormatHint}${schemaText}`) + 256;
-  let budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+  const outputLimit = config.maxOutputTokens ?? (/^(?:ollama(?:-anthropic)?|mlx|colibri)\//.test(config.modelId ?? "") ? 16384 : void 0);
+  let budget = contextBudget(contextWindow, overhead, outputLimit);
   let tokenRatio = 1;
   const compact = async () => {
     const estimated = estimateTokens(history);
@@ -8250,7 +8278,7 @@ async function runAgentLoopInternal(messages, config) {
       if (Number.isSafeInteger(streamUsage.promptTokens) && Number.isSafeInteger(streamUsage.completionTokens) && streamUsage.promptTokens >= 0 && streamUsage.completionTokens >= 0) {
         if (streamUsage.promptTokens > 0) {
           overhead = Math.min(overhead, streamUsage.promptTokens + 256);
-          budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+          budget = contextBudget(contextWindow, overhead, outputLimit);
         }
         tokenRatio = Math.max(1, Math.min(4, (streamUsage.promptTokens - overhead) / Math.max(1, estimateTokens(history))));
         config.onUsage?.({ inputTokens: streamUsage.promptTokens, outputTokens: streamUsage.completionTokens, contextWindow });
@@ -8263,7 +8291,26 @@ async function runAgentLoopInternal(messages, config) {
     totalToolCalls += toolCalls.length;
     const nativeAssistantMessages = (await result.responseMessages ?? []).filter((message) => message.role === "assistant");
     const nativeCallCount = toolCalls.length;
-    const missingCall = missingToolCallFeedback(await result.finishReason, toolCalls.length);
+    const finishReason = await result.finishReason;
+    const truncated = truncatedResponseFeedback(finishReason, toolCalls.length);
+    if (truncated) {
+      const text2 = [guard.failedChecks.length ? guard.failureReport() : fullText, truncated].filter(Boolean).join("\n\n");
+      history.push({ role: "assistant", content: text2 });
+      config.onTextChunk?.(holdText ? text2 : `
+
+${truncated}`);
+      return {
+        status: guard.failedChecks.length ? "verification-failed" : "stalled",
+        text: text2,
+        messages: history,
+        iterations,
+        toolCallCount: totalToolCalls,
+        compressed: wasCompressed,
+        correctionAttempts: totalCorrectionAttempts,
+        usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens }
+      };
+    }
+    const missingCall = missingToolCallFeedback(finishReason, toolCalls.length);
     if (missingCall) {
       history.push({ role: "user", content: missingCall });
       totalCorrectionAttempts++;
@@ -8447,9 +8494,12 @@ async function buildSystemPrompt(projectRoot, _modelId, toolContext) {
         "- Explain what you're doing before making changes.",
         "- If a task is complex, break it into steps.",
         "- When running shell commands, prefer non-destructive operations.",
-        "- If you encounter an error, analyze it and suggest a fix.",
+        "- You are in a tool loop. Continue the requested work and checks until done or blocked; announcing your next action is not completion.",
+        "- If a tool or check fails, inspect its error and the relevant test and source, fix the cause, and rerun the check. If unable, report the failure honestly.",
+        "- An unchanged write is not progress. Do not repeat the same file contents or retry a failed check without a relevant change.",
         "- If the same tool call keeps failing, stop retrying and try a different approach.",
         "- Tool calls execute in order. Avoid duplicate calls. Fix a failed check and rerun it successfully before reporting that checks passed.",
+        "- Run terminal commands such as npm test or node test.mjs with shell. code_exec runs JavaScript orchestration, not shell syntax. A code_exec syntax error means its code did not run.",
         "- Start long-running servers with shell background:true, then check readiness with a separate foreground command. A started process is not a passed test."
       ].join("\n")
     ),
@@ -8913,7 +8963,7 @@ async function runDesktopTurn(turn) {
     await managedOllama2("0.40.3", turn.signal);
   }
   if (provider === "mlx") {
-    const { startMlx } = await import("./local-runner-EBC2INO6.js");
+    const { startMlx } = await import("./local-runner-NUGYNHYY.js");
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);

@@ -1,0 +1,84 @@
+export function createVoiceModels(React, { ContentDialog } = {}) {
+    const h = React.createElement, api = (action, input) => window.notchModels.voiceModels(action, input);
+    const choose = role => window.dispatchEvent(new CustomEvent('notch:choose-voice', { detail: { role } }));
+    function Settings() {
+        const [state, setState] = React.useState(null), [error, setError] = React.useState(''), [text, setText] = React.useState('Your local speech voice is ready.'), [playing, setPlaying] = React.useState(false), audio = React.useRef(null), generation = React.useRef(0);
+        React.useEffect(() => { let live = true; const update = () => window.notchModels.voice().then(value => { if (live)
+            setState(value); }).catch(error => { if (live)
+            setError(error.message); }); void update(); const timer = setInterval(update, 1500); return () => { live = false; clearInterval(timer); generation.current++; audio.current?.close().catch(() => {}); void api('cancelPreview').catch(() => { }); }; }, []);
+        const preview = async () => { const current = ++generation.current; setError(''); setPlaying(true); audio.current?.close().catch(() => {}); const context = new AudioContext(); audio.current = context; try {
+            await context.resume();
+            const value = await api('preview', { text });
+            if (current !== generation.current)
+                return;
+            const bytes = Uint8Array.from(atob(value.audio), character => character.charCodeAt(0)), view = new DataView(bytes.buffer), buffer = context.createBuffer(1, bytes.length / 2, value.sampleRate);
+            for (let i = 0; i < buffer.length; i++)
+                buffer.getChannelData(0)[i] = view.getInt16(i * 2, true) / 32768;
+            const source = context.createBufferSource();
+            source.buffer = buffer;
+            source.connect(context.destination);
+            source.onended = () => { void context.close().catch(() => {}); if (current === generation.current)
+                setPlaying(false); };
+            source.start();
+        }
+        catch (error) {
+            if (current === generation.current) {
+                setError(error.message);
+                setPlaying(false);
+            }
+            await context.close().catch(() => {});
+        } };
+        return h('section', { className: 'notch-voice-model-settings', 'aria-label': 'Speech models' }, h('h3', null, 'Speech models'), h('p', null, 'Local speech is the default. Dictation uses its own model and inserts text into the composer for review.'), ...[['stt', 'Speech recognition', 'Choose dictation model'], ['tts', 'Speech output', 'Choose speech output']].map(([role, label, button]) => h('div', { className: 'notch-setting-row', key: role }, h('span', null, h('strong', null, label), h('small', null, state?.[role] ? `${state[role].name}${state.selection[role].voice ? ' · ' + state.selection[role].voice : ''} · ${state.selection[role].provider === 'local' ? 'Local' : 'OpenRouter cloud'}` : 'Loading speech settings…')), h('button', { type: 'button', onClick: () => choose(role) }, button))), state && !state.ready ? h('p', null, 'Choose a local dictation model and download it once to use the microphone offline.') : null, h('label', { className: 'notch-voice-preview' }, 'Speech preview', h('input', { 'aria-label': 'Speech preview text', value: text, maxLength: 240, onChange: event => setText(event.target.value) })), h('button', { type: 'button', disabled: playing || !text.trim() || !state?.tts?.ready, onClick: preview }, playing ? 'Playing preview…' : 'Test speech output'), state?.selection.tts.provider === 'openrouter' ? h('p', null, 'Preview text is sent to your selected OpenRouter speech provider; provider charges apply.') : null, error ? h('p', { role: 'alert' }, error) : null);
+    }
+    function Host() {
+        const [open, setOpen] = React.useState(false), [role, setRole] = React.useState('stt'), [source, setSource] = React.useState('installed'), [rows, setRows] = React.useState([]), [state, setState] = React.useState(null), [selected, setSelected] = React.useState(null), [voice, setVoice] = React.useState(''), [query, setQuery] = React.useState(''), [confirmed, setConfirmed] = React.useState(false), [busy, setBusy] = React.useState(false), [loading, setLoading] = React.useState(false), [error, setError] = React.useState(''), request = React.useRef(0);
+        React.useEffect(() => { const listener = event => { if (!['stt', 'tts'].includes(event.detail?.role))
+            return; setRole(event.detail.role); setSource('installed'); setQuery(''); setSelected(null); setConfirmed(false); setError(''); setOpen(true); }; window.addEventListener('notch:choose-voice', listener); return () => window.removeEventListener('notch:choose-voice', listener); }, []);
+        React.useEffect(() => { if (!open)
+            return; let live = true; setSelected(null); setRows([]); setError(''); setLoading(true); request.current++; Promise.all([api('catalog', { role, source }), window.notchModels.voice()]).then(([models, status]) => { if (live) {
+            setRows(models);
+            setState(status);
+        } }).catch(error => { if (live)
+            setError(error.message); }).finally(() => { if (live)
+            setLoading(false); }); const timer = setInterval(() => window.notchModels.voice().then(status => { if (live)
+            setState(status); }).catch(error => { if (live)
+            setError(error.message); }), 1000); return () => { live = false; clearInterval(timer); request.current++; }; }, [open, role, source]);
+        const inspect = async (row) => { const id = ++request.current; setSelected(null); setError(''); setLoading(true); try {
+            const value = await api('details', { role, id: row.id, provider: row.provider });
+            if (id === request.current) {
+                setSelected(value);
+                setVoice(value.voices?.[0] ?? '');
+            }
+        }
+        catch (error) {
+            if (id === request.current)
+                setError(error.message);
+        }
+        finally {
+            if (id === request.current)
+                setLoading(false);
+        } };
+        const act = async (download) => { setBusy(true); setError(''); try {
+            if (download) {
+                setState(await api('install', { role, id: selected.id }));
+            }
+            else {
+                setState(await api('select', { role, selection: { provider: selected.provider, id: selected.id, voice }, cloudConfirmed: confirmed }));
+                setOpen(false);
+            }
+        }
+        catch (error) {
+            setError(error.message);
+        }
+        finally {
+            setBusy(false);
+        } };
+        if (!open)
+            return null;
+        const installed = selected && (selected.installed || state?.[role]?.id === selected.id && state[role].ready), downloading = state?.job?.phase === 'downloading', cloud = selected?.provider === 'openrouter', available = rows.filter(row => (row.name + ' ' + row.id + ' ' + (row.description ?? '')).toLowerCase().includes(query.toLowerCase()));
+        return h(ContentDialog, { open, onClose: () => setOpen(false), title: role === 'stt' ? 'Choose speech recognition model' : 'Choose speech output model', description: 'Choose a compatible local download or an optional OpenRouter service.', closeLabel: 'Close speech model picker', maxWidth: 720,
+            children: h('div', { className: 'notch-voice-picker' }, h('div', { role: 'tablist', 'aria-label': 'Speech model source' }, ...[['installed', 'Installed'], ['huggingface', 'Hugging Face'], ['openrouter', 'OpenRouter']].map(([id, label]) => h('button', { type: 'button', key: id, role: 'tab', 'aria-selected': source === id, onClick: () => { if (id === source) return; setSource(id); setRows([]); setSelected(null); setLoading(true); setConfirmed(false); } }, label))), h('input', { type: 'search', 'aria-label': 'Search speech models', placeholder: 'Search compatible speech models', value: query, maxLength: 120, onChange: event => setQuery(event.target.value) }), source === 'huggingface' ? h('p', null, role === 'stt' ? 'Compatible Whisper models for local recognition. Models marked .en recognize English only.' : 'Compatible Piper voices converted for the local speech engine. Other model formats are excluded.') : null, source === 'openrouter' ? h('p', null, 'Cloud speech uses your OpenRouter key. ' + (state?.connected ? 'Provider charges apply.' : 'Connect a key in Settings → Models to use these services.')) : null, h('div', { className: 'notch-voice-model-list', role: 'listbox', 'aria-label': 'Compatible speech models', 'aria-busy': loading }, ...available.map(row => h('button', { type: 'button', role: 'option', 'aria-selected': selected?.id === row.id, key: row.id, disabled: busy, onClick: () => inspect(row) }, h('strong', null, row.name), h('small', null, [row.description, row.installed ? 'Installed' : null].filter(Boolean).join(' · '))))), loading ? h('p', { role: 'status' }, 'Loading compatible models…') : !available.length ? h('p', null, 'No matching compatible speech models.') : null, selected ? h('section', { 'aria-label': 'Selected speech model' }, h('h4', null, selected.name), selected.downloadBytes ? h('p', null, `${Math.ceil(selected.downloadBytes / 1024 ** 2)} MB download · approximately ${Math.ceil(selected.requiredMemory / 1024 ** 2)} MB free RAM precheck. Memory is checked again before processing.`) : null, selected.url ? h('a', { href: selected.url, target: '_blank', rel: 'noopener noreferrer' }, 'Model details and license') : null, role === 'tts' && (selected.id === 'windows' || cloud) ? h('label', null, 'Voice', selected.voices?.length ? h('select', { 'aria-label': 'Speech voice', value: voice, onChange: event => setVoice(event.target.value) }, ...(selected.id === 'windows' ? [h('option', { value: '', key: 'default' }, 'System default')] : []), ...selected.voices.map(name => h('option', { value: name, key: name }, name))) : h('input', { 'aria-label': 'Speech voice ID', value: voice, maxLength: 200, placeholder: cloud ? 'Enter a voice ID supported by this model' : 'System default', onChange: event => setVoice(event.target.value) })) : null, cloud ? h('label', { className: 'notch-voice-cloud-consent' }, h('input', { type: 'checkbox', checked: confirmed, onChange: event => setConfirmed(event.target.checked) }), role === 'stt' ? 'Send microphone audio to this OpenRouter speech provider.' : 'Send speech text to this OpenRouter speech provider.') : null, h('button', { type: 'button', disabled: busy || downloading || selected.supported === false || cloud && (!confirmed || !state?.connected || role === 'tts' && !voice.trim()), onClick: () => act(!cloud && !installed) }, cloud ? 'Use OpenRouter model' : installed ? 'Use model' : 'Download & use')) : null, downloading ? h('div', { role: 'status' }, h('progress', { max: state.job.total || 1, value: state.job.bytes }), h('p', null, `Downloading speech files: ${Math.floor(state.job.bytes / 1024 ** 2)} MB`), h('button', { type: 'button', onClick: () => api('cancel').then(() => window.notchModels.voice()).then(setState).catch(error => setError(error.message)) }, 'Cancel download')) : null, state?.job?.phase === 'ready' ? h('p', { role: 'status' }, 'Download complete. The speech model is selected.') : null, error || state?.job?.error ? h('p', { role: 'alert' }, error || state.job.error) : null)
+        });
+    }
+    return { Settings, Host };
+}

@@ -23,7 +23,8 @@ export const editTool: NotchTool<typeof parameters> = {
   name: 'edit',
   description:
     'Perform exact string replacement in a file. old_string must match exactly ' +
-    'and be unique unless replace_all is true. Use for surgical edits.',
+    'and be unique unless replace_all is true. Use small exact matches, without read-output line numbers. ' +
+    'Use actual newlines for multiple lines; literal backslash sequences are preserved.',
   parameters,
   async execute(params, ctx): Promise<ToolResult> {
     const filePath = path.isAbsolute(params.path)
@@ -35,7 +36,8 @@ export const editTool: NotchTool<typeof parameters> = {
 
       if (!content.includes(params.old_string)) {
         return {
-          content: `old_string not found in ${filePath}. Make sure it matches exactly (including whitespace and indentation).`,
+          content: `old_string not found in ${filePath}. No files changed. Read the file again and use a smaller exact match, including whitespace and indentation.` +
+            (params.old_string.includes('\\n') ? ' Your match contains literal backslash-n characters; use actual newlines when matching line breaks.' : ''),
           isError: true,
         };
       }
@@ -54,8 +56,8 @@ export const editTool: NotchTool<typeof parameters> = {
       }
 
       const newContent = params.replace_all
-        ? content.replaceAll(params.old_string, params.new_string)
-        : content.replace(params.old_string, params.new_string);
+        ? content.replaceAll(params.old_string, () => params.new_string)
+        : content.replace(params.old_string, () => params.new_string);
 
       await fs.writeFile(filePath, newContent, 'utf-8');
 

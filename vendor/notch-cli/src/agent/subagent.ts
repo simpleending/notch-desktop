@@ -16,7 +16,7 @@ import { streamText, generateText, type ModelMessage, type LanguageModel } from 
 import { buildToolMap, describeToolSchemas, type ToolContext } from '../tools/index.js';
 import { getBuiltinAgent, type BuiltinAgent } from './builtins/index.js';
 import { Rollout } from '../session/rollout.js';
-import { toolValidationFeedback, missingToolCallFeedback } from './tool-feedback.js';
+import { toolValidationFeedback, missingToolCallFeedback, truncatedResponseFeedback } from './tool-feedback.js';
 import { withTaskWorkspace, withSharedWorker, openRouterTaskContext } from '../concurrency/task-workspace.js';
 
 export type SubagentType = 'explore' | 'plan' | 'general' | 'builtin';
@@ -313,7 +313,10 @@ ${describeToolSchemas(subagentCtx, { includeNames: Object.keys(tools) })}`;
       toolContext.abortSignal?.throwIfAborted();
       totalToolCalls += toolCalls.length;
 
-      const missingCall = missingToolCallFeedback(await result.finishReason, toolCalls.length);
+      const finishReason = await result.finishReason;
+      const truncated = truncatedResponseFeedback(finishReason, toolCalls.length);
+      if (truncated) throw new Error(truncated);
+      const missingCall = missingToolCallFeedback(finishReason, toolCalls.length);
       if (missingCall) {
         messages.push({ role: 'user', content: missingCall });
         continue;

@@ -11,7 +11,7 @@ export function createLocalLiveVoice(voice, { voiceSessionId, chatSessionId, spe
   const reset = () => { chunks = []; bytes = 0; voiced = 0; silence = 0; };
   const fail = error => {
     if (session.signal.aborted || response.signal.aborted || error.name === 'AbortError') return;
-    busy = false; reset(); state('listening', `Local voice: ${error.message}`);
+    busy = false; reset(); state('listening', `Voice: ${error.message}`);
   };
   async function speak(text, sourceTurnId) {
     if (session.signal.aborted || response.signal.aborted) return;

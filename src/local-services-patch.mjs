@@ -5,14 +5,11 @@ const body = method => method.slice(method.indexOf('{') + 1, -1);
 function replaceAnchor(source,before,after){if(source.includes(after))return source;if(source.split(before).length!==2)throw Error('Local service integration anchor changed.');return source.replace(before,after);}
 
 const voiceSettings = `function VoiceSettings(){
- const [status,setStatus]=reactExports.useState(null),[error,setError]=reactExports.useState(null);
  const prefs=useWorkbenchPreferences();const {liveVoiceService}=useServices();
  const [rate,setRate]=reactExports.useState(()=>liveVoiceService.getSettings().speechRate);
- reactExports.useEffect(()=>{let closed=false;const poll=()=>window.notchModels.voice().then(value=>{if(!closed)setStatus(value)}).catch(error=>{if(!closed)setError(error.message)});poll();const timer=setInterval(poll,1000);return()=>{closed=true;clearInterval(timer)}},[]);
- const install=async()=>{try{setError(null);setStatus(await window.notchModels.voiceInstall())}catch(error){setError(error.message)}};
  return jsxRuntimeExports.jsxs("div",{children:[
- jsxRuntimeExports.jsx(SettingsContentHeader,{title:"Voice",description:"Dictation, recording notes, and Live Voice run on this device. Whisper transcribes microphone audio locally. Live Voice uses the task's selected model and permissions; choose a local model to keep inference on this device."}),
- jsxRuntimeExports.jsx(SettingsSection,{title:"Local speech engine",children:jsxRuntimeExports.jsx(SettingsItem,{title:status?.ready?"Whisper is ready":"Install local voice",description:error||status?.error||(status?.phase==="downloading"?"Downloading verified speech runtime and model: "+Math.round(status.bytes/1000000)+" MB":"One download of about 157 MB from GitHub and Hugging Face. After setup, transcription works offline. Speech output uses the Windows voice installed on this device."),control:status?.ready?jsxRuntimeExports.jsx("span",{role:"status",children:"Ready — no account required"}):status?.phase==="downloading"?jsxRuntimeExports.jsx(Button,{onClick:()=>window.notchModels.voiceCancel().then(setStatus),children:"Cancel download"}):jsxRuntimeExports.jsx(Button,{onClick:install,disabled:!status?.supported,children:"Install speech engine"})})}),
+ jsxRuntimeExports.jsx(SettingsContentHeader,{title:"Voice",description:"Local speech is selected by default. Choose a separate recognition model for dictation and a voice for speech output. Optional cloud speech uses your provider key. Live Voice uses the task's selected chat model and permissions."}),
+ reactExports.createElement(notchVoiceModels),
  jsxRuntimeExports.jsx(SettingsSection,{title:"Dictation",children:jsxRuntimeExports.jsx(SettingsItem,{title:"Voice input",description:"Use the microphone in the composer. The transcript appears when you stop, with updates during longer recordings.",control:jsxRuntimeExports.jsx(Switch,{"aria-label":"Enable voice input",checked:prefs.voiceInputEnabled,onCheckedChange:prefs.setVoiceInputEnabled})})}),
  jsxRuntimeExports.jsx(VoiceInputRecognitionSettings,{section:"general"}),
  jsxRuntimeExports.jsx(SettingsSection,{title:"Recognition and history",children:jsxRuntimeExports.jsx(VoiceInputRecognitionSettings,{section:"recognition"})}),
@@ -25,6 +22,10 @@ export function patchLocalServicesRenderer(source) {
   for (const [name, methods] of Object.entries(originals.renderer.methods)) if (source.includes(`class ${name}`) || source.includes(`${name}=class`)) {
     for (const [method, implementation] of Object.entries(methods)) source = patchClassMethod(source, name, method, body(implementation));
   }
+  if(source.includes('class VoiceInputService')||source.includes('VoiceInputService=class'))source=patchClassMethod(source,'VoiceInputService','start',text=>{
+    if(text.includes('notch:choose-voice'))return text;
+    return replaceAnchor(text,'try{if(await this.client.prepareVoiceInput(),i1!==this.operation)return;','try{const notchSpeech=await window.notchModels.voice();if(i1!==this.operation)return;if(!notchSpeech.ready){await this.stop(e1,false);window.dispatchEvent(new CustomEvent("notch:choose-voice",{detail:{role:"stt"}}));return;}if(await this.client.prepareVoiceInput(),i1!==this.operation)return;');
+  });
   if(source.includes('class ChatSessionService')||source.includes('ChatSessionService=class'))source=patchClassMethod(source,'ChatSessionService','upsertLiveVoiceTranscript',text=>text.replace('if(this.sessionIdValue.get()!==e1||this.summaryValue.get()?.conversationMode!=="voice")','if(this.sessionIdValue.get()!==e1)'));
   if (source.includes('function ChatComposer(')) source = patchFunction(source, 'ChatComposer', text => text
     .replace('liveVoiceTarget:s1,', 'liveVoiceTarget:s1=t1?{chatSessionId:t1}:undefined,')

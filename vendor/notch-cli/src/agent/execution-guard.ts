@@ -30,7 +30,7 @@ export class ExecutionGuard {
   private pending: Promise<unknown> = Promise.resolve();
   private batch = new Map<string, ToolResult>();
   private failures = new Map<string, number>();
-  private failedSinceChange = 0;
+  private failedSinceChange = new Map<string, number>();
   private ownership = new AsyncLocalStorage<boolean>();
   readonly checks = new Map<string, { command: string; passed: boolean }>();
   private unrunChecks = new Set<string>();
@@ -65,23 +65,25 @@ export class ExecutionGuard {
       const key=name+':'+JSON.stringify(canonical(input));
       const duplicate=this.batch.get(key);
       if(duplicate)return {...duplicate,content:'Duplicate call skipped; previous result:\n'+duplicate.content};
-      if((this.failures.get(key)??0)>=2||this.failedSinceChange>=5){
+      if((this.failures.get(key)??0)>=2||(this.failedSinceChange.get(name)??0)>=5){
         this.stopped='Stopped retrying: '+name+' repeatedly failed without a successful change. Inspect the error and change the approach before continuing.';
         return {content:this.stopped,isError:true};
       }
       const record=(result: ToolResult)=>{
         this.batch.set(key,result);
         if(name==='shell')this.recordCheck(args,result);
-        if(result.isError){this.failures.set(key,(this.failures.get(key)??0)+1);this.failedSinceChange++;}
+        if(name==='code_exec' && result.notExecuted && typeof args.code==='string' && isVerificationCommand(args.code))this.unrunChecks.add(args.code.trim());
+        if(result.isError){this.failures.set(key,(this.failures.get(key)??0)+1);this.failedSinceChange.set(name,(this.failedSinceChange.get(name)??0)+1);}
         else if(name==='read'){
           // A fresh read resolves the file-version precondition for guarded edits.
           for(const failed of this.failures.keys())if(/^(?:write|edit|apply_patch):/.test(failed))this.failures.delete(failed);
+          for(const tool of ['write','edit','apply_patch'])this.failedSinceChange.delete(tool);
         }
         else if(name==='shell'){
-          if(this.failures.delete(key))this.failedSinceChange=0;
+          if(this.failures.delete(key))this.failedSinceChange.delete(name);
         }
-        else if(['write','edit','apply_patch','git','notebook'].includes(name)){
-          this.failures.clear();this.failedSinceChange=0;
+        else if((['write','edit','apply_patch','notebook'].includes(name) && result.changed!==false && args.action!=='read') || (name==='git' && ['checkout','pull','stash'].includes(String(args.operation)))){
+          this.failures.clear();this.failedSinceChange.clear();
         }
         return name==='code_exec'&&(this.checks.size||this.unrunChecks.size)?{...result,notchChecks:[...this.checks.values()],notchUnrunChecks:[...this.unrunChecks]}:result;
       };

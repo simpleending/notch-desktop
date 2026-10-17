@@ -23,3 +23,9 @@ export function missingToolCallFeedback(finishReason: string, callCount: number)
     ? 'Your previous response requested tool execution, but no valid tool call could be parsed. No tool was executed in that response. Retry with a valid native tool name and complete JSON arguments matching its schema.'
     : null;
 }
+
+export function truncatedResponseFeedback(finishReason: string, callCount: number): string | null {
+  return finishReason === 'length' && callCount === 0
+    ? 'The model reached its response limit before finishing. This task is incomplete. Increase the context or response limit, or try another model.'
+    : null;
+}

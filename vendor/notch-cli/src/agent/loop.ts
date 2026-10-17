@@ -41,7 +41,7 @@ import {
   autoDetectPreset,
 } from './correction.js';
 import { recordShadowUsage } from '../providers/pi-ai-adapter.js';
-import { toolValidationFeedback, missingToolCallFeedback } from './tool-feedback.js';
+import { toolValidationFeedback, missingToolCallFeedback, truncatedResponseFeedback } from './tool-feedback.js';
 
 export interface AgentConfig {
   model: LanguageModel;
@@ -172,7 +172,9 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
 
   const schemaText = JSON.stringify(await Promise.all(Object.entries(tools).map(async ([name, value]) => ({ name, description: value.description, schema: await asSchema(value.inputSchema).jsonSchema }))));
   let overhead = estimateTextTokens(`${config.systemPrompt}${templateFormatHint}${schemaText}`) + 256;
-  let budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+  // Local reasoning shares the output allowance with tool arguments; keep cloud limits unchanged.
+  const outputLimit = config.maxOutputTokens ?? (/^(?:ollama(?:-anthropic)?|mlx|colibri)\//.test(config.modelId ?? '') ? 16384 : undefined);
+  let budget = contextBudget(contextWindow, overhead, outputLimit);
   let tokenRatio = 1;
   const compact = async () => {
     const estimated = estimateTokens(history);
@@ -290,7 +292,7 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
         // A measured full prompt also bounds fixed overhead, while conservatively counting its history twice.
         if (streamUsage.promptTokens! > 0) {
           overhead = Math.min(overhead, streamUsage.promptTokens! + 256);
-          budget = contextBudget(contextWindow, overhead, config.maxOutputTokens);
+          budget = contextBudget(contextWindow, overhead, outputLimit);
         }
         tokenRatio = Math.max(1, Math.min(4, (streamUsage.promptTokens! - overhead) / Math.max(1, estimateTokens(history))));
         config.onUsage?.({ inputTokens: streamUsage.promptTokens!, outputTokens: streamUsage.completionTokens!, contextWindow });
@@ -310,7 +312,17 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
     const nativeAssistantMessages = (await result.responseMessages ?? []).filter(message => message.role === 'assistant');
     const nativeCallCount = toolCalls.length;
 
-    const missingCall = missingToolCallFeedback(await result.finishReason, toolCalls.length);
+    const finishReason = await result.finishReason;
+    const truncated = truncatedResponseFeedback(finishReason, toolCalls.length);
+    if (truncated) {
+      const text = [guard.failedChecks.length ? guard.failureReport() : fullText, truncated].filter(Boolean).join('\n\n');
+      history.push({ role: 'assistant', content: text });
+      config.onTextChunk?.(holdText ? text : `\n\n${truncated}`);
+      return { status: guard.failedChecks.length ? 'verification-failed' : 'stalled', text, messages: history,
+        iterations, toolCallCount: totalToolCalls, compressed: wasCompressed, correctionAttempts: totalCorrectionAttempts,
+        usage: { promptTokens: totalPromptTokens, completionTokens: totalCompletionTokens, totalTokens: totalPromptTokens + totalCompletionTokens } };
+    }
+    const missingCall = missingToolCallFeedback(finishReason, toolCalls.length);
     if (missingCall) {
       history.push({ role: 'user', content: missingCall });
       totalCorrectionAttempts++;
@@ -541,9 +553,12 @@ export async function buildSystemPrompt(
         "- Explain what you're doing before making changes.",
         '- If a task is complex, break it into steps.',
         '- When running shell commands, prefer non-destructive operations.',
-        '- If you encounter an error, analyze it and suggest a fix.',
+        '- You are in a tool loop. Continue the requested work and checks until done or blocked; announcing your next action is not completion.',
+        '- If a tool or check fails, inspect its error and the relevant test and source, fix the cause, and rerun the check. If unable, report the failure honestly.',
+        '- An unchanged write is not progress. Do not repeat the same file contents or retry a failed check without a relevant change.',
         '- If the same tool call keeps failing, stop retrying and try a different approach.',
         '- Tool calls execute in order. Avoid duplicate calls. Fix a failed check and rerun it successfully before reporting that checks passed.',
+        '- Run terminal commands such as npm test or node test.mjs with shell. code_exec runs JavaScript orchestration, not shell syntax. A code_exec syntax error means its code did not run.',
         '- Start long-running servers with shell background:true, then check readiness with a separate foreground command. A started process is not a passed test.',
       ].join('\n'),
     ),
