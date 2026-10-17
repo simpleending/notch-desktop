@@ -50,5 +50,11 @@ test('packaging rejects a missing transitive renderer module before producing an
     await assert.rejects(verifyWorkbenchImports(root), /ENOENT/);
     await fs.writeFile(path.join(root, 'web-settings-view.mjs'), 'export const ready = true;');
     await verifyWorkbenchImports(root);
+    await fs.writeFile(path.join(root, 'index-test.js'), "import {createnotchWorkbench} from './workbench-skin.mjs';");
+    await fs.writeFile(path.join(root, 'workbench-skin.mjs'), 'export function createNotchWorkbench() {}');
+    await verifyWorkbenchImports(root, false);
+    await assert.rejects(verifyWorkbenchImports(root), /Renderer export missing: createnotchWorkbench/);
+    await fs.writeFile(path.join(root, 'workbench-skin.mjs'), 'export function createnotchWorkbench() {}');
+    await verifyWorkbenchImports(root);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

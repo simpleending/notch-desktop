@@ -295,6 +295,10 @@ export const BUILTIN_BYOK_PROVIDERS: ByokProvider[] = [
     apiKeyEnv: '', defaultModel: 'mlx-community/Qwen3.5-4B-4bit', fallbackApiKey: 'not-needed',
   },
   {
+    id: 'colibri', label: 'Colibri (experimental)', baseUrl: 'http://127.0.0.1:11437/v1',
+    apiKeyEnv: '', defaultModel: '', fallbackApiKey: 'not-needed',
+  },
+  {
     id: '__custom__',
     label: 'Custom (user-supplied)',
     // User MUST supply --base-url. These defaults are placeholders that
@@ -536,6 +540,12 @@ export function resolveByokModel(spec: ByokSpec): {
 
   const provider = createOpenAI({
     ...(providerInfo.id === 'ollama' ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) }
+      : providerInfo.id === 'colibri' ? { fetch: queuedLocalFetch(async (input, init) => {
+        const { startColibri } = await import('./colibri.js');
+        const ready = await startColibri(modelId, spec.contextWindow ?? 4096, init?.signal ?? undefined);
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        return fetch(ready + url.pathname.replace(/^\/v1/, '') + url.search, init);
+      }) }
       : providerInfo.id === 'mlx' ? { fetch: queuedLocalFetch(async (input, init) => {
         const { startMlx } = await import('./local-runner.js');
         const ready = await startMlx(modelId, init?.signal ?? undefined);
@@ -561,7 +571,7 @@ export function resolveByokModel(spec: ByokSpec): {
  * We avoid the `/health` convention (most providers don't expose one)
  * and instead sanity-check that baseUrl + apiKey are usable.
  */
-export async function validateByokConfig(spec: ByokSpec): Promise<{ ok: boolean; error?: string }> {
+export async function validateByokConfig(spec: ByokSpec): Promise<{ ok: boolean; error?: string; contextWindow?: number; maxOutputTokens?: number }> {
   const providerInfo = findByokProvider(spec.provider);
   if (!providerInfo) {
     return { ok: false, error: `Unknown provider "${spec.provider}"` };
@@ -593,6 +603,11 @@ export async function validateByokConfig(spec: ByokSpec): Promise<{ ok: boolean;
       if (info.capabilities && !info.capabilities.includes('tools')) {
         return { ok: false, error: 'This Ollama model does not advertise tool calling. Choose a tool-capable model with notch setup.' };
       }
+    } else if (providerInfo.id === 'colibri') {
+      const { colibriStatus } = await import('./colibri.js');
+      const status = await colibriStatus();
+      if (!status.verified || status.modelId !== spec.model) return { ok: false, error: 'Set up and validate a Colibri model with notch models install --runner colibri.' };
+      return { ok: true, contextWindow: status.nativeContext, maxOutputTokens: 2048 };
     } else if (providerInfo.id === 'mlx') {
       const root = new URL(baseUrl).origin;
       const response = await fetch(`${root}/health`, { signal: AbortSignal.timeout(5000) });

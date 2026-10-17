@@ -24,6 +24,12 @@ The Windows release supports x64 PCs running Windows 10 or 11. Check the release
 - **Work your way.** Choose dark or light mode, adjust the text, and search your project’s files.
 - **Keep knowledge and sites locally.** Knowledge Center saves searchable text notes and imports Markdown, text, CSV and JSON files. Sites saves HTML drafts with an offline static preview and HTML export. Both work without an account, keep drafts across restarts, and store their data in your device’s notch profile. Extensions opens the local extension manager; Workspace Index describes the automatic local file search.
 
+## Colibri (experimental)
+
+Open the model picker and choose **Colibri → Set up Colibri** to install the optional local engine. Setup needs 64-bit Python 3.10+. Choose a coding model, review its download size and memory requirements, then select **Download and validate**. Downloads resume if interrupted; current free memory and coding tools are checked before the model becomes selectable under **Installed**.
+
+Use **Colibri → Unload model** to release RAM while keeping downloaded files. Unload before changing its context limit. Colibri shares the local task queue and keeps one configured model at a time. Disk-streamed models can have long delays before their first token; this experimental option does not replace Ollama. Engine and model downloads are separate from the IDE installer, and model licenses apply separately.
+
 ## Web research
 
 Ask notch to search current documentation and cite its sources. In **Settings → Appearance → Web research**, choose **DuckDuckGo (default, no key)** or optional **Tavily (API key)**, select your browser, or turn off web access. DuckDuckGo search works immediately without a browser install. Save a [Tavily key](https://app.tavily.com/) only if you choose Tavily. Search keys use system encryption when available; otherwise they last only for the current session. Environment variable `TAVILY_API_KEY` overrides a saved Tavily key but does not change your selected provider. No notch account is required.

@@ -131,22 +131,34 @@ export function patchWorkbenchRenderer(source) {
   return patchEnglishRenderer(patchSecondaryArtwork('/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench} from "./workbench-skin.mjs";\n' + source));
 }
 
-export async function verifyWorkbenchImports(assets) {
+export async function verifyWorkbenchImports(assets, checkExports = true) {
   const visited = new Set();
+  const modules = new Map();
+  async function body(file) {
+    if (!modules.has(file)) modules.set(file, parse(await readFile(file, 'utf8'), { ecmaVersion: 'latest', sourceType: 'module' }).body);
+    return modules.get(file);
+  }
   async function visit(file) {
     if (visited.has(file)) return; visited.add(file);
-    const source = await readFile(file, 'utf8');
-    for (const node of parse(source, { ecmaVersion: 'latest', sourceType: 'module' }).body) {
-      if (node.type === 'ImportDeclaration' && node.source.value.startsWith('.')) await visit(path.resolve(path.dirname(file), node.source.value));
+    for (const node of await body(file)) {
+      if (node.type !== 'ImportDeclaration' || !node.source.value.startsWith('.')) continue;
+      const target = path.resolve(path.dirname(file), node.source.value);
+      await visit(target);
+      if (checkExports && target.endsWith('.mjs')) {
+        const exports = new Set((await body(target)).flatMap(statement => statement.type === 'ExportNamedDeclaration'
+          ? [...(statement.specifiers ?? []).map(item => item.exported.name), ...(statement.declaration?.declarations?.map(item => item.id.name) ?? []), statement.declaration?.id?.name].filter(Boolean) : []));
+        for (const item of node.specifiers) if (item.type === 'ImportSpecifier' && !exports.has(item.imported.name)) throw new Error(`Renderer export missing: ${item.imported.name} in ${path.basename(target)}`);
+      }
     }
   }
   await visit(path.join(assets, 'workbench-skin.mjs')); await visit(path.join(assets, 'model-menu.mjs'));
+  for (const name of await readdir(assets)) if (/^index-.*\.js$/.test(name)) await visit(path.join(assets, name));
 }
 
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'web-settings-view.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
-  await verifyWorkbenchImports(assets);
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root, 'assets/fonts'), path.join(assets, 'fonts'), { recursive: true });
   await cp(path.join(root, 'assets/notices'), path.join(assets, 'notices'), { recursive: true });

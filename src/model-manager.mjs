@@ -5,8 +5,10 @@ import { cloudModelRows } from './model-policy.mjs';
 import { localContextProfile } from './model-policy.mjs';
 import { installLocalModel } from './cli-bridge.mjs';
 import {createHubCatalog} from './hub-catalog.mjs';
+import { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri } from '../vendor/notch-core/desktop-harness.js';
 
-export function createModelManager(directory, { safeStorage, fetcher = fetch, recommend: recommendModels, install = installLocalModel } = {}) {
+export function createModelManager(directory, { safeStorage, fetcher = fetch, recommend: recommendModels, install = installLocalModel,
+  colibri = { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri } } = {}) {
   const keys = new Map(), preferences = new Map();
   const keyFile = path.join(directory, 'provider-keys.encrypted.json'), contextFile = path.join(directory, 'model-context.json'), catalogFile = path.join(directory, 'openrouter-models.json');
   const mlxFile = path.join(directory,'mlx-models.json');
@@ -76,7 +78,32 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
           source:'system',enabled:fit.fits,isDefault:true,isNew:false,priceFactor:0,tags:['local'],maxInputTokens:nativeContext,maxOutputTokens:2048,availableContextWindows:fit.choices,
           defaultContextWindow:service.context(`mlx/${row.repo}`,fit.choices,fit.contextWindow),recommendedContextWindow:fit.contextWindow,requestedContextWindow:service.requestedContext(`mlx/${row.repo}`),efforts:[],defaultEffort:null,supportsDisabled:true }; });
     },
-    async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && row.enabled); if (!row || (tokens!=='auto' && !row.availableContextWindows.includes(tokens))) throw new Error('Choose a supported context limit for this model.'); if(tokens==='auto')preferences.delete(model);else preferences.set(model,tokens); await atomic(contextFile,Object.fromEntries(preferences)); },
+    async colibriModels(hardware) {
+      return (await colibri.colibriModels(hardware)).map(row=>({...row,defaultContextWindow:service.context(row.key,row.availableContextWindows,row.defaultContextWindow),requestedContextWindow:service.requestedContext(row.key)}));
+    },
+    async colibri(action, model) {
+      await ready;
+      if (!['catalog','setup','install','unload'].includes(action)) throw new Error('Choose a Colibri setup, model download or unload action.');
+      if (action==='catalog') { const status=await colibri.colibriStatus(); return {...status,models:status.installed?await colibri.colibriCatalog():[]}; }
+      if (action==='unload') { await colibri.stopColibri(); return service.colibri('catalog'); }
+      if (job?.public.state==='running') throw new Error('A model download is already running.');
+      if (action==='install' && (typeof model!=='string' || !/^[a-z0-9-]{1,80}$/.test(model))) throw new Error('Choose a Colibri catalog model.');
+      const controller=new AbortController();
+      job={controller,public:{id:randomUUID(),repo:action==='setup'?'Colibri engine':model,runner:'colibri',state:'running',message:action==='setup'?'Preparing Colibri…':'Preparing resumable model download…'}};
+      const current=job,output=text=>{const line=text.replace(/\x1b\[[0-9;]*m/g,'').trim().split(/[\r\n]+/).filter(Boolean).at(-1);if(line)current.public.message=line.replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);};
+      void (async()=>{
+        if(action==='setup')await colibri.prepareColibri(controller.signal,output);
+        else { let installed=false; try {
+          await colibri.installColibri(model,{signal:controller.signal,token:keys.get('huggingface'),output});
+          installed=true;
+        } finally {if(installed)await colibri.stopColibri();} }
+        current.public.state='complete';current.public.message=action==='setup'?'Colibri is ready. Choose a coding model below.':'Tool validation passed. Open Installed to select the model; weights load when you send a message.';
+      })().catch(error=>{current.public.state=controller.signal.aborted?'cancelled':'failed';current.public.message=String(error.message).replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);});
+      return service.status();
+    },
+    async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && (row.enabled || row.provider==='colibri')); if (!row || (tokens!=='auto' && !row.availableContextWindows.includes(tokens))) throw new Error('Choose a supported context limit for this model.');
+      if(row.provider==='colibri'){if((await colibri.colibriStatus()).running)throw new Error('Unload Colibri before changing context so free memory can be checked accurately.');if(!(await colibri.colibriPlan(tokens==='auto'?4096:tokens)).fits)throw new Error('This Colibri context exceeds current free memory. Close applications or choose a smaller context.');}
+      if(tokens==='auto')preferences.delete(model);else preferences.set(model,tokens); await atomic(contextFile,Object.fromEntries(preferences)); },
     async hubCatalog(runner, options={}) { await ready; if (runner !== undefined && !['ollama','mlx'].includes(runner)) throw new Error('Choose Ollama or MLX.'); if(!options || typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(key=>!['query','page','force'].includes(key)))throw new Error('Invalid model search.'); return (recommendModels || (args=>hub.list(args)))({ ...options,runner,token:keys.get('huggingface') }); },
     async startInstall(repo, runner) {
       await ready; if (job?.public.state==='running') throw new Error('A model download is already running.');

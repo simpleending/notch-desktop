@@ -12,6 +12,10 @@ The Windows search companion is the unmodified [official ripgrep 15.2.0 x64 MSVC
 
 Electron and Chromium notices ship with the Windows application. Native libraries and upstream application components retain their included notices and applicable terms. The repository's AGPL license does not replace those licenses.
 
+## Optional Colibri runtime
+
+Experimental model setup downloads the unmodified [Colibri 2.0.0 release](https://github.com/JustVugg/colibri/releases/tag/v2.0.0), licensed under Apache-2.0, into the user's isolated notch runtime directory. Its included LICENSE and notices are retained. Engine binaries and model weights are separate downloads; model licenses apply separately.
+
 ## Optional local voice runtime
 
 Local voice setup downloads [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) and the [converted OpenAI Whisper base model](https://huggingface.co/ggerganov/whisper.cpp) (MIT). Binaries and weights are not bundled in the installer. Setup pins the release/model revision and verifies SHA-256 checksums. Windows speech output uses the operating system's installed System.Speech/SAPI voices.

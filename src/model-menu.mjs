@@ -1,3 +1,4 @@
+import {createColibriPanel} from './colibri-panel.mjs';
 const logo = name => new URL(`./providers/${name}.svg`,import.meta.url).href;
 const formatContext = tokens => `${Math.round(tokens/1024)}K`;
 const formatSize = bytes => `${(bytes/2**30).toFixed(1)} GiB`;
@@ -6,6 +7,7 @@ export const isModelSelectable = (row, options = [], loading = false) => row.ena
 /** Keep the workbench's popover focus/dismissal behavior and composer selection callback. */
 export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent }, useTheme) {
   const h = React.createElement;
+  const ColibriPanel=createColibriPanel(React);
   return function ModelMenu(props) {
     const api = window.notchModels, { resolvedTheme } = useTheme();
     const [innerOpen,setInnerOpen] = React.useState(false), open = !!api && (props.open ?? innerOpen);
@@ -13,6 +15,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const [search,setSearch] = React.useState(''), [key,setKey] = React.useState(''), [busy,setBusy] = React.useState(false);
     const [error,setError] = React.useState(''), [confirm,setConfirm] = React.useState(null), [optional,setOptional] = React.useState(()=>{try{return localStorage.getItem('notch.models.hideHfToken')!=='1';}catch{return true;}});
     const [hubLoading,setHubLoading] = React.useState(false);
+    const [colibri,setColibri]=React.useState(null);
     const [cloud,setCloud]=React.useState([]),[cloudLoading,setCloudLoading]=React.useState(false),cloudRequest=React.useRef(0);
     const [extended,setExtended] = React.useState(()=>{try{return localStorage.getItem('notch.models.extendedContext')==='1';}catch{return false;}});
     const [runner,setRunner] = React.useState(''), list = React.useRef(null), request = React.useRef(0), hubRequest=React.useRef(0), interactedOutside = React.useRef(false), id = React.useId();
@@ -79,7 +82,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
       const next = event.key==='Home'?0:event.key==='End'?rows.length-1:event.key==='ArrowDown'?(index+1)%rows.length:(index<=0?rows.length:index)-1;
       rows[next].focus();
     };
-    const tabs = [['installed','Installed'],['hub','Hugging Face'],['cloud','OpenRouter']];
+    const tabs = [['installed','Installed'],['hub','Hugging Face'],['cloud','OpenRouter'],['colibri','Colibri']];
     const switchTab = name => { setTab(name);setSearch('');setKey('');setConfirm(null);setError(''); };
     const filtered = tab==='hub'?(hub?.query?.toLowerCase()===search.trim().toLowerCase()?hub.models:[]):(tab==='cloud'?cloud:all.filter(row=>row.provider!=='openrouter')).filter(row=>`${row.displayName || row.repo} ${row.key || ''}`.toLowerCase().includes(search.trim().toLowerCase()));
     return h(Popover,{open,onOpenChange:changeOpen},
@@ -88,9 +91,9 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
       h(PopoverContent,{side:props.side || 'top',align:props.align || 'end',collisionPadding:{top:56,right:16,bottom:16,left:16},forceDark:false,surface:'solid',className:'notch-model-picker','aria-label':'Choose a model',onInteractOutside:()=>{interactedOutside.current=true;},onCloseAutoFocus:event=>{if(!interactedOutside.current && props.onRestoreFocus){event.preventDefault();props.onRestoreFocus();}}},
         h('div',{className:'notch-model-tabs',role:'tablist','aria-label':'Model source'},...tabs.map(([name,title],index)=>h('button',{
           key:name,id:`${id}-${name}`,type:'button',role:'tab','aria-selected':tab===name,'aria-controls':`${id}-panel`,tabIndex:tab===name?0:-1,
-          onClick:()=>switchTab(name),onKeyDown:event=>{if(!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();const next=tabs[(index+(event.key==='ArrowRight'?1:2))%3][0];switchTab(next);document.getElementById(`${id}-${next}`)?.focus();}},
+          onClick:()=>switchTab(name),onKeyDown:event=>{if(!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();const next=tabs[(index+(event.key==='ArrowRight'?1:tabs.length-1))%tabs.length][0];switchTab(next);document.getElementById(`${id}-${next}`)?.focus();}},
           name==='hub'?h('img',{src:logo('huggingface'),alt:'',width:18,height:18}):name==='cloud'?h('img',{src:logo(resolvedTheme.endsWith('-dark')?'openrouter-dark':'openrouter-light'),alt:'',width:18,height:18}):null,title))),
-        h('section',{id:`${id}-panel`,role:'tabpanel','aria-labelledby':`${id}-${tab}`,className:'notch-model-panel'},
+        tab==='colibri'?h('section',{id:`${id}-panel`,role:'tabpanel','aria-labelledby':`${id}-${tab}`,className:'notch-model-panel'},h(ColibriPanel,{api,job,cached:colibri,onCatalog:setColibri,onStatus:value=>setState(previous=>({...previous,...value})),onInstalled:async show=>{await reload(true);props.onOpenChange?.(true);if(show)switchTab('installed');}})):h('section',{id:`${id}-panel`,role:'tabpanel','aria-labelledby':`${id}-${tab}`,className:'notch-model-panel'},
           h('p',{className:'notch-model-note'},tab==='installed'?'Runs on this computer. Memory fit is an estimate.':tab==='hub'?'Browse and search Hugging Face, newest first. Ollama uses Q4_K_M GGUF; Apple Silicon can use MLX conversions. Tool support is checked during installation.':'Browse OpenRouter chat and coding models, newest first. Connect a key to use coding tools. Provider usage may incur charges.'),
           connectForm?h('form',{className:'notch-provider-key',onSubmit:event=>{event.preventDefault();const submitted=key;setKey('');void act(async()=>{await api.connect(provider,submitted);await reload(false);});}},
             h('label',{htmlFor:inputId},tab==='hub'?'Hugging Face token (optional)':'OpenRouter API key'),

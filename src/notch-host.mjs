@@ -88,6 +88,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
         // A failed transport is not an empty inventory; stale entries cannot start a local turn.
         for(const row of retained)if(!unique.has(row.key)){unique.set(row.key,{...row});nextEndpoints.set(row.key,endpoints.get(row.key));nextProfiles.set(row.key,{...profiles.get(row.key)});unverified.add(row.key);}
         if (host.modelManager) for (const row of await host.modelManager.mlxModels(hardware)) { unique.set(row.key,row); nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
+        if (host.modelManager?.colibriModels) for (const row of await host.modelManager.colibriModels(hardware)) { unique.set(row.key,row); nextEndpoints.set(row.key,'http://127.0.0.1:11437/v1'); nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
         const nextModels=[...unique.values()];
         let nextDefault=nextModels.find(row=>row.isDefault&&row.enabled)?.key||nextModels.find(row=>row.enabled)?.key;
         if (host.modelManager) {

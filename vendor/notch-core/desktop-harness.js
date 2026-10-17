@@ -1,17 +1,29 @@
 import {
+  colibriCatalog,
+  colibriModels,
+  colibriPlan,
+  colibriStatus,
+  installColibri,
+  prepareColibri,
+  stopColibri,
+  validateColibri
+} from "./chunk-KMCKGUER.js";
+import {
   managedOllama
 } from "./chunk-3C22YZAZ.js";
 import {
   LOCAL_MODEL_CATALOG,
-  acquireLease,
   detectLocalHardware,
-  executionContext,
   inspectHubModel,
   linuxGpuMemory,
   modelFit,
-  parseNvidiaMemory,
+  parseNvidiaMemory
+} from "./chunk-VNTSJMDJ.js";
+import {
+  acquireLease,
+  executionContext,
   queuedLocalFetch
-} from "./chunk-YDBYCRLC.js";
+} from "./chunk-OBJXRYDA.js";
 import {
   listModels,
   ollamaChatUrl,
@@ -484,6 +496,14 @@ var BUILTIN_BYOK_PROVIDERS = [
     fallbackApiKey: "not-needed"
   },
   {
+    id: "colibri",
+    label: "Colibri (experimental)",
+    baseUrl: "http://127.0.0.1:11437/v1",
+    apiKeyEnv: "",
+    defaultModel: "",
+    fallbackApiKey: "not-needed"
+  },
+  {
     id: "__custom__",
     label: "Custom (user-supplied)",
     // User MUST supply --base-url. These defaults are placeholders that
@@ -623,8 +643,13 @@ function resolveByokModel(spec) {
     }) : model, providerInfo, modelId };
   }
   const provider = createOpenAI({
-    ...providerInfo.id === "ollama" ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startMlx } = await import("./local-runner-Q7EKKICX.js");
+    ...providerInfo.id === "ollama" ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) } : providerInfo.id === "colibri" ? { fetch: queuedLocalFetch(async (input, init) => {
+      const { startColibri } = await import("./colibri-2GJBKLHG.js");
+      const ready = await startColibri(modelId, spec.contextWindow ?? 4096, init?.signal ?? void 0);
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
+    }) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
+      const { startMlx } = await import("./local-runner-EBC2INO6.js");
       const ready = await startMlx(modelId, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
@@ -8888,7 +8913,7 @@ async function runDesktopTurn(turn) {
     await managedOllama2("0.40.3", turn.signal);
   }
   if (provider === "mlx") {
-    const { startMlx } = await import("./local-runner-Q7EKKICX.js");
+    const { startMlx } = await import("./local-runner-EBC2INO6.js");
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
@@ -8975,6 +9000,10 @@ export {
   LOCAL_MODEL_CATALOG,
   acquireLease,
   autoCompress,
+  colibriCatalog,
+  colibriModels,
+  colibriPlan,
+  colibriStatus,
   contextBudget,
   definitionRules,
   desktopToolName,
@@ -8983,13 +9012,17 @@ export {
   estimateTokens,
   fullCompact,
   inspectHubModel,
+  installColibri,
   installResearchBrowser,
   linuxGpuMemory,
   managedOllama,
   modelFit,
   parseNvidiaMemory,
+  prepareColibri,
   runDesktopTurn,
   safeTailStart,
+  stopColibri,
   validSearchKey,
+  validateColibri,
   webSettingsSchema
 };
