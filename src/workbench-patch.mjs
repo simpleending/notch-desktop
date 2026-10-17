@@ -28,6 +28,12 @@ export function patchSecondaryArtwork(source) {
     const span=spans[0];
     return body.slice(0,span.start)+'jsxRuntimeExports.jsx(NotchSymbol,{size:24,className:"notch-recap-mark","aria-hidden":!0})'+body.slice(span.end);
   });
+  if (source.includes('function QuickNoteCreateButton(')) source = patchFunction(source, 'QuickNoteCreateButton', body => {
+    if (!body.includes('"data-quick-note-create-raster"')) return body;
+    body = replaceOnce(body, 'jsxRuntimeExports.jsx("img",{"data-quick-note-create-raster":!0,src:t1,alt:"",className:`pointer-events-none absolute left-1/2 top-1/2 size-14 max-w-none -translate-x-1/2 -translate-y-1/2 object-cover ${n1?"brightness-[1.08] saturate-[0.92]":""}`})', 'null');
+    return body.replace('className:"relative size-10 overflow-hidden"', 'className:"relative size-10 overflow-hidden notch-quick-note-create"').replace('className:"text-white"', 'className:"notch-quick-note-mark"');
+  });
+  source = source.replaceAll('jsxRuntimeExports.jsx(notchQuillPenAiLine,', 'jsxRuntimeExports.jsx(NotchSymbol,').replaceAll('jsxRuntimeExports.jsx(notchQuillPenLine,', 'jsxRuntimeExports.jsx(NotchSymbol,');
   source=source.replaceAll('https://github.com/simpleending/notch-desktop/commits/main/','https://github.com/simpleending/notch-desktop/releases');
   for(const name of ['emptyIllustrationRaw','renderErrorIllustrationRaw','liveVoiceEmptyIllustration','emptyTimelineIllustration','failedMarkRaw','applePromptTitleRaw','workspaceFilesEmptyIllustrationRaw']) {
     const expression=new RegExp(`\\b${name}=\x60([\\s\\S]*?)\x60`,'g');
@@ -194,6 +200,8 @@ export async function installWorkbenchAssets(application, root) {
   await cp(path.join(root, 'assets/fonts'), path.join(assets, 'fonts'), { recursive: true });
   await cp(path.join(root, 'assets/notices'), path.join(assets, 'notices'), { recursive: true });
   await cp(path.join(root, 'assets/notch-symbol.png'), path.join(assets, 'notch-symbol.png'));
+  const symbol = await readFile(path.join(root, 'assets/notch-symbol.svg'));
+  for (const name of await readdir(assets)) if (/^notch(?:CnIdeLogo|DoorLogo|IdeLogo|Logo|workCnLogo|workLogo|worklogo)-[\w-]+\.svg$/.test(name)) await writeFile(path.join(assets, name), symbol);
   const htmlFile = path.join(renderer, 'index.html'), html = await readFile(htmlFile, 'utf8');
   if (!html.includes('href="./assets/workbench-skin.css"')) await writeFile(htmlFile, html.replace('</head>', '<link rel="stylesheet" href="./assets/workbench-skin.css">\n</head>'));
   const icon = await readFile(path.join(root, 'assets/notch-symbol.png'));
