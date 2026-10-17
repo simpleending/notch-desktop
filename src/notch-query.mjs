@@ -173,15 +173,24 @@ export class NotchQuery {
         instructions: typeof this.request.systemPrompt === 'string' ? this.request.systemPrompt : this.request.systemPrompt?.append,
         approve: async (name, args, _message, callId) => {
           controller.signal.throwIfAborted();
+          if (accessForMode(this.permissionMode, this.planMode) === 'read-only') return false;
+          // Keep project deny rules in the harness; only skip its remaining approval prompt.
+          const approvedTools = Array.isArray(this.state.approvedTools) ? this.state.approvedTools : [];
+          if (this.permissionMode === 'auto' || approvedTools.includes(name)) return true;
           if (!this.request.canUseTool) return false;
           const input = wireInput(name, args);
+          const suggestion = { type: 'addRules', rules: [{ toolName: toolNames[name] || name }], behavior: 'allow', destination: 'session' };
           this.emitState('requires_action');
           let decision;
-          try { decision = await approvalWithAbort(this.request.canUseTool(toolNames[name] || name, input, { signal: controller.signal, toolUseID: callId || randomUUID() }), controller.signal); }
+          try { decision = await approvalWithAbort(this.request.canUseTool(toolNames[name] || name, input, { signal: controller.signal, toolUseID: callId || randomUUID(), suggestions: [structuredClone(suggestion)] }), controller.signal); }
           finally { if (!controller.signal.aborted) this.emitState('running'); }
           controller.signal.throwIfAborted();
           if (decision?.behavior !== 'allow') return false;
           if (decision.updatedInput && !isDeepStrictEqual(input, decision.updatedInput)) throw new Error('Edited approval input is not supported yet. Submit the changed action as a new request.');
+          if (Array.isArray(decision.updatedPermissions) && decision.updatedPermissions.some(update => isDeepStrictEqual(update, suggestion))) {
+            this.state.approvedTools = [...new Set([...approvedTools, name])];
+            await this.host.saveSession(this.id, this.state);
+          }
           return true;
         },
         onText: chunk => {

@@ -8,6 +8,12 @@ import { patchEnglishRenderer } from './english-renderer-patch.mjs';
 
 const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
 export function patchSecondaryArtwork(source) {
+  for (const name of ['SidebarSessionStateIndicator', 'SessionMiniIndicator', 'TaskMonitorRunningIndicator']) {
+    if (!source.includes(`function ${name}(`)) continue;
+    source = patchFunction(source, name, body => body
+      .replace('jsxRuntimeExports.jsx(ThinkingDotMatrixIcon,{className:"text-current",sizeClassName:"size-4"})', 'jsxRuntimeExports.jsx("span",{className:"notch-task-dot","aria-hidden":!0})')
+      .replaceAll('bg-primary', 'notch-task-dot').replaceAll('bg-info', 'notch-task-dot'));
+  }
   if (source.includes('function LiveVoiceOverlaySurface(')) source = patchVoiceOverlayArtwork(source);
   if (source.includes('function TaskMonitorConversationRecapCard(')) source = patchFunction(source, 'TaskMonitorConversationRecapCard', body => {
     if(body.includes('className:"notch-recap-mark"'))return body;

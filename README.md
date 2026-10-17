@@ -38,6 +38,8 @@ Use **Colibri → Unload model** to release RAM while keeping downloaded files. 
 
 ## Web research
 
+The composer offers **Ask for approval**, **Auto approve**, and **Full access**. Auto approve skips tool confirmation prompts while retaining project deny rules. In Ask mode, choose **Allow for this task** to remember a tool approval for that chat, including when you resume it. Read-only and planning modes still block changes.
+
 Ask notch to search current documentation and cite its sources. In **Settings → Appearance → Web research**, choose **DuckDuckGo (default, no key)** or optional **Tavily (API key)**, select your browser, or turn off web access. DuckDuckGo search works immediately without a browser install. Save a [Tavily key](https://app.tavily.com/) only if you choose Tavily. Search keys use system encryption when available; otherwise they last only for the current session. Environment variable `TAVILY_API_KEY` overrides a saved Tavily key but does not change your selected provider. No notch account is required.
 
 Known URLs can be read without a search key. JavaScript pages use an installed Chrome or Edge, or optional Chromium installed from the same settings. Each browser operation uses a fresh private session and closes afterward; browser actions follow your approval mode and are unavailable in read-only mode. Source links in the conversation open when clicked. Search queries and page requests go to external services even when your model is local.
