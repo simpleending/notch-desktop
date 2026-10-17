@@ -26,10 +26,15 @@ try {
       const rect=await tab.boundingBox();assert.ok(rect&&rect.x>=0&&rect.x+rect.width<=width&&rect.y>=45&&rect.y+rect.height<=height);
     }
     await page.getByText('Colibri 2.0.0',{exact:false}).waitFor({timeout:15000});
+    await page.getByRole('button',{name:'Refresh memory',exact:true}).click();
+    await page.getByText(/GB available of .*GB usable RAM/).waitFor();
+    const catalog=await page.evaluate(()=>window.notchModels.colibri('catalog'));
+    const expected=catalog.models.find(model=>model.id==='qwen3-coder-30b');assert.ok(expected?.fitLabel);
     const row=page.getByRole('option').filter({hasText:'Qwen3-Coder-30B-A3B'});await row.click();
     const confirmation=page.getByRole('group',{name:'Confirm Colibri model download'});await confirmation.waitFor();
     await confirmation.getByText(/19.4 GB download/).waitFor();
-    assert.equal(await confirmation.getByRole('button',{name:'Download and validate'}).isEnabled(),true);
+    await confirmation.getByText(expected.fitLabel,{exact:true}).waitFor();
+    assert.equal(await confirmation.getByRole('button',{name:'Download and validate'}).isEnabled(),expected.fits);
     await confirmation.getByRole('button',{name:'Back to models'}).click();
     const tab=page.getByRole('tab',{name:'Colibri',exact:true});await tab.focus();await page.keyboard.press('ArrowRight');
     assert.equal(await page.getByRole('tab',{name:'Installed',exact:true}).getAttribute('aria-selected'),'true');
@@ -37,7 +42,7 @@ try {
     await page.getByText('Colibri 2.0.0',{exact:false}).waitFor({timeout:15000});
     await page.screenshot({path:reportFile.replace('.json',dark?'-dark.png':'-light.png')});
     await page.keyboard.press('Escape');await page.locator('.notch-model-picker').waitFor({state:'hidden'});
-    checks.push({width,height,theme:dark?'dark':'light',fourTabsClickable:true,keyboardWrap:true,realCatalog:true,downloadConfirmation:true});
+    checks.push({width,height,theme:dark?'dark':'light',fourTabsClickable:true,keyboardWrap:true,realCatalog:true,downloadConfirmation:true,availableMemoryDisplayed:true,fitLabel:expected.fitLabel,downloadAllowed:expected.fits});
   }
   assert.deepEqual(errors,[]);
   await fs.writeFile(reportFile,JSON.stringify({passed:true,executable,profile,checks,errors,method:'Packaged renderer and native IPC; real installed engine/catalog, no download submitted.'},null,2));

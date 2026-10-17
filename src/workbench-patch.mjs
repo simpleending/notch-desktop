@@ -9,6 +9,19 @@ import { patchEnglishRenderer } from './english-renderer-patch.mjs';
 const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
 export function patchSecondaryArtwork(source) {
   if (source.includes('function LiveVoiceOverlaySurface(')) source = patchVoiceOverlayArtwork(source);
+  if (source.includes('function TaskMonitorConversationRecapCard(')) source = patchFunction(source, 'TaskMonitorConversationRecapCard', body => {
+    if(body.includes('className:"notch-recap-mark"'))return body;
+    const spans=[];
+    function visit(node){
+      if(!node||typeof node!=='object')return;
+      if(node.type==='CallExpression'&&node.arguments?.[0]?.value==='span'&&body.slice(node.start,node.end).includes('notchQuillPenAiLine')){spans.push(node);return;}
+      for(const value of Object.values(node))if(Array.isArray(value))value.forEach(visit);else visit(value);
+    }
+    visit(parse(body,{ecmaVersion:'latest'}));
+    if(spans.length!==1)throw new Error('Recap artwork anchor changed.');
+    const span=spans[0];
+    return body.slice(0,span.start)+'jsxRuntimeExports.jsx(NotchSymbol,{size:24,className:"notch-recap-mark","aria-hidden":!0})'+body.slice(span.end);
+  });
   source=source.replaceAll('https://github.com/simpleending/notch-desktop/commits/main/','https://github.com/simpleending/notch-desktop/releases');
   for(const name of ['emptyIllustrationRaw','renderErrorIllustrationRaw','liveVoiceEmptyIllustration','emptyTimelineIllustration','failedMarkRaw','applePromptTitleRaw','workspaceFilesEmptyIllustrationRaw']) {
     const expression=new RegExp(`\\b${name}=\x60([\\s\\S]*?)\x60`,'g');
@@ -44,6 +57,9 @@ export function patchSecondaryArtwork(source) {
 
 export function patchVoiceOverlayArtwork(source) {
   return patchFunction(source, 'LiveVoiceOverlaySurface', body => {
+    const previousBrand='jsxRuntimeExports.jsxs("span",{className:"notch-voice-brand",style:{display:"flex",alignItems:"center",gap:6,fontSize:20,fontWeight:600,letterSpacing:"-.6px"},children:[jsxRuntimeExports.jsx(NotchSymbol,{size:22}),"notch"]})';
+    const brand='jsxRuntimeExports.jsx("span",{className:"notch-voice-brand","aria-label":"notch",children:jsxRuntimeExports.jsx(NotchSymbol,{size:36})})';
+    body=body.replace(previousBrand,brand).replace('width:132,height:56,display:"flex",flexDirection:"column"','width:72,height:64,display:"flex",flexDirection:"column"');
     if (body.includes('id:"notch-voice-colors"')) return body;
     if (!body.includes('className:"notch-voice-brand"')) {
     body = replaceOnce(body, '[s1,o1]=reactExports.useState(0),', '');
@@ -53,8 +69,8 @@ export function patchVoiceOverlayArtwork(source) {
     body = body.slice(0, start) + body.slice(stop);
     body = replaceOnce(body, 'jsxRuntimeExports.jsx("span",{id:"orb-halo"})', 'null');
     const images = 'jsxRuntimeExports.jsx("img",{id:"qoduck-voice-frame",src:w1,alt:"",width:104,height:104,draggable:!1}),jsxRuntimeExports.jsx("img",{id:"qoduck-voice-glass-light",className:"qoduck-voice-glass",src:qoduckVoiceGlassLightSrc,alt:"",width:120,height:120,draggable:!1}),jsxRuntimeExports.jsx("img",{id:"qoduck-voice-glass-dark",className:"qoduck-voice-glass",src:qoduckVoiceGlassDarkSrc,alt:"",width:120,height:120,draggable:!1})';
-    body = replaceOnce(body, images, 'jsxRuntimeExports.jsxs("span",{className:"notch-voice-brand",style:{display:"flex",alignItems:"center",gap:6,fontSize:20,fontWeight:600,letterSpacing:"-.6px"},children:[jsxRuntimeExports.jsx(NotchSymbol,{size:22}),"notch"]}),jsxRuntimeExports.jsx("span",{style:{fontSize:11,lineHeight:1.3,opacity:.75},children:M1})');
-    body = replaceOnce(body, 'id:"orb-core",children:', 'id:"orb-core",style:{top:"40%",width:132,height:56,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,border:"1px solid var(--qcac38d)",borderRadius:12,background:"var(--q715358)",color:"var(--qec21c5)"},children:');
+    body = replaceOnce(body, images, brand+',jsxRuntimeExports.jsx("span",{style:{fontSize:11,lineHeight:1.3,opacity:.75},children:M1})');
+    body = replaceOnce(body, 'id:"orb-core",children:', 'id:"orb-core",style:{top:"40%",width:72,height:64,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:4,border:"1px solid var(--qcac38d)",borderRadius:12,background:"var(--q715358)",color:"var(--qec21c5)"},children:');
     }
     body = replaceOnce(body, 'border:"1px solid var(--qcac38d)"', 'border:"1px solid var(--notch-voice-border)"');
     body = replaceOnce(body, 'background:"var(--q715358)",color:"var(--qec21c5)"', 'background:"var(--notch-voice-background)",color:"var(--notch-voice-text)"');
@@ -67,8 +83,17 @@ function replaceOnce(source, before, after) {
   if (source.split(before).length !== 2) throw new Error(`Workbench skin anchor changed: ${before.slice(0, 70)}`);
   return source.replace(before, after);
 }
+export function patchThemeBroadcast(source) {
+  if(!source.includes('function ThemeProvider('))return source;
+  return patchFunction(source,'ThemeProvider',body=>{
+    if(body.includes('"notch-appearance"'))return body;
+    const effect='reactExports.useEffect(()=>{const channel=new BroadcastChannel("notch-appearance"),secondary=new URLSearchParams(window.location.search).has("surface");channel.onmessage=({data})=>{if(data==="get-theme"){if(!secondary)channel.postMessage(normalizeThemeMode(n1))}else if(secondary&&["light","dark","auto"].includes(data)){r1(data);s1(readColorMode(data))}};channel.postMessage(secondary?"get-theme":normalizeThemeMode(n1));return()=>channel.close()},[n1]);';
+    return replaceOnce(body,'const m1=reactExports.useMemo(',effect+'const m1=reactExports.useMemo(');
+  });
+}
 export function patchWorkbenchRenderer(source) {
   source = patchLocalOnlyRenderer(source);
+  source = patchThemeBroadcast(source);
   // Keep extension management on its existing local installer, away from the retired account marketplace.
   if (source.includes('function ExtensionsView(')) source = patchFunction(source, 'ExtensionsView', 'function ExtensionsView({initialKind="plugin"}){return jsxRuntimeExports.jsx(InstalledExtensionsSettings,{initialKind});}');
   if (source.includes('/* notch workbench skin */')) return patchEnglishRenderer(patchSecondaryArtwork(source));

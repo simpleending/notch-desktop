@@ -24,6 +24,21 @@ var assets = {
   "linux-x64": ["linux-x86_64.tar.gz", "aef2c1e7d5cbad3d27cc90d8432775acdc315ec51f6d7a67a2f13a936f9978ce"],
   "darwin-arm64": ["macos-arm64.tar.gz", "faa0841b20b7efe3b3bbd537360a42bb8beeaa5031bfff3813ecb01367edf851"]
 };
+function colibriCatalogFit(row, hardware) {
+  const availableBytes = Math.min(hardware.availableMemory, hardware.totalMemory), reserveBytes = 1.5 * 2 ** 30;
+  const requiredBytes = row.ram_min_gb * 1e9;
+  const known = Number.isSafeInteger(hardware.availableMemory) && hardware.availableMemory >= 0 && Number.isSafeInteger(hardware.totalMemory) && hardware.totalMemory > 0 && Number.isFinite(requiredBytes) && requiredBytes > 0;
+  const memoryFits = known && requiredBytes + reserveBytes <= availableBytes;
+  const fits = row.fits && memoryFits;
+  return {
+    ...row,
+    fits,
+    recommended: row.recommended && fits,
+    fitLabel: !row.fits ? "Unavailable" : !known ? "Memory unknown" : memoryFits ? "Meets RAM precheck" : "Not enough free RAM",
+    reason: !row.fits ? row.reason : !known ? "Cannot verify available RAM. Refresh memory before downloading." : `${(availableBytes / 1e9).toFixed(1)} GB available; published estimate ${row.ram_min_gb} GB plus ${(reserveBytes / 1e9).toFixed(1)} GB headroom. ${memoryFits ? "Exact 16K context fit is unverified until the downloaded checkpoint is checked." : "Close applications and refresh memory before downloading."}`,
+    ...known ? { memory: { availableBytes, totalBytes: hardware.totalMemory, reserveBytes, requiredBytes } } : {}
+  };
+}
 function colibriAsset(platform = process.platform, arch = process.arch) {
   const asset = assets[`${platform}-${arch}`];
   if (!asset) throw new Error("Experimental Colibri supports Windows x64, Linux x64 and Apple Silicon. Choose Ollama on this system.");
@@ -173,7 +188,8 @@ async function colibriCatalog(signal) {
   colibriAsset();
   const rows = JSON.parse(await invoke(["setup", "--list", "--json", "--dir", path.join(root(), "models")], { signal }));
   if (!Array.isArray(rows)) throw new Error("Invalid Colibri model catalog.");
-  return rows.filter((row) => row.kind === "text" && ["qwen36", "qwen38", "glm", "glm53", "deepseek_v4", "mimo", "kimi"].includes(row.family));
+  const hardware = { totalMemory: os.totalmem(), availableMemory: Math.min(os.freemem(), process.availableMemory()) };
+  return rows.filter((row) => row.kind === "text" && ["qwen36", "qwen38", "glm", "glm53", "deepseek_v4", "mimo", "kimi"].includes(row.family)).map((row) => colibriCatalogFit(row, hardware)).sort((a, b) => Number(b.fits) - Number(a.fits));
 }
 function colibriPlanFits(plan) {
   const ram = plan?.tiers?.ram;
@@ -408,6 +424,7 @@ export {
   COLIBRI_DEFAULT_CONTEXT,
   COLIBRI_VERSION,
   COLIBRI_URL,
+  colibriCatalogFit,
   colibriAsset,
   colibriModelEnvironment,
   prepareColibri,

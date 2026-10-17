@@ -26,6 +26,20 @@ export interface ColibriModel {
   id: string; name: string; family: string; repo: string; download_gb: number;
   ram_min_gb: number; ram_good_gb: number; dense_gb: number; kind: string;
   fits: boolean; reason: string; summary: string; recommended: boolean; license_note: string;
+  fitLabel?: string;
+  memory?: { availableBytes: number; totalBytes: number; reserveBytes: number; requiredBytes: number };
+}
+export function colibriCatalogFit(row: ColibriModel, hardware: Pick<LocalHardware, 'availableMemory' | 'totalMemory'>): ColibriModel {
+  const availableBytes = Math.min(hardware.availableMemory, hardware.totalMemory), reserveBytes = 1.5 * 2 ** 30;
+  const requiredBytes = row.ram_min_gb * 1e9;
+  const known = Number.isSafeInteger(hardware.availableMemory) && hardware.availableMemory >= 0 && Number.isSafeInteger(hardware.totalMemory) && hardware.totalMemory > 0 && Number.isFinite(requiredBytes) && requiredBytes > 0;
+  const memoryFits = known && requiredBytes + reserveBytes <= availableBytes;
+  const fits = row.fits && memoryFits;
+  return { ...row, fits, recommended: row.recommended && fits,
+    fitLabel: !row.fits ? 'Unavailable' : !known ? 'Memory unknown' : memoryFits ? 'Meets RAM precheck' : 'Not enough free RAM',
+    reason: !row.fits ? row.reason : !known ? 'Cannot verify available RAM. Refresh memory before downloading.' :
+      `${(availableBytes / 1e9).toFixed(1)} GB available; published estimate ${row.ram_min_gb} GB plus ${(reserveBytes / 1e9).toFixed(1)} GB headroom. ${memoryFits ? 'Exact 16K context fit is unverified until the downloaded checkpoint is checked.' : 'Close applications and refresh memory before downloading.'}`,
+    ...(known ? { memory: { availableBytes, totalBytes: hardware.totalMemory, reserveBytes, requiredBytes } } : {}) };
 }
 export function colibriAsset(platform = process.platform, arch = process.arch) {
   const asset = assets[`${platform}-${arch}`];
@@ -118,7 +132,9 @@ export async function colibriCatalog(signal?: AbortSignal): Promise<ColibriModel
   colibriAsset();
   const rows = JSON.parse(await invoke(['setup', '--list', '--json', '--dir', path.join(root(), 'models')], { signal }));
   if (!Array.isArray(rows)) throw new Error('Invalid Colibri model catalog.');
-  return rows.filter(row => row.kind === 'text' && ['qwen36', 'qwen38', 'glm', 'glm53', 'deepseek_v4', 'mimo', 'kimi'].includes(row.family));
+  const hardware = { totalMemory: os.totalmem(), availableMemory: Math.min(os.freemem(), process.availableMemory()) };
+  return rows.filter(row => row.kind === 'text' && ['qwen36', 'qwen38', 'glm', 'glm53', 'deepseek_v4', 'mimo', 'kimi'].includes(row.family))
+    .map(row => colibriCatalogFit(row, hardware)).sort((a, b) => Number(b.fits) - Number(a.fits));
 }
 
 export function colibriPlanFits(plan: any): boolean {

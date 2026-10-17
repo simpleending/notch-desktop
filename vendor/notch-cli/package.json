@@ -1,6 +1,6 @@
 {
   "name": "@freesyntax/notch-cli",
-  "version": "0.7.0",
+  "version": "0.7.22",
   "description": "Notch CLI — AI-powered coding assistant by Driftrail",
   "type": "module",
   "bin": {

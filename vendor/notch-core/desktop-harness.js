@@ -7,7 +7,7 @@ import {
   prepareColibri,
   stopColibri,
   validateColibri
-} from "./chunk-XXANLJ62.js";
+} from "./chunk-THL75LRA.js";
 import {
   managedOllama
 } from "./chunk-3C22YZAZ.js";
@@ -644,7 +644,7 @@ function resolveByokModel(spec) {
   }
   const provider = createOpenAI({
     ...providerInfo.id === "ollama" ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) } : providerInfo.id === "colibri" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startColibri } = await import("./colibri-AJYU4L7U.js");
+      const { startColibri } = await import("./colibri-FG65T7L3.js");
       const ready = await startColibri(modelId, spec.contextWindow, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);

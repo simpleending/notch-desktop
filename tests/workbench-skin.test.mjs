@@ -2,9 +2,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from 'acorn';
 import { createNotchWorkbench } from '../src/workbench-skin.mjs';
-import { patchWorkbenchRenderer, patchSecondaryArtwork, patchVoiceOverlayArtwork } from '../src/workbench-patch.mjs';
+import { patchWorkbenchRenderer, patchSecondaryArtwork, patchVoiceOverlayArtwork, patchThemeBroadcast } from '../src/workbench-patch.mjs';
 const React = { useState(value){return [value,()=>{}];},useEffect(){}, createElement(type, props, ...children) { return { type, props: props || {}, children }; } };
 function all(tree) { return [tree, ...tree.children.flat(Infinity).filter(child => child && typeof child === 'object').flatMap(all)]; }
+
+test('secondary windows request and follow the main window theme without rebroadcasting or leaking channels',()=>{
+  const source='function ThemeProvider(){const n1="light";const m1=reactExports.useMemo(()=>({}),[]);return m1;}';
+  const patched=patchThemeBroadcast(source);parse(patched,{ecmaVersion:'latest'});assert.equal(patchThemeBroadcast(patched),patched);
+  for(const secondary of [false,true]){
+    let channel,cleanup;const modes=[],colors=[],sent=[];
+    class Channel{constructor(name){assert.equal(name,'notch-appearance');channel=this;}postMessage(value){sent.push(value);}close(){this.closed=true;}}
+    const reactExports={useEffect(fn){cleanup=fn();},useMemo(fn){return fn();}};
+    new Function('reactExports','BroadcastChannel','window','r1','s1','normalizeThemeMode','readColorMode',patched+';ThemeProvider();')(reactExports,Channel,{location:{search:secondary?'?surface=live-voice-overlay':''}},v=>modes.push(v),v=>colors.push(v),v=>v,v=>v);
+    assert.deepEqual(sent,[secondary?'get-theme':'light']);
+    channel.onmessage({data:'invalid'});assert.deepEqual(modes,[]);
+    channel.onmessage({data:'dark'});assert.deepEqual(modes,secondary?['dark']:[]);assert.deepEqual(colors,modes);
+    channel.onmessage({data:'get-theme'});assert.deepEqual(sent,secondary?['get-theme']:['light','light']);
+    cleanup();assert.equal(channel.closed,true);
+  }
+});
 
 test('voice artwork is static notch branding while native controls, status and reduced-motion handling remain', () => {
   const frames = ['qoduck-voice-frame','qoduck-voice-glass-light','qoduck-voice-glass-dark'].map((id,index) => `jsxRuntimeExports.jsx("img",{id:"${id}",${index?'className:"qoduck-voice-glass",':''}src:${['w1','qoduckVoiceGlassLightSrc','qoduckVoiceGlassDarkSrc'][index]},alt:"",width:${index?120:104},height:${index?120:104},draggable:!1})`).join(',');
@@ -12,14 +28,27 @@ test('voice artwork is static notch branding while native controls, status and r
   const patched = patchVoiceOverlayArtwork(source);
   parse(patched,{ecmaVersion:'latest'});
   assert.doesNotMatch(patched,/qoduck|oldSprites|useState\(0\)|orb-halo/);
-  assert.match(patched,/NotchSymbol,\{size:22\}/);
+  assert.match(patched,/NotchSymbol,\{size:36\}/);
+  assert.doesNotMatch(patched,/children:\[[^\]]*NotchSymbol[^\]]*,"notch"/);
   assert.match(patched,/notch-voice-colors/);
   assert.match(patched,/--notch-voice-background:#242228/);
   assert.match(patched,/--notch-voice-text:#f4f1f5/);
   for(const control of ['toggleMuted','toggleMicrophone','close','role:"status"','prefers-reduced-motion']) assert.ok(patched.includes(control));
   assert.equal(patchVoiceOverlayArtwork(patched),patched);
+  const previous=patched.replace('jsxRuntimeExports.jsx("span",{className:"notch-voice-brand","aria-label":"notch",children:jsxRuntimeExports.jsx(NotchSymbol,{size:36})})','jsxRuntimeExports.jsxs("span",{className:"notch-voice-brand",style:{display:"flex",alignItems:"center",gap:6,fontSize:20,fontWeight:600,letterSpacing:"-.6px"},children:[jsxRuntimeExports.jsx(NotchSymbol,{size:22}),"notch"]})');
+  assert.equal(patchVoiceOverlayArtwork(previous),patched);
   assert.equal(patchSecondaryArtwork(patched),patched);
   assert.throws(()=>patchVoiceOverlayArtwork(source.replace('id:"orb-core"','id:"changed"')),/anchor changed/);
+});
+
+test('recap artwork uses the canonical symbol without changing content or handoff controls',()=>{
+  const source='function TaskMonitorConversationRecapCard({recap}){return jsxRuntimeExports.jsxs("section",{children:[jsxRuntimeExports.jsxs("span",{className:"relative size-5 shrink-0",children:[jsxRuntimeExports.jsx("svg",{children:"green gradient"}),jsxRuntimeExports.jsx(notchQuillPenAiLine,{color:"green"})]}),recap.text,jsxRuntimeExports.jsx(ChatSessionHandoffDialog,{})]});}';
+  const patched=patchSecondaryArtwork(source);parse(patched,{ecmaVersion:'latest'});
+  assert.match(patched,/NotchSymbol,\{size:24,className:"notch-recap-mark"/);
+  assert.doesNotMatch(patched,/notchQuillPenAiLine|green gradient/);
+  assert.match(patched,/recap.text/);assert.match(patched,/ChatSessionHandoffDialog/);
+  assert.equal(patchSecondaryArtwork(patched),patched);
+  assert.throws(()=>patchSecondaryArtwork(source.replace('notchQuillPenAiLine','changedIcon')),/Recap artwork anchor changed/);
 });
 
 test('all secondary illustrations use the canonical notch symbol and patching is repeatable',()=>{
@@ -74,7 +103,7 @@ test('appearance controls forward explicit choices to the existing preferences',
 const fixture = `
 function preloadDoodleAssets(){loadTrees();}
 ${['AgentGreetingMark','AppleTreeDoodle','ImageDoodle','PartnerPlanGreetingMark','MobileAppDownloadPromo','NewChatCursorGrid','FeedbackFloatingButton','FeedbackDialog','WorkbenchModeThemeSync','WorkbenchSidebarModeSwitch','WorkspaceTabsEmptyState','normalizeThemeMode','readInitialThemeMode','readColorMode','AppearanceSettings','ProfileMenu','ProfileSettingsForm','isChatComposerVoiceHoldPlaceholderPhaseAvailable','notchLogoLoader','notchLogo'].map(name => `function ${name}(){oldAppearance();}`).join('\n')}
-function ThemeProvider(){reactExports.useEffect(()=>{document.documentElement.setAttribute("data-theme",d1)},[d1]);}
+function ThemeProvider(){reactExports.useEffect(()=>{document.documentElement.setAttribute("data-theme",d1)},[d1]);const m1=reactExports.useMemo(()=>({}),[]);return m1;}
 function SettingsView(){const N2=p1?void 0:w2==="developer"?"general":w2;const H2=M2.flatMap(D3=>D3.items);return H2;}
 function NewChatHomeContent(){return jsxRuntimeExports.jsxs("div",{"data-new-chat-b1-content":!0,children:[jsxRuntimeExports.jsx(PartnerPlanGreetingMark,{}),jsxRuntimeExports.jsx("h1",{children:"Beyond Coding"}),jsxRuntimeExports.jsx("div",{className:"mt-7 w-full max-w-[924px]",children:jsxRuntimeExports.jsx(NewChatWelcomeDashboard,{attentionEnabled:t1,attentionCount:n1,activity:r1,loadCreditsHeatmap:i1,onActivityPlaygroundEvent:s1,gameEntryDismissRequestId:h2})}),jsxRuntimeExports.jsx(ChatComposer,{onSubmit:J1,onStop:W1,placeholder:i2("newChat.placeholder")})]});}
 function Frame(){return flag?jsxRuntimeExports.jsxs("div",{"data-layout-window-titlebar":!0,className:"titlebar",children:[jsxRuntimeExports.jsx("div",{style:{WebkitAppRegion:"no-drag"},children:K2}),jsxRuntimeExports.jsx("div",{"aria-hidden":!0,"data-layout-window-titlebar-drag-region":!0,style:{WebkitAppRegion:"drag"}})]}):jsxRuntimeExports.jsx("div",{className:"absolute left-4"});}

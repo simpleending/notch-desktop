@@ -4,6 +4,7 @@ import {
   COLIBRI_VERSION,
   colibriAsset,
   colibriCatalog,
+  colibriCatalogFit,
   colibriModelEnvironment,
   colibriModels,
   colibriPlan,
@@ -14,7 +15,7 @@ import {
   startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-XXANLJ62.js";
+} from "./chunk-THL75LRA.js";
 import "./chunk-OBJXRYDA.js";
 export {
   COLIBRI_DEFAULT_CONTEXT,
@@ -22,6 +23,7 @@ export {
   COLIBRI_VERSION,
   colibriAsset,
   colibriCatalog,
+  colibriCatalogFit,
   colibriModelEnvironment,
   colibriModels,
   colibriPlan,

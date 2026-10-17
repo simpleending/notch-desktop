@@ -30,7 +30,7 @@ Colibri selects its tokenizer and supported chat template from the selected chec
 
 New Colibri setups use 16K context to leave room for coding tools and conversation. Loading still requires enough current free memory; existing explicit context choices are preserved.
 
-Open the model picker and choose **Colibri → Set up Colibri** to install the optional local engine. Setup needs 64-bit Python 3.10+. Choose a coding model, review its download size and memory requirements, then select **Download and validate**. Downloads resume if interrupted; current free memory and coding tools are checked before the model becomes selectable under **Installed**.
+Open the model picker and choose **Colibri → Set up Colibri** to install the optional local engine. Setup needs 64-bit Python 3.10+. The model list shows free RAM, a safety reserve and each model's download size and memory precheck. **Refresh memory** after closing applications. Models that fail the precheck cannot be downloaded through setup. Passing this preliminary estimate does not verify that the model will run at 16K context: exact checkpoint/context checks run after download and before loading. Select **Download and validate** to continue. Downloads resume if interrupted; coding tools are checked before the model becomes selectable under **Installed**.
 
 Use **Colibri → Unload model** to release RAM while keeping downloaded files. Unload before changing its context limit. Colibri shares the local task queue and keeps one configured model at a time. Disk-streamed models can have long delays before their first token; this experimental option does not replace Ollama. Engine and model downloads are separate from the IDE installer, and model licenses apply separately.
 
