@@ -27,7 +27,11 @@ export function patchSecondaryArtwork(source) {
     if (!source.includes('from "./notes-branding.mjs"')) source = 'import {welcomeNote as notchWelcomeNote,refreshBuiltinWelcomeNotes as notchRefreshBuiltinNotes} from "./notes-branding.mjs";\n' + source;
     source = patchFunction(source, 'createQuickNoteOnboardingPresentation', 'function createQuickNoteOnboardingPresentation(){return structuredClone(notchWelcomeNote);}');
     source = patchFunction(source, 'createQuickNoteOnboardingInput', 'function createQuickNoteOnboardingInput(note){return {...note,attachments:[]};}');
-    source = patchFunction(source, 'QuickNoteWindowSurface', body => body.includes('notchRefreshBuiltinNotes(') ? body : replaceOnce(body, 'let Y1=await listQuickNotes();', 'let Y1=await notchRefreshBuiltinNotes(await listQuickNotes(),updateQuickNote);'));
+    source = patchFunction(source, 'QuickNoteWindowSurface', body => {
+      const load = 'let Y1=await listQuickNotes();try{Y1=await notchRefreshBuiltinNotes(Y1,updateQuickNote)}catch{toast.error("The welcome note could not be refreshed. Your notes are still available.")}';
+      body = body.replace('let Y1=await notchRefreshBuiltinNotes(await listQuickNotes(),updateQuickNote);', load);
+      return body.includes('notchRefreshBuiltinNotes(') ? body : replaceOnce(body, 'let Y1=await listQuickNotes();', load);
+    });
   }
   source = source.replace('Symbol:NotchSymbol}=createNotchWorkbench', 'Symbol:NotchSymbol,Wordmark:notchNotesWordmark}=createNotchWorkbench');
   if (source.includes('function QuickNoteEmptyState(')) source = patchFunction(source, 'QuickNoteEmptyState', 'function QuickNoteEmptyState(){return jsxRuntimeExports.jsxs("div",{"data-quick-note-empty-state":!0,className:"notch-notes-empty",role:"status",children:[jsxRuntimeExports.jsx(notchNotesWordmark,{width:112}),jsxRuntimeExports.jsx("p",{children:"No notes yet. Save an idea or add a note to a task."})]});}');

@@ -11,13 +11,20 @@ test('Notes uses a themed wordmark, plain welcome and empty state while retainin
   const branded = rebrandWorkbenchText(patched);
   assert.equal(patchSecondaryArtwork(branded), branded);
   assert.doesNotMatch(patched, /oldDuck|oldScript|italicNotes|loadOldImage/);
-  for (const kept of ['notchRefreshBuiltinNotes(await listQuickNotes(),updateQuickNote)', 'onClick:closeNotes', '"aria-label":"Close notes"', 'attachments:[]', 'const appleTreeIllustration="data:image/svg+xml;base64,']) assert.ok(patched.includes(kept));
+  for (const kept of ['notchRefreshBuiltinNotes(Y1,updateQuickNote)', 'onClick:closeNotes', '"aria-label":"Close notes"', 'attachments:[]', 'const appleTreeIllustration="data:image/svg+xml;base64,']) assert.ok(patched.includes(kept));
   const React = { createElement: (type, props) => ({ type, props }) };
   for (const theme of ['forest-dark', 'forest-light']) {
     const { Wordmark } = createNotchWorkbench(React, () => ({ resolvedTheme: theme }));
     const image = Wordmark({ width: 86 }); assert.equal(image.props.alt, 'notch'); assert.equal(image.props.width, 86);
     assert.ok(image.props.src.endsWith(theme.endsWith('dark') ? 'notch-wordmark-dark.svg' : 'notch-wordmark-light.svg'));
   }
+});
+test('a failed cosmetic welcome update leaves all loaded notes available', async () => {
+  const source = 'function createQuickNoteOnboardingPresentation(){}async function createQuickNoteOnboardingInput(){}function QuickNoteWindowSurface(){async function load(){let Y1=await listQuickNotes();return Y1;}return load();}';
+  const patched = patchSecondaryArtwork(source).replace(/^import[^\n]+\n/, '');
+  const notes = [{ id: 'personal-note', text: 'Keep this available' }], warnings = [];
+  const result = await new Function('listQuickNotes', 'notchRefreshBuiltinNotes', 'updateQuickNote', 'toast', patched + ';return QuickNoteWindowSurface();')(async () => notes, async () => { throw new Error('Disk full'); }, () => {}, { error: message => warnings.push(message) });
+  assert.equal(result, notes); assert.equal(warnings.length, 1); assert.match(warnings[0], /notes are still available/);
 });
 test('Notes follows the theme palette without enabling workbench layout rules in its window', () => {
   const source = 'function QuickNoteThemeSync(){const{setWindowThemeMode:t1}=useTheme();return reactExports.useEffect(()=>{},[]);}';
