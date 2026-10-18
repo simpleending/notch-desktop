@@ -54,7 +54,7 @@ async function detectLocalHardware(refresh = false) {
   }
   if (platform === "win32" && availableVram === 0) {
     try {
-      const { windowsMemory } = await import("./windows-memory-RX7NZ2OM.js");
+      const { windowsMemory } = await import("./windows-memory-42ORZ3RG.js");
       const result = await windowsMemory(refresh);
       installedMemory = result.installedMemory;
       availableVram = result.availableVram;

@@ -11,3 +11,4 @@ release/
 *.log
 *.tgz
 *.asar
+/vendor/notch-core/native/

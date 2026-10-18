@@ -1,0 +1,17 @@
+[package]
+name = "notch-hardware"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+windows = { version = "0.62.2", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
+wmi = { version = "0.18.4", default-features = false }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+

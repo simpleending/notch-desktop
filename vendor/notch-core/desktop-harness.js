@@ -18,7 +18,7 @@ import {
   linuxGpuMemory,
   modelFit,
   parseNvidiaMemory
-} from "./chunk-HYM4YPRM.js";
+} from "./chunk-GFTRJTWN.js";
 import {
   acquireLease,
   executionContext,
@@ -661,7 +661,7 @@ function resolveByokModel(spec) {
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
     }) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startMlx } = await import("./local-runner-NUGYNHYY.js");
+      const { startMlx } = await import("./local-runner-DMJDTQPQ.js");
       const ready = await startMlx(modelId, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
@@ -9020,7 +9020,7 @@ async function runDesktopTurn(turn) {
     await managedOllama2("0.40.3", turn.signal);
   }
   if (provider === "mlx") {
-    const { startMlx } = await import("./local-runner-NUGYNHYY.js");
+    const { startMlx } = await import("./local-runner-DMJDTQPQ.js");
     selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
   }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);

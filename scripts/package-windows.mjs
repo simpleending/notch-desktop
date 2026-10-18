@@ -58,6 +58,8 @@ const coreTarget=path.join(unpacked,'notch/vendor/notch-core');
 if(!path.resolve(coreTarget).startsWith(path.resolve(staging)+path.sep))throw new Error('Invalid harness target.');
 await fs.rm(coreTarget,{recursive:true,force:true});
 await fs.cp(path.join(root,'vendor/notch-core'),coreTarget,{recursive:true});
+await fs.access(path.join(coreTarget,'native/notch-hardware-win32-x64.exe'));
+await fs.access(path.join(coreTarget,'native/THIRD-PARTY-NOTICES.txt'));
 await fs.cp(path.join(root,'vendor/notch-updater'),path.join(unpacked,'notch/vendor/notch-updater'),{recursive:true});
 await fs.cp(path.join(root,'node_modules/playwright-core'),path.join(unpacked,'notch/node_modules/playwright-core'),{recursive:true});
 const openrouterTarget=path.join(unpacked,'notch/node_modules/@openrouter/ai-sdk-provider');
@@ -67,6 +69,8 @@ const cliSource=path.join(root,'node_modules/@freesyntax/notch-cli'), cliTarget=
 if(!path.resolve(cliTarget).startsWith(path.resolve(staging)+path.sep))throw new Error('Invalid embedded CLI target.');
 await fs.rm(cliTarget,{recursive:true,force:true});
 await fs.cp(cliSource,cliTarget,{recursive:true});
+await fs.access(path.join(cliTarget,'dist/native/notch-hardware-win32-x64.exe'));
+await fs.access(path.join(cliTarget,'dist/native/THIRD-PARTY-NOTICES.txt'));
 assert.equal(JSON.parse(await fs.readFile(path.join(cliTarget,'package.json'),'utf8')).version,JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')).dependencies['@freesyntax/notch-cli'],'The packaged CLI must match the pinned tested version.');
 assert.deepEqual(JSON.parse(await fs.readFile(path.join(cliTarget,'dist/working-messages.json'),'utf8')),JSON.parse(await fs.readFile(path.join(root,'vendor/notch-cli/src/ui/working-messages.json'),'utf8')),'CLI and IDE working messages must match.');
 await installSetupRenderer(unpacked,root);

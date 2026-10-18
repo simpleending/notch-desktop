@@ -2,6 +2,7 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import path from "path";
+import { fileURLToPath } from "url";
 var exec = promisify(execFile);
 var query = String.raw`
 $ErrorActionPreference = 'Stop'
@@ -46,14 +47,29 @@ $installed = (Get-CimInstance Win32_PhysicalMemory | Measure-Object -Property Ca
 @{installedMemory=$installed;dedicatedMemory=[NotchGpuMemory]::LargestDedicatedMemory();dedicatedUsage=$used} | ConvertTo-Json -Compress
 `;
 var cache;
+function parseMemory(stdout, native = false) {
+  const data = JSON.parse(stdout.trim());
+  const valid = (value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  if (!data || native && data.schemaVersion !== 1 || !valid(data.installedMemory) || !valid(data.dedicatedMemory) || !valid(data.dedicatedUsage)) throw new Error("Windows GPU memory telemetry is unavailable.");
+  return { installedMemory: data.installedMemory, totalVram: data.dedicatedMemory, availableVram: Math.max(0, data.dedicatedMemory - data.dedicatedUsage) };
+}
 async function windowsMemory(refresh = false) {
   if (!refresh && cache && Date.now() - cache.at < 5e3) return cache.value;
+  cache = void 0;
+  if (process.platform === "win32" && ["x64", "arm64"].includes(process.arch)) {
+    const directory = import.meta.url.endsWith(".ts") ? "../../native/windows-hardware/bin/" : "./native/";
+    const helper = fileURLToPath(new URL(`${directory}notch-hardware-win32-${process.arch}.exe`, import.meta.url)).replace(/\.asar([\\/])/g, ".asar.unpacked$1");
+    try {
+      const { stdout: stdout2 } = await exec(helper, [], { timeout: 2500, maxBuffer: 16384, windowsHide: true });
+      const value2 = parseMemory(stdout2, true);
+      cache = { at: Date.now(), value: value2 };
+      return value2;
+    } catch {
+    }
+  }
   const executable = path.join(process.env.WINDIR || "C:/Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
   const { stdout } = await exec(executable, ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(query, "utf16le").toString("base64")], { timeout: 1e4, windowsHide: true });
-  const data = JSON.parse(stdout.trim());
-  const valid = (value2) => typeof value2 === "number" && Number.isSafeInteger(value2) && value2 >= 0;
-  if (!valid(data.installedMemory) || !valid(data.dedicatedMemory) || !valid(data.dedicatedUsage)) throw new Error("Windows GPU memory telemetry is unavailable.");
-  const value = { installedMemory: data.installedMemory, totalVram: data.dedicatedMemory, availableVram: Math.max(0, data.dedicatedMemory - data.dedicatedUsage) };
+  const value = parseMemory(stdout);
   cache = { at: Date.now(), value };
   return value;
 }

@@ -2,6 +2,8 @@
 
 Original notch desktop code is licensed under GNU Affero General Public License v3.0 only (`AGPL-3.0-only`).
 
+The [Windows hardware helper](../vendor/notch-cli/native/windows-hardware/README.md) is Apache-2.0. Cargo.lock pins its Rust dependencies; their full license texts ship beside the core in `notch/vendor/notch-core/native/THIRD-PARTY-NOTICES.txt` and beside the embedded CLI in `dist/native/THIRD-PARTY-NOTICES.txt`. The executable is built from vendored source and unpacked outside the application archive.
+
 Bundled components retain their own licenses. These include the [vendored CLI's Apache 2.0 license](../vendor/notch-cli/LICENSE), [fff's MIT license](../assets/notices/fff-LICENSE.txt), [Manrope's OFL license](../assets/fonts/Manrope-OFL.txt), and [provider mark notices](../assets/notices/provider-logos.md).
 
 The OpenRouter adapter is [@openrouter/ai-sdk-provider 3.1.0](https://github.com/OpenRouterTeam/ai-sdk-provider), licensed under Apache 2.0. Its package and license are retained in the application's `notch/node_modules/@openrouter/ai-sdk-provider` directory.
