@@ -88,6 +88,8 @@ export interface ModelConfig {
    * serves both shapes from port 11434.
    */
   byokApiShape?: 'openai' | 'anthropic';
+  /** OpenRouter fallback model ids, tried in order if the primary errors. */
+  fallbacks?: string[];
 }
 
 /** Role assignments — different Notch models for different tasks */

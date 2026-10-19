@@ -548,6 +548,22 @@ function isByokRef(model) {
   if (colon > 0 && providerExists(model.slice(0, colon))) return true;
   return false;
 }
+var OPENROUTER_FALLBACK_LIMIT = 3;
+function openRouterFallbackIds(primary, ids) {
+  const primaryId = typeof primary === "string" ? primary.replace(/^openrouter\//, "") : "";
+  const seen = new Set(primaryId ? [primaryId] : []);
+  const out = [];
+  if (!Array.isArray(ids)) return out;
+  for (const raw of ids) {
+    if (typeof raw !== "string") continue;
+    const id = raw.replace(/^openrouter\//, "");
+    if (!/^[\w./:~+-]{1,256}$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= OPENROUTER_FALLBACK_LIMIT) break;
+  }
+  return out;
+}
 function parseByokRef(ref) {
   const slash = ref.indexOf("/");
   const colon = ref.indexOf(":");
@@ -644,8 +660,9 @@ function resolveByokModel(spec) {
     };
   }
   if (providerInfo.id === "openrouter") {
+    const fallbacks = openRouterFallbackIds(modelId, spec.fallbacks);
     const openrouter = createOpenRouter({ apiKey, baseURL: baseUrl, headers });
-    const model = openrouter.chat(modelId);
+    const model = openrouter.chat(modelId, fallbacks.length ? { extraBody: { models: fallbacks } } : {});
     return { model: Number.isSafeInteger(spec.maxOutputTokens) && spec.maxOutputTokens > 0 ? wrapLanguageModel({
       model,
       middleware: { specificationVersion: "v4", transformParams: async ({ params }) => ({
@@ -936,7 +953,8 @@ function resolveModel(config) {
       contextWindow: config.contextWindow,
       nativeContextWindow: config.nativeContextWindow,
       maxOutputTokens: config.maxOutputTokens,
-      ollamaBatch: config.ollamaBatch
+      ollamaBatch: config.ollamaBatch,
+      fallbacks: config.fallbacks
     });
     firePiAiShadowProbe(config, resolved.model);
     return resolved.model;
@@ -953,7 +971,8 @@ function resolveModel(config) {
       contextWindow: config.contextWindow,
       nativeContextWindow: config.nativeContextWindow,
       maxOutputTokens: config.maxOutputTokens,
-      ollamaBatch: config.ollamaBatch
+      ollamaBatch: config.ollamaBatch,
+      fallbacks: config.fallbacks
     });
     firePiAiShadowProbe(config, resolved.model);
     return resolved.model;
@@ -9006,7 +9025,8 @@ async function runDesktopTurn(turn) {
     ...turn.maxOutputTokens ? { maxOutputTokens: turn.maxOutputTokens } : {},
     ...turn.contextWindow ? { contextWindow: turn.contextWindow } : {},
     ...turn.nativeContextWindow ? { nativeContextWindow: turn.nativeContextWindow } : {},
-    ...turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}
+    ...turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {},
+    ...Array.isArray(turn.fallbacks) && turn.fallbacks.length ? { fallbacks: turn.fallbacks } : {}
   };
   const provider = selection.byokProvider || (isByokRef(selection.model) ? parseByokRef(selection.model).provider : void 0);
   if (provider === "openrouter") {

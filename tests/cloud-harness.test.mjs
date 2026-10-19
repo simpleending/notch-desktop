@@ -20,7 +20,7 @@ test('OpenRouter uses the explicit key, correct endpoint, bounded output and pro
     assert.equal(String(url),'https://openrouter.ai/api/v1/chat/completions');
     assert.equal(new Headers(options.headers).get('authorization'),'Bearer sk-or-qa-only-fixture');
     const body=JSON.parse(options.body);calls.push(body);
-    assert.equal(body.model,'openai/gpt-4.1');assert.ok((body.max_tokens || body.max_completion_tokens)<=4096);
+    assert.equal(body.model,'openai/gpt-4.1');assert.equal(body.models,undefined);assert.ok((body.max_tokens || body.max_completion_tokens)<=4096);
     assert.ok(Array.isArray(body.tools));
     const chunk={id:'qa',object:'chat.completion.chunk',created:1,model:body.model,choices:[{index:0,delta:{role:'assistant',content:'CLOUD_ROUTE_VERIFIED'},finish_reason:null}]};
     const end={...chunk,choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:101,completion_tokens:7,total_tokens:108}};
@@ -34,6 +34,25 @@ test('OpenRouter uses the explicit key, correct endpoint, bounded output and pro
     assert.equal(result.text,'CLOUD_ROUTE_VERIFIED');assert.equal(calls.length,1);assert.deepEqual(usage,{inputTokens:101,outputTokens:7,contextWindow:32768});
     assert.doesNotMatch(JSON.stringify(result.messages),/sk-or-/);
   } finally {globalThis.fetch=previous;}
+});
+test('OpenRouter sends ordered fallback models and drops the primary from that list',async()=>{
+  const previous=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,options)=>{
+    assert.equal(String(url),'https://openrouter.ai/api/v1/chat/completions');
+    const body=JSON.parse(options.body);calls.push(body);
+    const chunk={id:'qa',object:'chat.completion.chunk',created:1,model:'google/gemini-3.5-flash',choices:[{index:0,delta:{role:'assistant',content:'FALLBACK_ROUTE_VERIFIED'},finish_reason:null}]};
+    const end={...chunk,choices:[{index:0,delta:{},finish_reason:'stop'}],usage:{prompt_tokens:8,completion_tokens:3,total_tokens:11}};
+    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: ${JSON.stringify(end)}\n\ndata: [DONE]\n\n`,{headers:{'Content-Type':'text/event-stream'}});
+  };
+  try{
+    const cwd=await mkdtemp(path.join(os.tmpdir(),'notch-cloud-fallback-'));
+    const result=await runDesktopTurn({cwd,sessionId:'cloud-fallback-test',messages:[{role:'user',content:'hello'}],model:'openrouter/openai/gpt-4.1',apiKey:'fixture-only',contextWindow:8192,maxOutputTokens:4096,
+      fallbacks:['openrouter/openai/gpt-4.1','google/gemini-3.5-flash','openrouter/deepseek/deepseek-v4-flash'],
+      accessMode:'read-only',signal:AbortSignal.timeout(15000),checkpoints:new CheckpointManager(),tools:['Read'],approve:async()=>false});
+    assert.equal(result.text,'FALLBACK_ROUTE_VERIFIED');
+    assert.equal(calls[0].model,'openai/gpt-4.1');
+    assert.deepEqual(calls[0].models,['google/gemini-3.5-flash','deepseek/deepseek-v4-flash']);
+  }finally{globalThis.fetch=previous;}
 });
 test('OpenRouter preserves encrypted reasoning across the desktop tool loop and a saved transcript',async()=>{
   const previous=globalThis.fetch,cwd=await mkdtemp(path.join(os.tmpdir(),'notch-cloud-reasoning-'));

@@ -54,6 +54,7 @@ export interface DesktopTurn {
   onLog?: (message: string) => void;
   onQueue?: (message: string | null) => void;
   onLifecycle?: (event: string, payload: Record<string, unknown>) => Promise<void>;
+  fallbacks?: string[];
 }
 
 const desktopToolNames: Record<string, string> = { Read: 'read', TaskChanges: 'task_changes', Write: 'write', Edit: 'edit', Bash: 'shell', Glob: 'glob', Grep: 'grep', Git: 'git', ApplyPatch: 'apply_patch', WebFetch: 'web_fetch', WebSearch: 'web_search', BrowserRead: 'browser_read', BrowserInteract: 'browser_interact', Agent: 'task' };
@@ -82,6 +83,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     ...(turn.contextWindow ? { contextWindow: turn.contextWindow } : {}),
     ...(turn.nativeContextWindow ? { nativeContextWindow: turn.nativeContextWindow } : {}),
     ...(turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}),
+    ...(Array.isArray(turn.fallbacks) && turn.fallbacks.length ? { fallbacks: turn.fallbacks } : {}),
   };
   const provider = selection.byokProvider || (isByokRef(selection.model) ? parseByokRef(selection.model).provider : undefined);
   if (provider === 'openrouter') {

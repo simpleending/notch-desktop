@@ -92,6 +92,7 @@ test('preload migration is idempotent and forwards the remote search and page th
   })});
   bridge.hub('ollama',{query:'gemm',page:1});assert.deepEqual(request,['notch-models:hub','ollama',{query:'gemm',page:1}]);
   bridge.cloud(true);assert.deepEqual(request,['notch-models:cloud',true]);
+  bridge.fallbacks('openrouter/lab/primary',['openrouter/lab/fast']);assert.deepEqual(request,['notch-models:fallbacks','openrouter/lab/primary',['openrouter/lab/fast']]);
 });
 
 test('default Hub browsing includes chat conversions instead of restricting names to coding families',async()=>{

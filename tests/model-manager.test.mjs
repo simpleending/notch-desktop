@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createModelManager } from '../src/model-manager.mjs';
-import { cloudModelRows, localContextProfile, isPrimaryModelSender } from '../src/model-policy.mjs';
+import { cloudModelRows, localContextProfile, isPrimaryModelSender, normalizeOpenRouterFallbacks, OPENROUTER_FALLBACK_LIMIT } from '../src/model-policy.mjs';
 import { parseNvidiaMemory, linuxGpuMemory } from '../vendor/notch-core/desktop-harness.js';
 const GiB=2**30;
 test('task workspace defaults to the project, persists both choices, and rejects invalid saved settings',async()=>{
@@ -137,6 +137,34 @@ test('no secure key store means session-only credentials; invalid keys do not ov
   await assert.rejects(manager.connect('openrouter','sk-or-bad-example-key'),/rejected/);
   assert.equal(await manager.key('openrouter'),'sk-or-example-secret');assert.equal((await manager.status()).persistentKeys,false);
   assert.equal((await readdir(directory)).includes('provider-keys.encrypted.json'),false);
+});
+test('OpenRouter fallback chains stay unique, drop the primary, and cap at three',()=>{
+  const primary='openrouter/anthropic/claude-sonnet-4.6';
+  const allowed=new Set(['openrouter/openai/gpt-5.4','openrouter/google/gemini-3.5-flash','openrouter/deepseek/deepseek-v4-flash','openrouter/moonshotai/kimi-k2.6']);
+  assert.deepEqual(normalizeOpenRouterFallbacks(primary,['openai/gpt-5.4',primary,'openrouter/openai/gpt-5.4','google/gemini-3.5-flash','moonshotai/kimi-k2.6','deepseek/deepseek-v4-flash'],allowed),
+    ['openrouter/openai/gpt-5.4','openrouter/google/gemini-3.5-flash','openrouter/moonshotai/kimi-k2.6']);
+  assert.equal(OPENROUTER_FALLBACK_LIMIT,3);
+  assert.deepEqual(normalizeOpenRouterFallbacks(primary,['lab/missing'],allowed),[]);
+});
+test('OpenRouter fallbacks persist per primary model and reject chat-only or duplicate ids',async()=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'notch-openrouter-fallbacks-'));
+  const manager=createModelManager(directory);
+  const rows=[
+    {key:'openrouter/lab/primary',provider:'openrouter',tools:true,enabled:true},
+    {key:'openrouter/lab/fast',provider:'openrouter',tools:true,enabled:true},
+    {key:'openrouter/lab/floor',provider:'openrouter',tools:true,enabled:true},
+    {key:'openrouter/lab/chat',provider:'openrouter',tools:false,enabled:false},
+  ];
+  await assert.rejects(manager.setFallbacks('openrouter/lab/primary',['openrouter/lab/fast'],[]),/OpenRouter model/);
+  assert.deepEqual(await manager.setFallbacks('openrouter/lab/primary',['openrouter/lab/fast','openrouter/lab/primary','openrouter/lab/chat','openrouter/lab/floor','openrouter/lab/fast'],rows),
+    {'openrouter/lab/primary':['openrouter/lab/fast','openrouter/lab/floor']});
+  assert.deepEqual(manager.fallbacks('openrouter/lab/primary'),['openrouter/lab/fast','openrouter/lab/floor']);
+  await manager.setFallbacks('openrouter/lab/primary',[],rows);
+  assert.deepEqual(manager.fallbacks('openrouter/lab/primary'),[]);
+  await manager.setFallbacks('openrouter/lab/fast',['openrouter/lab/floor'],rows);
+  const restored=createModelManager(directory);await restored.status();
+  assert.deepEqual(restored.fallbacks('openrouter/lab/fast'),['openrouter/lab/floor']);
+  assert.deepEqual(restored.allFallbacks(),{'openrouter/lab/fast':['openrouter/lab/floor']});
 });
 test('model IPC rejects remote pages, child frames and auxiliary notch surfaces',()=>{
   const frame={url:'notch-app://renderer/index.html'}, sender={mainFrame:frame};assert.equal(isPrimaryModelSender({sender,senderFrame:frame}),true);

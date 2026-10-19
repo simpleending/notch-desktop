@@ -58,3 +58,28 @@ export function isPrimaryModelSender(event) {
   try { const url = new URL(event.senderFrame.url); return event.senderFrame === event.sender.mainFrame && url.protocol === 'notch-app:' && url.host === 'renderer' && url.pathname === '/index.html' && !url.searchParams.has('surface'); }
   catch { return false; }
 }
+
+export const OPENROUTER_FALLBACK_LIMIT = 3;
+export function openRouterModelId(key) {
+  return typeof key === 'string' && key.startsWith('openrouter/') ? key.slice(11) : typeof key === 'string' ? key : '';
+}
+export function openRouterModelKey(value) {
+  const id = openRouterModelId(value);
+  return id ? `openrouter/${id}` : '';
+}
+/** Ordered OpenRouter keys, primary excluded, at most three, unique. */
+export function normalizeOpenRouterFallbacks(primary, ids, allowed) {
+  const primaryId = openRouterModelId(primary);
+  const seen = new Set(primaryId ? [primaryId] : []);
+  const out = [];
+  if (!Array.isArray(ids)) return out;
+  for (const raw of ids) {
+    const key = openRouterModelKey(raw), id = openRouterModelId(key);
+    if (!id || !/^[\w./:~+-]{1,256}$/.test(id) || seen.has(id)) continue;
+    if (allowed && !allowed.has(key) && !allowed.has(id)) continue;
+    seen.add(id);
+    out.push(key);
+    if (out.length >= OPENROUTER_FALLBACK_LIMIT) break;
+  }
+  return out;
+}

@@ -7,7 +7,7 @@ export function registerModelIpc(ipcMain, host) {
     const status = await manager.status();
     if (refresh && status.openrouter) await manager.cloudCatalog(true);
     const models = (await host.listModels(refreshModels)).filter(row=>row.key!=='auto');
-    return { ...status, models, defaultModel: host.getDefaultModel(), discoveryWarning:host.getModelDiscoveryWarning(), hardware: await detectLocalHardware() };
+    return { ...status, models, defaultModel: host.getDefaultModel(), discoveryWarning:host.getModelDiscoveryWarning(), hardware: await detectLocalHardware(), fallbacks: manager.allFallbacks() };
   };
   const handlers = {
     updates: (action='status',value) => {
@@ -25,6 +25,13 @@ export function registerModelIpc(ipcMain, host) {
     connect: async (provider,key) => { await manager.connect(provider,key); return state(false,true); },
     disconnect: async provider => { await manager.disconnect(provider); return state(false,true); },
     context: async (model,tokens) => { await manager.setContext(model,tokens,await host.listModels(true)); return state(false,true); },
+    fallbacks: async (model,ids) => {
+      if (!Array.isArray(ids) || ids.length > 8 || ids.some(id => typeof id !== 'string' || id.length > 256)) throw new Error('Choose up to three OpenRouter fallback models.');
+      const catalog = await manager.cloudCatalog(false, true);
+      const listed = await host.listModels(true);
+      await manager.setFallbacks(model, ids, [...new Map([...listed, ...catalog].map(row => [row.key, row])).values()]);
+      return state(false, true);
+    },
     hub: (runner,options) => manager.hubCatalog(runner,options),
     cloud: force => manager.cloudCatalog(force===true,true),
     colibri: (action,model) => manager.colibri(action,model),
@@ -49,6 +56,7 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
   connect:(provider,key)=>ipcRenderer.invoke('notch-models:connect',provider,key),
   disconnect:provider=>ipcRenderer.invoke('notch-models:disconnect',provider),
   context:(model,tokens)=>ipcRenderer.invoke('notch-models:context',model,tokens),
+  fallbacks:(model,ids)=>ipcRenderer.invoke('notch-models:fallbacks',model,ids),
   hub:(runner,options)=>ipcRenderer.invoke('notch-models:hub',runner,options),
   cloud:force=>ipcRenderer.invoke('notch-models:cloud',force),
   colibri:(action,model)=>ipcRenderer.invoke('notch-models:colibri',action,model),
@@ -83,5 +91,6 @@ export function patchModelPreload(source) {
     if(source.split('voiceInstall:()=>').length!==2)throw new Error('The speech model bridge differs from the expected version.');
     source=source.replace('voiceInstall:()=>',"voiceModels:(action,input)=>ipcRenderer.invoke('notch-models:voiceModels',action,input),voiceInstall:()=>");
   }
+  if(!source.includes("fallbacks:(model,ids)=>"))source=source.replace("context:(model,tokens)=>ipcRenderer.invoke('notch-models:context',model,tokens)","context:(model,tokens)=>ipcRenderer.invoke('notch-models:context',model,tokens),\n  fallbacks:(model,ids)=>ipcRenderer.invoke('notch-models:fallbacks',model,ids)");
   return source;
 }

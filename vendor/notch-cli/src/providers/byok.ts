@@ -372,6 +372,29 @@ export interface ByokSpec {
    * API wire protocol).
    */
   apiShape?: ApiShape;
+  /**
+   * OpenRouter model fallbacks, tried in order if the primary errors.
+   * Ids may be full `openrouter/...` keys or OpenRouter model ids.
+   */
+  fallbacks?: string[];
+}
+
+const OPENROUTER_FALLBACK_LIMIT = 3;
+/** OpenRouter `models` array: primary excluded, unique, at most three. */
+export function openRouterFallbackIds(primary: string | undefined, ids: unknown): string[] {
+  const primaryId = typeof primary === 'string' ? primary.replace(/^openrouter\//, '') : '';
+  const seen = new Set(primaryId ? [primaryId] : []);
+  const out: string[] = [];
+  if (!Array.isArray(ids)) return out;
+  for (const raw of ids) {
+    if (typeof raw !== 'string') continue;
+    const id = raw.replace(/^openrouter\//, '');
+    if (!/^[\w./:~+-]{1,256}$/.test(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= OPENROUTER_FALLBACK_LIMIT) break;
+  }
+  return out;
 }
 
 /**
@@ -528,8 +551,9 @@ export function resolveByokModel(spec: ByokSpec): {
   }
 
   if (providerInfo.id === 'openrouter') {
+    const fallbacks = openRouterFallbackIds(modelId, spec.fallbacks);
     const openrouter = createOpenRouter({ apiKey, baseURL: baseUrl, headers });
-    const model = openrouter.chat(modelId);
+    const model = openrouter.chat(modelId, fallbacks.length ? { extraBody: { models: fallbacks } } : {});
     // Summary and background calls share the selected model's output ceiling.
     return { model: Number.isSafeInteger(spec.maxOutputTokens) && spec.maxOutputTokens! > 0 ? wrapLanguageModel({ model,
       middleware: { specificationVersion: 'v4', transformParams: async ({ params }) => ({ ...params,

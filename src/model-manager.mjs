@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { cloudModelRows } from './model-policy.mjs';
+import { cloudModelRows, normalizeOpenRouterFallbacks, openRouterModelKey } from './model-policy.mjs';
 import { localContextProfile } from './model-policy.mjs';
 import { installLocalModel } from './cli-bridge.mjs';
 import {createHubCatalog} from './hub-catalog.mjs';
@@ -9,8 +9,9 @@ import { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriMode
 
 export function createModelManager(directory, { safeStorage, fetcher = fetch, recommend: recommendModels, install = installLocalModel,
   colibri = { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri } } = {}) {
-  const keys = new Map(), preferences = new Map();
+  const keys = new Map(), preferences = new Map(), fallbacks = new Map();
   const keyFile = path.join(directory, 'provider-keys.encrypted.json'), contextFile = path.join(directory, 'model-context.json'), catalogFile = path.join(directory, 'openrouter-models.json');
+  const fallbackFile = path.join(directory, 'openrouter-fallbacks.json');
   const mlxFile = path.join(directory,'mlx-models.json');
   const workspaceFile = path.join(directory,'task-workspace.json');
   let workspaceMode = 'shared';
@@ -24,6 +25,7 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
     persistent = !!safeStorage && await safeStorage.isAsyncEncryptionAvailable() && (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text');
     if (secure()) try { const values = JSON.parse(await fs.readFile(keyFile, 'utf8')); for (const provider of ['openrouter','huggingface']) if (typeof values[provider] === 'string') keys.set(provider, (await safeStorage.decryptStringAsync(Buffer.from(values[provider], 'base64'))).result); } catch (error) { if (error.code !== 'ENOENT') { keys.clear(); keyLoadError = 'Saved provider keys could not be decrypted. Reconnect the provider.'; } }
     try { const values = JSON.parse(await fs.readFile(contextFile, 'utf8')); for (const [model,value] of Object.entries(values)) if (Number.isSafeInteger(value) && value >= 2048) preferences.set(model,value); } catch { /* Context choices are optional. */ }
+    try { const values = JSON.parse(await fs.readFile(fallbackFile, 'utf8')); for (const [model,ids] of Object.entries(values)) { const next = normalizeOpenRouterFallbacks(model, ids); if (next.length) fallbacks.set(model, next); } } catch { /* Fallback chains are optional. */ }
     try { const value = JSON.parse(await fs.readFile(catalogFile, 'utf8')); if (Array.isArray(value.data) && value.at <= Date.now()) cached = value; } catch { /* Refresh invalid cache. */ }
     try { const rows = JSON.parse(await fs.readFile(mlxFile,'utf8')); if (Array.isArray(rows)) installedMlx = rows.filter(row=>row && typeof row.repo==='string' && /^[\w.-]+\/[\w.-]+$/.test(row.repo) && Number.isSafeInteger(row.bytes) && row.bytes>0); } catch { /* No installed MLX models yet. */ }
   })();
@@ -100,6 +102,20 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
         current.public.state='complete';current.public.message=action==='setup'?'Colibri is ready. Choose a coding model below.':'Tool validation passed. Open Installed to select the model; weights load when you send a message.';
       })().catch(error=>{current.public.state=controller.signal.aborted?'cancelled':'failed';current.public.message=String(error.message).replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);});
       return service.status();
+    },
+    fallbacks(model) { return [...(fallbacks.get(model) || [])]; },
+    allFallbacks() { return Object.fromEntries(fallbacks); },
+    async setFallbacks(model, ids, models) {
+      await ready;
+      const key = openRouterModelKey(model);
+      const row = Array.isArray(models) ? models.find(item => item.key === key && item.provider === 'openrouter') : undefined;
+      if (!row) throw new Error('Choose an OpenRouter model before setting fallbacks.');
+      const allowed = new Set(models.filter(item => item.provider === 'openrouter' && item.tools !== false).map(item => item.key));
+      const next = normalizeOpenRouterFallbacks(key, ids, allowed);
+      if (Array.isArray(ids) && ids.length && !next.length) throw new Error('Choose tool-capable OpenRouter models that are not already selected.');
+      if (next.length) fallbacks.set(key, next); else fallbacks.delete(key);
+      await atomic(fallbackFile, Object.fromEntries(fallbacks));
+      return service.allFallbacks();
     },
     async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && (row.enabled || row.provider==='colibri')); if (!row || (tokens!=='auto' && !row.availableContextWindows.includes(tokens))) throw new Error('Choose a supported context limit for this model.');
       if(row.provider==='colibri'){if((await colibri.colibriStatus()).running)throw new Error('Unload Colibri before changing context so free memory can be checked accurately.');if(!(await colibri.colibriPlan(tokens==='auto'?16384:tokens)).fits)throw new Error('This Colibri context exceeds current free memory. Close applications or choose a smaller context.');}
