@@ -10,7 +10,34 @@ const release = 'b5454'; // whisper.cpp v1.9.5 official CPU build
 const runtimeHash = '6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb';
 const modelHash = '60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe';
 const modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin';
+const cactusRuntimeHash = '0d4bc1da8c51f5600f5c4f4bb4a92e0abe142fae7b69e695ccab93e6745c883d';
+const cactusRuntimeSize = 1570816;
+const cactusRuntimeUrl = 'https://huggingface.co/Cactus-Compute/needle3/resolve/d6c7d6a2e9655505e0f8e23339356dd1705900eb/windows-x86_64/needle.exe';
+const cactusModelHash = 'b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb';
+const cactusModelSize = 16919407;
+const cactusModelUrl = 'https://huggingface.co/Cactus-Compute/whistle/resolve/741118687e1f008f06d1351a402a731274789790/whistle.cact';
+const cactusEnv = env => ({ ...env, NEEDLE_TELEMETRY: '0', DO_NOT_TRACK: '1' });
 const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+
+export function parseNeedleTranscript(stdout) {
+  const text = String(stdout ?? '').trim();
+  if (!text) return '';
+  const start = text.lastIndexOf('{'), end = text.lastIndexOf('}');
+  if (start >= 0 && end > start) {
+    try {
+      const body = JSON.parse(text.slice(start, end + 1));
+      const value = typeof body.text === 'string' ? body.text : typeof body.audio_text === 'string' ? body.audio_text : null;
+      if (value !== null) {
+        if (value.length > 200000) throw new Error('Invalid transcription response.');
+        return value.trim();
+      }
+    } catch (error) {
+      if (error.message === 'Invalid transcription response.') throw error;
+    }
+  }
+  if (text.length > 200000) throw new Error('Invalid transcription response.');
+  return text;
+}
 
 function run(executable, args, { signal, input, timeout = 180000, env = process.env } = {}) {
   return new Promise((resolve, reject) => {
@@ -62,13 +89,68 @@ async function download(url, destination, expected, limit, signal, progress) {
 
 export function createLocalVoice(directory, { transcriber, synthesizer, getKey, fetcher, availableMemory } = {}) {
   const runtime = path.join(directory, 'local-voice', release), executable = path.join(runtime, 'whisper-cli.exe'), model = path.join(runtime, 'ggml-base.bin');
+  const cactusRoot = path.join(directory, 'local-voice', 'cactus-needle'), cactusExecutable = path.join(cactusRoot, 'needle.exe'), cactusModel = path.join(cactusRoot, 'whistle.cact');
   const sessions = new Map(); let installing, installController, installState = { phase: 'idle', bytes: 0, error: null };
+  let cactusInstalling, cactusController, cactusState = { phase: 'idle', bytes: 0, error: null };
   const controller = new AbortController();
   async function legacyStatus() {
     let ready = false, runtimeReady = false;
     try { runtimeReady = (await fs.stat(executable)).isFile(); } catch {}
     try { ready = (await fs.stat(executable)).isFile() && (await fs.stat(model)).size === 147951465; } catch {}
     return { ...installState, ready, runtimeReady, supported: process.platform === 'win32' && process.arch === 'x64', engine: 'Whisper base (multilingual, CPU)', downloadBytes: 156880105, playback: 'Windows installed voice' };
+  }
+  async function cactusStatus() {
+    let ready = false, runtimeReady = false;
+    try { runtimeReady = (await fs.stat(cactusExecutable)).isFile() && (await fs.stat(cactusExecutable)).size === cactusRuntimeSize; } catch {}
+    try { ready = runtimeReady && (await fs.stat(cactusModel)).size === cactusModelSize; } catch {}
+    return { ...cactusState, ready, runtimeReady, supported: process.platform === 'win32' && process.arch === 'x64', engine: 'Cactus Whistle (CPU)', downloadBytes: cactusRuntimeSize + cactusModelSize };
+  }
+  async function cactusInstall(runtimeOnly = false) {
+    if (typeof runtimeOnly !== 'boolean') throw Error('Invalid speech setup request.');
+    if (cactusInstalling) return cactusStatus();
+    const existing = await cactusStatus();
+    if (existing.ready || runtimeOnly && existing.runtimeReady) return cactusStatus();
+    if (process.platform !== 'win32' || process.arch !== 'x64') throw new Error('Automatic local voice setup currently supports Windows x64.');
+    cactusController = new AbortController(); const signal = AbortSignal.any([controller.signal, cactusController.signal]);
+    cactusState = { phase: 'downloading', bytes: 0, error: null };
+    cactusInstalling = (async () => {
+      const parent = path.dirname(cactusRoot); await fs.mkdir(parent, { recursive: true });
+      const temporary = await fs.mkdtemp(path.join(parent, 'cactus-'));
+      try {
+        const pendingRuntime = path.join(temporary, 'needle.exe'), pendingModel = path.join(temporary, 'whistle.cact');
+        if (!existing.runtimeReady) {
+          await download(cactusRuntimeUrl, pendingRuntime, cactusRuntimeHash, cactusRuntimeSize, signal, bytes => { cactusState.bytes = bytes; });
+          try {
+            await run(pendingRuntime, ['--help'], { signal, timeout: 15000, env: cactusEnv(process.env) });
+          } catch (error) {
+            if (/3221225781|Visual C\+\+/.test(error.message)) throw error;
+            if (!/model|audio|whistle|usage|help/i.test(error.message)) throw error;
+          }
+        }
+        if (!runtimeOnly) await download(cactusModelUrl, pendingModel, cactusModelHash, cactusModelSize, signal, bytes => { cactusState.bytes = (existing.runtimeReady ? 0 : cactusRuntimeSize) + bytes; });
+        await fs.mkdir(cactusRoot, { recursive: true });
+        signal.throwIfAborted();
+        if (!existing.runtimeReady) await fs.rename(pendingRuntime, cactusExecutable);
+        if (!runtimeOnly) await fs.rename(pendingModel, cactusModel);
+        await fs.copyFile(fileURLToPath(new URL('./local-voice-LICENSES.txt', import.meta.url)), path.join(cactusRoot, 'LICENSES.txt'));
+        await fs.writeFile(path.join(cactusRoot, 'notch-runtime.json'), JSON.stringify({ engine: 'cactus-needle', cactusRuntimeHash, cactusModelHash, cactusRuntimeUrl, cactusModelUrl }));
+        cactusState = { phase: 'ready', bytes: (existing.runtimeReady ? 0 : cactusRuntimeSize) + (runtimeOnly ? 0 : cactusModelSize), error: null };
+      } catch (error) { cactusState = { ...cactusState, phase: 'error', error: signal.aborted ? 'Local voice setup cancelled.' : error.message }; }
+      finally { if (!path.resolve(temporary).startsWith(path.resolve(parent) + path.sep)) throw Error('Invalid speech setup directory.'); await fs.rm(temporary, { recursive: true, force: true }); cactusInstalling = undefined; }
+    })();
+    return cactusStatus();
+  }
+  async function cactusTranscribe(pcm, { signal } = {}) {
+    signal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    signal.throwIfAborted();
+    if (pcm.length < 6400) return '';
+    const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-whistle-'));
+    try {
+      const input = path.join(temporary, 'input.wav');
+      await fs.writeFile(input, pcmWave(pcm), { mode: 0o600 });
+      const stdout = await run(cactusExecutable, ['--model', cactusModel, '--audio', input], { signal, env: cactusEnv(process.env) });
+      return parseNeedleTranscript(stdout);
+    } finally { await fs.rm(temporary, { recursive: true, force: true }); }
   }
   async function install(runtimeOnly = false) {
     if (typeof runtimeOnly !== 'boolean') throw Error('Invalid speech setup request.');
@@ -141,7 +223,7 @@ export function createLocalVoice(directory, { transcriber, synthesizer, getKey, 
       return wavePcm(await fs.readFile(file));
     } finally { await fs.rm(temporary, { recursive: true, force: true }); }
   }
-  const models=createSpeechModels(directory,{run,legacyStatus,legacyInstall:install,legacyTranscribe:localTranscribe,systemSpeak,pcmWave,legacyCancel:()=>installController?.abort(),getKey,fetcher,availableMemory});
+  const models=createSpeechModels(directory,{run,legacyStatus,legacyInstall:install,legacyTranscribe:localTranscribe,cactusStatus,cactusInstall,cactusTranscribe,cactusCancel:()=>cactusController?.abort(),systemSpeak,pcmWave,legacyCancel:()=>{installController?.abort();cactusController?.abort();},getKey,fetcher,availableMemory});
   const status=async()=>({...await legacyStatus(),...await models.status()});
   async function transcribe(pcm, options={}) {
     const signal=AbortSignal.any([controller.signal,...(options.signal?[options.signal]:[])]);
@@ -176,7 +258,7 @@ export function createLocalVoice(directory, { transcriber, synthesizer, getKey, 
   }
   return {
     status, install, ensureReady, transcribe, synthesize, models: (action,input)=>models.action(action,input),
-    cancelInstall() { installController?.abort(); return status(); },
+    cancelInstall() { installController?.abort(); cactusController?.abort(); return status(); },
     async startRecognition(emit, options) { await ensureReady(); return startRecognition(emit, options); },
     sendRecognition(id, audio) {
       const session = sessions.get(id), bytes = audioBytes(audio);
@@ -191,6 +273,6 @@ export function createLocalVoice(directory, { transcriber, synthesizer, getKey, 
       try { if (complete) await flushRecognition(session); else { session.abort.abort(); await session.queue.catch(() => {}); } }
       finally { sessions.delete(id); session.abort.abort(); session.emit({ type: 'status', sessionId: id, status: 'closed' }); }
     },
-    async shutdown() { controller.abort(); await models.shutdown(); const pending=[...sessions.values()]; for (const session of pending) session.abort.abort(); sessions.clear(); await Promise.allSettled([...pending.map(session=>session.queue),installing]); },
+    async shutdown() { controller.abort(); await models.shutdown(); const pending=[...sessions.values()]; for (const session of pending) session.abort.abort(); sessions.clear(); await Promise.allSettled([...pending.map(session=>session.queue),installing,cactusInstalling]); },
   };
 }

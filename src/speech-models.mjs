@@ -6,11 +6,17 @@ import { speechWavePcm } from './speech-audio.mjs';
 const whisperRepo = 'ggerganov/whisper.cpp', sherpaVersion = '1.13.8';
 const runtimeName = `sherpa-onnx-v${sherpaVersion}-win-x64-shared-MD-Release`;
 const runtimeHash = '3e971a04b2e0ba4dfa53d381a006367ce8c9f5f09b4ae00043e9845c2baded22';
-const defaults = { stt: { provider: 'local', id: 'whisper/base' }, tts: { provider: 'local', id: 'windows', voice: '' } };
+export const cactusWhistle = {
+    id: 'cactus/whistle', name: 'Cactus Whistle · Recommended', engine: 'cactus', repo: 'Cactus-Compute/whistle',
+    file: 'whistle.cact', bytes: 16919407, runtimeBytes: 1570816, revision: '741118687e1f008f06d1351a402a731274789790',
+    engineRevision: 'd6c7d6a2e9655505e0f8e23339356dd1705900eb', description: 'Local speech · 17 MB · English, German, French, Spanish, Italian, Dutch, Polish'
+};
+const defaults = { stt: { provider: 'local', id: cactusWhistle.id }, tts: { provider: 'local', id: 'windows', voice: '' } };
 const roleCheck = role => { if (!['stt', 'tts'].includes(role))
     throw Error('Choose speech recognition or speech output.'); };
 const safeFile = name => typeof name === 'string' && name.length < 400 && !name.includes('\\') && !name.includes(':') && !name.startsWith('/') && !name.split('/').some(part => !part || part === '.' || part === '..');
-const modelId = id => typeof id === 'string' && /^(?:whisper\/[a-z0-9.-]+|piper\/vits-piper-[\w.-]+)$/.test(id);
+const modelId = id => typeof id === 'string' && /^(?:cactus\/whistle|whisper\/[a-z0-9.-]+|piper\/vits-piper-[\w.-]+)$/.test(id);
+const cactusRow = (role = 'stt') => ({ id: cactusWhistle.id, name: cactusWhistle.name, role, provider: 'local', engine: 'cactus', repo: cactusWhistle.repo, file: cactusWhistle.file, bytes: cactusWhistle.bytes, description: cactusWhistle.description });
 export function validateSpeechSelection(value) {
     if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !['provider', 'id', 'voice'].includes(key)) || !['local', 'openrouter'].includes(value.provider) || typeof value.id !== 'string' || value.id.length > 200 || !value.id.trim() || typeof (value.voice ?? '') !== 'string' || (value.voice ?? '').length > 200)
         throw Error('Invalid speech model selection.');
@@ -19,7 +25,7 @@ export function validateSpeechSelection(value) {
     return { provider: value.provider, id: value.id, voice: value.voice ?? '' };
 }
 export function speechMemoryRequired(bytes) { return Math.ceil(bytes * 2 + 256 * 1024 ** 2); }
-export function createSpeechModels(directory, { run, legacyStatus, legacyInstall, legacyTranscribe, systemSpeak, pcmWave, legacyCancel = () => { }, getKey = async () => process.env.OPENROUTER_API_KEY, fetcher = fetch, availableMemory = () => Math.min(os.freemem(), process.availableMemory?.() ?? Infinity), platform = process.platform, arch = process.arch } = {}) {
+export function createSpeechModels(directory, { run, legacyStatus, legacyInstall, legacyTranscribe, cactusStatus = async () => ({ ready: false, runtimeReady: false, phase: 'idle', bytes: 0, error: null }), cactusInstall, cactusTranscribe, cactusCancel = () => { }, systemSpeak, pcmWave, legacyCancel = () => { }, getKey = async () => process.env.OPENROUTER_API_KEY, fetcher = fetch, availableMemory = () => Math.min(os.freemem(), process.availableMemory?.() ?? Infinity), platform = process.platform, arch = process.arch } = {}) {
     const root = path.join(directory, 'local-voice'), settingsFile = path.join(root, 'selection.json'), registryFile = path.join(root, 'models.json'), runtime = path.join(root, 'sherpa-' + sherpaVersion);
     let selection = structuredClone(defaults), installed = [], job, preview, active = 0, saveQueue = Promise.resolve();
     const caches = new Map(), lifetime = new AbortController();
@@ -68,7 +74,8 @@ export function createSpeechModels(directory, { run, legacyStatus, legacyInstall
     } }
     async function hf(repo) { return cached('hf:' + repo, () => json('https://huggingface.co/api/models/' + repo + '?blobs=true')); }
     async function isInstalled(row) { if (row.id === 'windows')
-        return platform === 'win32'; if (row.id === 'whisper/base')
+        return platform === 'win32'; if (row.id === cactusWhistle.id)
+        return (await cactusStatus()).ready; if (row.id === 'whisper/base')
         return (await legacyStatus()).ready; const stored = installed.find(item => item.id === row.id); if (!stored)
         return false; try {
         return (await fs.stat(path.join(modelDirectory(row.id), stored.file))).size === stored.bytes;
@@ -85,7 +92,7 @@ export function createSpeechModels(directory, { run, legacyStatus, legacyInstall
             throw Error('Choose a speech model source.');
         let rows;
         if (source === 'installed')
-            rows = role === 'stt' ? [{ id: 'whisper/base', name: 'Whisper Base · Multilingual', role, provider: 'local', engine: 'whisper', bytes: 147951465 }, ...installed.filter(row => row.role === role && row.id !== 'whisper/base')] : [{ id: 'windows', name: 'Windows installed voices', role, provider: 'local', engine: 'windows', bytes: 0, voices: (await systemVoices()).map(row => row.name) }, ...installed.filter(row => row.role === role)];
+            rows = role === 'stt' ? [cactusRow(role), { id: 'whisper/base', name: 'Whisper Base · Multilingual', role, provider: 'local', engine: 'whisper', bytes: 147951465 }, ...installed.filter(row => row.role === role && row.id !== 'whisper/base' && row.id !== cactusWhistle.id)] : [{ id: 'windows', name: 'Windows installed voices', role, provider: 'local', engine: 'windows', bytes: 0, voices: (await systemVoices()).map(row => row.name) }, ...installed.filter(row => row.role === role)];
         else if (source === 'openrouter')
             rows = await cached('or:' + role, async () => {
                 const body = await json('https://openrouter.ai/api/v1/models?output_modalities=' + (role === 'stt' ? 'transcription' : 'speech'));
@@ -95,7 +102,7 @@ export function createSpeechModels(directory, { run, legacyStatus, legacyInstall
             });
         else if (role === 'stt') {
             const info = await hf(whisperRepo);
-            rows = (info.siblings ?? []).filter(file => /^ggml-(?:tiny|base|small|medium|large-v[123](?:-turbo)?)(?:\.en)?(?:-q[458]_[01])?\.bin$/.test(file.rfilename) && file.lfs?.sha256 && Number.isSafeInteger(file.size)).map(file => ({ id: 'whisper/' + file.rfilename.slice(5, -4), name: 'Whisper ' + file.rfilename.slice(5, -4), role, provider: 'local', engine: 'whisper', repo: whisperRepo, file: file.rfilename, bytes: file.size, description: file.rfilename.includes('.en') ? 'English only' : 'Multilingual' }));
+            rows = [cactusRow(role), ...(info.siblings ?? []).filter(file => /^ggml-(?:tiny|base|small|medium|large-v[123](?:-turbo)?)(?:\.en)?(?:-q[458]_[01])?\.bin$/.test(file.rfilename) && file.lfs?.sha256 && Number.isSafeInteger(file.size)).map(file => ({ id: 'whisper/' + file.rfilename.slice(5, -4), name: 'Whisper ' + file.rfilename.slice(5, -4), role, provider: 'local', engine: 'whisper', repo: whisperRepo, file: file.rfilename, bytes: file.size, description: file.rfilename.includes('.en') ? 'English only' : 'Multilingual' }))];
         }
         else {
             const list = await cached('piper-list', () => json('https://huggingface.co/api/models?author=csukuangfj&search=vits-piper-&limit=1000'));
@@ -115,6 +122,10 @@ export function createSpeechModels(directory, { run, legacyStatus, legacyInstall
     }
     async function details(role, id, provider = 'local') {
         const row = await resolve(role, id, provider);
+        if (row.id === cactusWhistle.id) {
+            const cactus = await cactusStatus(), runtimeBytes = cactus.runtimeReady ? 0 : cactusWhistle.runtimeBytes;
+            return { ...row, ...cactusWhistle, installed: cactus.ready, runtimeBytes, downloadBytes: runtimeBytes + cactusWhistle.bytes, requiredMemory: speechMemoryRequired(cactusWhistle.bytes), url: 'https://huggingface.co/' + cactusWhistle.repo };
+        }
         if (row.provider === 'openrouter' || row.id === 'windows' || row.installed)
             return row;
         const repo = row.repo ?? (row.engine === 'whisper' ? whisperRepo : 'csukuangfj/' + id.slice(6)), info = await hf(repo);
@@ -201,6 +212,23 @@ export function createSpeechModels(directory, { run, legacyStatus, legacyInstall
         current.promise = (async () => {
             const temp = await fs.mkdtemp(path.join(root, 'model-'));
             try {
+                if (id === cactusWhistle.id) {
+                    if (typeof cactusInstall !== 'function')
+                        throw Error('Cactus speech setup is unavailable.');
+                    await cactusInstall(false);
+                    let state = await cactusStatus();
+                    while (state.phase === 'downloading') {
+                        signal.throwIfAborted();
+                        await new Promise(resolve => setTimeout(resolve, 200));
+                        state = await cactusStatus();
+                        current.bytes = state.bytes;
+                    }
+                    if (!state.ready)
+                        throw Error(state.error || 'Whistle setup did not finish.');
+                    await select(role, { provider: 'local', id });
+                    current.phase = 'ready';
+                    return;
+                }
                 if (id === 'whisper/base') {
                     await legacyInstall(false);
                     let state = await legacyStatus();
@@ -269,7 +297,7 @@ export function createSpeechModels(directory, { run, legacyStatus, legacyInstall
         })();
         return status();
     }
-    async function status() { await ready; const legacy = await legacyStatus(), stt = await resolve('stt', selection.stt.id, selection.stt.provider).catch(() => null), tts = await resolve('tts', selection.tts.id, selection.tts.provider).catch(() => null); return { selection: structuredClone(selection), stt: stt ? { ...stt, ready: stt.provider === 'openrouter' ? !!await getKey('openrouter') : await isInstalled(stt) } : null, tts: tts ? { ...tts, ready: tts.provider === 'openrouter' ? !!await getKey('openrouter') : await isInstalled(tts) } : null, connected: !!await getKey('openrouter'), job: job ? { phase: job.phase, bytes: job.bytes, total: job.total, id: job.id, error: job.error } : null, ready: selection.stt.provider === 'local' && selection.stt.id === 'whisper/base' ? legacy.ready : !!stt && (stt.provider === 'openrouter' ? !!await getKey('openrouter') : await isInstalled(stt)) }; }
+    async function status() { await ready; const legacy = await legacyStatus(), cactus = await cactusStatus(), stt = await resolve('stt', selection.stt.id, selection.stt.provider).catch(() => null), tts = await resolve('tts', selection.tts.id, selection.tts.provider).catch(() => null); return { selection: structuredClone(selection), stt: stt ? { ...stt, ready: stt.provider === 'openrouter' ? !!await getKey('openrouter') : await isInstalled(stt) } : null, tts: tts ? { ...tts, ready: tts.provider === 'openrouter' ? !!await getKey('openrouter') : await isInstalled(tts) } : null, connected: !!await getKey('openrouter'), job: job ? { phase: job.phase, bytes: job.bytes, total: job.total, id: job.id, error: job.error } : null, ready: selection.stt.provider === 'local' && selection.stt.id === cactusWhistle.id ? cactus.ready : selection.stt.provider === 'local' && selection.stt.id === 'whisper/base' ? legacy.ready : !!stt && (stt.provider === 'openrouter' ? !!await getKey('openrouter') : await isInstalled(stt)) }; }
     async function select(role, value) { roleCheck(role); await ready; const chosen = validateSpeechSelection(value); if (active)
         throw Error('Finish speech processing before switching speech models.'); const row = await resolve(role, chosen.id, chosen.provider); if (row.provider === 'openrouter') {
         if (!await getKey('openrouter'))
@@ -303,6 +331,11 @@ export function createSpeechModels(directory, { run, legacyStatus, legacyInstall
             return body.text;
         }
         memoryCheck(row);
+        if (row.engine === 'cactus') {
+            if (typeof cactusTranscribe !== 'function')
+                throw Error('Cactus speech is unavailable.');
+            return await cactusTranscribe(pcm, { signal, hotwords });
+        }
         return await legacyTranscribe(pcm, { signal, hotwords, model: row.id === 'whisper/base' ? undefined : path.join(modelDirectory(row.id), (installed.find(item => item.id === row.id)).file) });
     }
     finally {
@@ -362,6 +395,7 @@ export function createSpeechModels(directory, { run, legacyStatus, legacyInstall
         } if (action === 'cancel') {
             job?.controller.abort();
             legacyCancel();
+            cactusCancel();
             return status();
         } if (action === 'cancelPreview') {
             preview?.abort();

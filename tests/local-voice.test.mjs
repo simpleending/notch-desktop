@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createLocalVoice, pcmWave, wavePcm } from '../src/local-voice.mjs';
+import { createLocalVoice, pcmWave, wavePcm, parseNeedleTranscript } from '../src/local-voice.mjs';
 import { createLocalLiveVoice } from '../src/local-live-voice.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -30,6 +30,14 @@ test('local dictation flushes once, rejects malformed frames and cancels without
   const cancelled = await voice.startRecognition(event => events.push(event), {});
   voice.sendRecognition(cancelled, Buffer.alloc(6400)); await voice.stopRecognition(cancelled, false);
   assert.deepEqual(calls, [6400]); await voice.shutdown();
+});
+
+test('Needle transcription reads JSON text, audio_text, or plain stdout and rejects oversized payloads', () => {
+  assert.equal(parseNeedleTranscript('{"text":"turn off the kitchen lights","language":"en"}'), 'turn off the kitchen lights');
+  assert.equal(parseNeedleTranscript('log\n{"audio_text":"hello","confidence":0.9}\n'), 'hello');
+  assert.equal(parseNeedleTranscript('plain transcript'), 'plain transcript');
+  assert.equal(parseNeedleTranscript('{"text":""}'), '');
+  assert.throws(() => parseNeedleTranscript('{"text":"' + 'a'.repeat(200001) + '"}'), /Invalid transcription/);
 });
 
 test('PCM parser checks format and bounds, including extra RIFF metadata', () => {

@@ -56,7 +56,7 @@ try{
    const consent=page.getByRole('checkbox');if(await consent.count()){await consent.check();await page.getByRole('button',{name:'View experimental features',exact:true}).click();await capture('settings/Experiments expanded');}
   }
  }
- assert.match(screens['settings/Voice'],/Install local voice|Whisper is ready/);
+ assert.match(screens['settings/Voice'],/Speech models|Cactus Whistle|Whisper/);
  assert.doesNotMatch(screens['settings/Keyboard shortcuts'],/Send feedback/);
  assert.equal((await page.evaluate(()=>window.notchDesktop.getRemoteSshAvailability())).supported,true);
  assert.match(screens['settings/General'],/automatic diagnostic uploads are disabled/);

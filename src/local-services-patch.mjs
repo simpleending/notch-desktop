@@ -23,8 +23,19 @@ export function patchLocalServicesRenderer(source) {
     for (const [method, implementation] of Object.entries(methods)) source = patchClassMethod(source, name, method, body(implementation));
   }
   if(source.includes('class VoiceInputService')||source.includes('VoiceInputService=class'))source=patchClassMethod(source,'VoiceInputService','start',text=>{
-    if(text.includes('notch:choose-voice'))return text;
-    return replaceAnchor(text,'try{if(await this.client.prepareVoiceInput(),i1!==this.operation)return;','try{const notchSpeech=await window.notchModels.voice();if(i1!==this.operation)return;if(!notchSpeech.ready){await this.stop(e1,false);window.dispatchEvent(new CustomEvent("notch:choose-voice",{detail:{role:"stt"}}));return;}if(await this.client.prepareVoiceInput(),i1!==this.operation)return;');
+    if(text.includes('autoInstall:true'))return text;
+    if(text.includes('notch:choose-voice'))return text.replace('detail:{role:"stt"}','detail:{role:"stt",autoInstall:true}');
+    return replaceAnchor(text,'try{if(await this.client.prepareVoiceInput(),i1!==this.operation)return;','try{const notchSpeech=await window.notchModels.voice();if(i1!==this.operation)return;if(!notchSpeech.ready){await this.stop(e1,false);window.dispatchEvent(new CustomEvent("notch:choose-voice",{detail:{role:"stt",autoInstall:true}}));return;}if(await this.client.prepareVoiceInput(),i1!==this.operation)return;');
+  });
+  if (source.includes('function ComposerVoiceTool(')) source = patchFunction(source, 'ComposerVoiceTool', text => {
+    if (text.includes('notch-composer-speech-download')) return text;
+    if (!text.includes('const p1=o1(c1?"composer.voice.stop":"composer.voice.start");')) throw Error('Composer microphone control changed.');
+    const next = text
+      .replace('const p1=o1(c1?"composer.voice.stop":"composer.voice.start");', 'const[notchSpeech,setNotchSpeech]=reactExports.useState(null);reactExports.useEffect(()=>{let live=true;const update=()=>window.notchModels?.voice?.().then(value=>{if(live)setNotchSpeech(value);}).catch(()=>{});update();const timer=setInterval(update,1000);return()=>{live=false;clearInterval(timer);};},[]);const notchDownloading=notchSpeech?.job?.phase==="downloading",notchNeedsDownload=!!notchSpeech&&!notchSpeech.ready;const p1=notchDownloading?"Downloading speech model":notchNeedsDownload?"Download speech model":o1(c1?"composer.voice.stop":"composer.voice.start");')
+      .replace('icon:c1?jsxRuntimeExports.jsx(notchStopMiniFill,{className:"size-4 text-error","aria-hidden":!0}):jsxRuntimeExports.jsx(notchMic2Line,{className:"size-4","aria-hidden":!0})', 'icon:c1?jsxRuntimeExports.jsx(notchStopMiniFill,{className:"size-4 text-error","aria-hidden":!0}):notchNeedsDownload?jsxRuntimeExports.jsxs("svg",{className:"size-4","aria-hidden":!0,viewBox:"0 0 24 24",fill:"none",stroke:"currentColor",strokeWidth:1.7,strokeLinecap:"round",strokeLinejoin:"round",children:[jsxRuntimeExports.jsx("path",{d:"M12 3v12m-4-4 4 4 4-4"}),jsxRuntimeExports.jsx("path",{d:"M5 17v4h14v-4"})]}):jsxRuntimeExports.jsx(notchMic2Line,{className:"size-4","aria-hidden":!0})')
+      .replace('className:cn$7("shrink-0",c1?"!bg-error-bg hover:!bg-error-bg-hover active:!bg-error-bg":"text-text-secondary"),"aria-label":p1,"aria-pressed":c1,disabled:n1||u1', 'className:cn$7("shrink-0 notch-composer-speech-control",c1?"!bg-error-bg hover:!bg-error-bg-hover active:!bg-error-bg":notchNeedsDownload?"notch-composer-speech-download":"text-text-secondary"),"aria-label":p1,"aria-pressed":c1,"aria-busy":!!notchDownloading,disabled:n1||u1||notchDownloading');
+    if (!next.includes('notch-composer-speech-download')) throw Error('Composer microphone control changed.');
+    return next;
   });
   if(source.includes('class ChatSessionService')||source.includes('ChatSessionService=class'))source=patchClassMethod(source,'ChatSessionService','upsertLiveVoiceTranscript',text=>text.replace('if(this.sessionIdValue.get()!==e1||this.summaryValue.get()?.conversationMode!=="voice")','if(this.sessionIdValue.get()!==e1)'));
   if (source.includes('function ChatComposer(')) source = patchFunction(source, 'ChatComposer', text => text

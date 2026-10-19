@@ -25,11 +25,11 @@ try{
  page=await app.firstWindow();await page.locator('.notch-welcome').waitFor();
  await page.evaluate(()=>{window.notchDesktop.onVoiceRecognitionEvent(event=>{window.__dictationEvents??=[];window.__dictationEvents.push(event)})});
  await page.getByRole('button',{name:'Open user menu',exact:true}).first().click();await page.getByRole('menuitem',{name:'Settings',exact:true}).click();
- await page.getByRole('navigation',{name:'Settings',exact:true}).getByRole('button',{name:'Voice',exact:true}).click();await page.getByText('Whisper is ready',{exact:true}).waitFor();
+ await page.getByRole('navigation',{name:'Settings',exact:true}).getByRole('button',{name:'Voice',exact:true}).click();await page.getByText(/Cactus Whistle|Whisper Base|Speech models/).waitFor();
  await page.getByRole('switch',{name:'Enable voice input',exact:true}).check();await page.getByRole('button',{name:'Back to app',exact:true}).click();
  await page.getByRole('button',{name:'Start voice input',exact:true}).click();await page.getByRole('button',{name:'Stop voice input',exact:true}).waitFor();await page.waitForTimeout(5000);await page.getByRole('button',{name:'Stop voice input',exact:true}).click();
  const composer=page.locator('[contenteditable=true][role=textbox]').first();await until(async()=>/local voice.*ready/i.test(await composer.innerText()),'real local dictation transcript');
- checks.push('real renderer microphone capture, PCM streaming, Whisper transcription and composer insertion');
+ checks.push('real renderer microphone capture, PCM streaming, local transcription and composer insertion');
  await composer.fill('');await page.getByRole('button',{name:'Open project',exact:true}).click();await app.evaluate(({dialog},root)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[root]})},workspace);
  await page.getByText('Click to add a readable and editable folder',{exact:true}).click();await page.getByRole('dialog').getByRole('textbox').fill('Local voice test');await page.getByRole('button',{name:'Create',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
  await page.getByRole('button',{name:'Model',exact:true}).click();

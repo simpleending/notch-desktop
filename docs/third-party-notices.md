@@ -22,4 +22,4 @@ Experimental model setup downloads the unmodified [Colibri 2.0.0 release](https:
 
 ## Optional local voice runtime
 
-Local voice setup downloads [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) and the [converted OpenAI Whisper base model](https://huggingface.co/ggerganov/whisper.cpp) (MIT). Binaries and weights are not bundled in the installer. Setup pins the release/model revision and verifies SHA-256 checksums. Windows speech output uses the operating system's installed System.Speech/SAPI voices.
+Local voice setup downloads the [Needle Windows x64 engine](https://huggingface.co/Cactus-Compute/needle3) and [Cactus Whistle](https://huggingface.co/Cactus-Compute/whistle) (`whistle.cact`), both Apache-2.0, as the default dictation model. Optional [whisper.cpp](https://github.com/ggml-org/whisper.cpp) (MIT) and the [converted OpenAI Whisper base model](https://huggingface.co/ggerganov/whisper.cpp) (MIT) remain available. Binaries and weights are not bundled in the installer. Setup pins the engine/model revision and verifies SHA-256 checksums. Windows speech output uses the operating system's installed System.Speech/SAPI voices.
