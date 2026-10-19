@@ -39,7 +39,12 @@ export class NotchQuery {
     this.task = this.consume(request.prompt).catch(error => { this.emitResult(error); }).finally(() => this.finish());
   }
   envelope(type, body = {}, uuid = randomUUID()) { return { type, uuid, session_id: this.id, ...body }; }
-  emit(value) { if (this.closed) return; const waiter = this.waiters.shift(); if (waiter) waiter({ value, done: false }); else this.events.push(value); }
+  emit(value) {
+    if (this.closed) return;
+    if (this.observers) for (const listener of this.observers) { try { listener(value); } catch { /* A phone observer cannot stop the task. */ } }
+    const waiter = this.waiters.shift(); if (waiter) waiter({ value, done: false }); else this.events.push(value);
+  }
+  subscribe(listener) { if (this.closed || typeof listener !== 'function') return () => {}; (this.observers ??= new Set()).add(listener); return () => this.observers?.delete(listener); }
   finish() { this.ended = true; for (const resolve of this.waiters.splice(0)) resolve({ value: undefined, done: true }); }
   async next() {
     if (this.events.length) return { value: this.events.shift(), done: false };

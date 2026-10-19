@@ -1,0 +1,7 @@
+{
+  "name": "notch-vendored-qrcode",
+  "private": true,
+  "version": "1.5.4",
+  "type": "commonjs",
+  "license": "MIT"
+}

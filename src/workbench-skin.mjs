@@ -1,4 +1,5 @@
 import { createWebSettings } from './web-settings-view.mjs';
+import { createPhoneSettings } from './phone-settings-view.mjs';
 import { createUpdateSettings } from './update-settings-view.mjs';
 import { createVoiceModels } from './voice-model-picker.mjs';
 const darkWordmark = new URL('./notch-wordmark-dark.svg', import.meta.url).href;
@@ -6,6 +7,7 @@ const lightWordmark = new URL('./notch-wordmark-light.svg', import.meta.url).hre
 export function createNotchWorkbench(React, useTheme, primitives = {}) {
   const h = React.createElement;
   const WebSettings = createWebSettings(React);
+  const PhoneSettings = createPhoneSettings(React);
   const UpdateSettings = createUpdateSettings(React);
   const { Settings: VoiceModels, Host: VoicePickerHost } = createVoiceModels(React, primitives);
   function Wordmark({ width = 100, className = '' } = {}) {
@@ -73,10 +75,11 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
         ...options.map(([value, label]) => h('option', { key: value, value }, label))));
     return h('section', { className: 'notch-appearance', 'aria-labelledby': 'notch-appearance-title' },
       h('h2', { id: 'notch-appearance-title' }, 'Appearance'),
-      h('p', { className: 'notch-appearance-copy' }, 'Adjust task behavior, web research and reading preferences.'),
+      h('p', { className: 'notch-appearance-copy' }, 'Adjust phone access, task behavior, web research and reading preferences.'),
       h('label', { className: 'notch-setting-row' }, h('span', null, h('strong',null,'Task workspace'), h('small',null,'Project folder is the default; writable tasks take turns. Isolated worktrees allow parallel OpenRouter tasks. Changes apply to new turns; unfinished isolated files stay saved.')),
         h('select', { 'aria-label':'Task workspace', value:workspace, disabled:savingWorkspace, onChange:event=>changeWorkspace(event.target.value) }, h('option',{value:'shared'},'Project folder'),h('option',{value:'isolated'},'Isolated worktrees'))),
       workspaceError ? h('p',{role:'alert'},workspaceError) : null,
+      h(PhoneSettings),
       h(UpdateSettings),
       h(WebSettings),
       h('fieldset', { className: 'notch-appearance-modes' }, h('legend', null, 'Appearance'),

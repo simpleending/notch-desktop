@@ -11,6 +11,7 @@ import { createStartupDiscovery } from './startup-discovery.mjs';
 import { createLocalVoice } from './local-voice.mjs';
 import { createLocalLiveVoice } from './local-live-voice.mjs';
 import { createAppUpdater } from './app-updater.mjs';
+import { createPhoneCompanion } from './phone-companion.mjs';
 import { createRequire } from 'node:module';
 import { managedOllama } from '../vendor/notch-core/desktop-harness.js';
 app.setName('notch');
@@ -33,11 +34,14 @@ app.whenReady().then(() => {
   globalThis.__notchHost.modelManager = createModelManager(app.getPath('userData'), { safeStorage });
   globalThis.__notchHost.webResearch = createWebResearch(app.getPath('userData'), { safeStorage, signal: globalThis.__notchDiscovery.signal });
   registerModelIpc(ipcMain,globalThis.__notchHost);
+  void globalThis.__notchHost.phone.start();
 });
 app.on('browser-window-created',(_event,window)=>{
   for(const event of ['query-session-end','session-end'])window.on(event,()=>globalThis.__notchHost.updates?.deferForShutdown());
 });
 app.on('will-quit',()=>globalThis.__notchHost.updates?.close());
+app.on('will-quit', () => { void globalThis.__notchHost.phone?.close(); });
+globalThis.__notchHost.phone = createPhoneCompanion(app.getPath('userData'), { host: globalThis.__notchHost, safeStorage });
 globalThis.__notchHost.listModels().catch(() => {});
 try { await import('../../out/main/index.js'); }
 catch (error) {

@@ -21,6 +21,7 @@ Windows releases check GitHub for new stable versions after opening, download up
 - **Stay in control.** Review file changes and commands before approving them, or choose the access level that suits your project.
 - **Use your project folder.** Tasks edit your open folder by default, and writable tasks take turns across notch chats and CLI processes. In **Settings → Appearance → Task workspace**, choose **Isolated worktrees** if you want parallel OpenRouter tasks with private project copies. Safe isolated changes return automatically; conflicts stay separate. Waiting tasks remain cancellable.
 - **Pick up where you left off.** Reopen saved conversations and keep working as longer chats are summarized.
+- **Use your phone.** In **Settings → Appearance → Phone**, turn on a private page from this computer. Pair the phone and add it to the home screen. The model and the project stay here.
 - **Review and undo changes.** Restore a selected agent turn and its later tracked file changes, even after restarting. Undo previews protect later manual edits and never change files themselves.
 - **Use the memory you have.** notch adjusts conversation size to your available memory. You can choose a limit yourself when you need more room.
 - **Work your way.** Choose dark or light mode, adjust the text, and search your project’s files.
@@ -46,6 +47,14 @@ Known URLs can be read without a search key. JavaScript pages use an installed C
 
 See [web research details](docs/web-research.md) for setup and browser limitations.
 
+## Phone
+
+notch can serve a private page from this computer so a phone on the same Wi-Fi can continue the open project. Turn it on in **Settings → Appearance → Phone**, then scan the pairing code or type it on the phone. Add the page to your home screen from the browser menu. There is no app store install and no notch account.
+
+The phone can send a prompt, read the reply, and approve or deny a change or command. It can also approve or stop the task already running on the computer. The model and the files stay on this computer. This phone asks before it changes files or runs a command, including when the computer is set to auto-approve.
+
+Away from that Wi-Fi, choose an address you already host (Tailscale, Caddy, or your own tunnel) or start ngrok or a Cloudflare tunnel with a token you provide. Those keys stay on this computer and use system encryption when it is available. notch does not run a hosted remote-control service. Windows may ask to allow notch on private networks the first time phone access is turned on.
+
 ## Start a project
 
 1. Download the Windows installer from the [latest release](https://github.com/simpleending/notch-desktop/releases/latest), then open **notch** from your Start menu.
@@ -63,7 +72,7 @@ Voice input, recording notes, and Live Voice default to local speech. The first 
 
 SSH uses your system OpenSSH client and SSH configuration, keys, and normal host authentication. Add a host under **Settings → Connections**, then open a remote project. The model and task history stay on this device; file operations, Git, and commands run on the POSIX remote host. No Notch account or proprietary remote runtime is needed. Remote tasks share their remote workspace; the local worktree-isolation preference does not create remote worktrees.
 
-The local edition retires the account marketplace, hosted collaboration/remote control, and proprietary managed SSH runtime. Local automations, model management, voice, SSH, and custom MCP configuration remain available. See the [local service audit](docs/local-only-audit.md) for setup, limits, and verification commands.
+The local edition retires the account marketplace, hosted collaboration, hosted remote control, and the proprietary managed SSH runtime. Phone access is an optional page served by this computer. Local automations, model management, voice, SSH, and custom MCP configuration remain available. See the [local service audit](docs/local-only-audit.md) for setup, limits, and verification commands.
 
 Undo covers built-in file edits and changes returned from an isolated OpenRouter task, including terminal-created files. Commands in the shared project folder and external tools can still make changes outside that history. Keep projects in version control. The Windows installer is unsigned; see the [download notes](docs/windows-preview.md).
 

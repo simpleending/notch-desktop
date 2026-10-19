@@ -166,6 +166,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     async journal(id, event) { await fs.mkdir(sessions, { recursive: true }); await fs.appendFile(`${sessionFile(sessions, id)}.actions`, JSON.stringify({ at: new Date().toISOString(), ...event }) + '\n', { mode: 0o600 }); },
     async hasSession(id) { try { await fs.access(sessionFile(sessions, id)); return true; } catch { return false; } },
     query(request) {
+      if (host.phone) request = host.phone.prepare(request);
       const model = host.resolveModelChoice(request.model);
       const id = request.resumeSessionId || request.sessionId;
       const current = queries.get(id);
@@ -191,10 +192,11 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
         },
       });
       queries.set(query.id, query);
+      host.phone?.attach(query, request);
       void query.task.finally(() => { if (queries.get(query.id) === query) queries.delete(query.id); });
       return query;
     },
-    async prepare(request) { let attached = false; return { attach(prompt) { if (attached) throw new Error('Prepared session already attached.'); attached = true; return host.query({ ...request, prompt }); }, async close() { attached = true; } }; },
+    async prepare(request) { host.phone?.note(request); let attached = false; return { attach(prompt) { if (attached) throw new Error('Prepared session already attached.'); attached = true; return host.query({ ...request, prompt }); }, async close() { attached = true; } }; },
   };
   return host;
 }
