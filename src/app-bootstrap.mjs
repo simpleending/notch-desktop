@@ -1,4 +1,4 @@
-import { app, session, ipcMain, safeStorage } from 'electron';
+import { app, session, ipcMain, safeStorage, shell, dialog } from 'electron';
 import path from 'node:path';
 import { writeFileSync, existsSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
@@ -12,6 +12,7 @@ import { createLocalVoice } from './local-voice.mjs';
 import { createLocalLiveVoice } from './local-live-voice.mjs';
 import { createAppUpdater } from './app-updater.mjs';
 import { createPhoneCompanion } from './phone-companion.mjs';
+import { createGitHubAuth } from './github-auth.mjs';
 import { createRequire } from 'node:module';
 import { managedOllama } from '../vendor/notch-core/desktop-harness.js';
 app.setName('notch');
@@ -33,6 +34,13 @@ app.whenReady().then(() => {
   globalThis.__notchHost.updates=createAppUpdater({app,updater:autoUpdater,directory:app.getPath('userData'),profileOverride:!!requestedProfile});
   globalThis.__notchHost.modelManager = createModelManager(app.getPath('userData'), { safeStorage });
   globalThis.__notchHost.webResearch = createWebResearch(app.getPath('userData'), { safeStorage, signal: globalThis.__notchDiscovery.signal });
+  globalThis.__notchHost.github = createGitHubAuth({
+    openExternal: url => shell.openExternal(url),
+    pickDirectory: async () => {
+      const result = await dialog.showOpenDialog({ title: 'Choose a folder for the clone', properties: ['openDirectory', 'createDirectory'] });
+      return result.canceled ? null : result.filePaths[0];
+    },
+  });
   registerModelIpc(ipcMain,globalThis.__notchHost);
   void globalThis.__notchHost.phone.start();
 });

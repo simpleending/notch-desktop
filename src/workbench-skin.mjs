@@ -1,6 +1,7 @@
 import { createWebSettings } from './web-settings-view.mjs';
 import { createPhoneSettings } from './phone-settings-view.mjs';
 import { createUpdateSettings } from './update-settings-view.mjs';
+import { createGitHubSettings } from './github-settings-view.mjs';
 import { createVoiceModels } from './voice-model-picker.mjs';
 const darkWordmark = new URL('./notch-wordmark-dark.svg', import.meta.url).href;
 const lightWordmark = new URL('./notch-wordmark-light.svg', import.meta.url).href;
@@ -9,6 +10,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
   const WebSettings = createWebSettings(React);
   const PhoneSettings = createPhoneSettings(React);
   const UpdateSettings = createUpdateSettings(React);
+  const GitHubSettings = createGitHubSettings(React);
   const { Settings: VoiceModels, Host: VoicePickerHost } = createVoiceModels(React, primitives);
   function Wordmark({ width = 100, className = '' } = {}) {
     const { resolvedTheme } = useTheme();
@@ -80,6 +82,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
         h('select', { 'aria-label':'Task workspace', value:workspace, disabled:savingWorkspace, onChange:event=>changeWorkspace(event.target.value) }, h('option',{value:'shared'},'Project folder'),h('option',{value:'isolated'},'Isolated worktrees'))),
       workspaceError ? h('p',{role:'alert'},workspaceError) : null,
       h(PhoneSettings),
+      h(GitHubSettings),
       h(UpdateSettings),
       h(WebSettings),
       h('fieldset', { className: 'notch-appearance-modes' }, h('legend', null, 'Appearance'),

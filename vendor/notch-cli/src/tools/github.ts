@@ -7,17 +7,48 @@
  * Copyright 2026 Driftrail. Apache-2.0.
  */
 
+import { execFile } from 'node:child_process';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { z } from 'zod';
 import type { NotchTool, ToolResult, ToolContext } from './types.js';
 
 const GITHUB_API = 'https://api.github.com';
 
-function getToken(): string | null {
-  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
+async function gitHubExecutable(): Promise<string | null> {
+  const name = process.platform === 'win32' ? 'gh.exe' : 'gh';
+  const candidates: string[] = [];
+  if (process.platform === 'win32') {
+    for (const root of [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA]) {
+      if (root) candidates.push(path.join(root, 'GitHub CLI', name));
+    }
+  }
+  candidates.push(name);
+  for (const file of candidates) {
+    if (path.basename(file).toLowerCase() !== name) continue;
+    if (file === name) return file;
+    try { await fs.access(file); return file; } catch { /* Try the next install location. */ }
+  }
+  return null;
+}
+
+async function getToken(): Promise<string | null> {
+  if (process.env.GITHUB_TOKEN || process.env.GH_TOKEN) return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
+  const executable = await gitHubExecutable();
+  if (!executable) return null;
+  try {
+    const token = await new Promise<string>((resolve, reject) => {
+      const env = { ...process.env };
+      delete env.GH_TOKEN; delete env.GITHUB_TOKEN; delete env.GH_ENTERPRISE_TOKEN; delete env.GITHUB_ENTERPRISE_TOKEN;
+      execFile(executable, ['auth', 'token', '--hostname', 'github.com'], { windowsHide: true, timeout: 15_000, env }, (error, stdout) => error ? reject(error) : resolve(String(stdout).trim()));
+    });
+    if (/^[\w.-]+$/.test(token) && token.length >= 8 && token.length <= 300) return token;
+  } catch { /* The GitHub CLI is not signed in. */ }
+  return null;
 }
 
 async function ghFetch(path: string, opts: RequestInit = {}): Promise<Response> {
-  const token = getToken();
+  const token = await getToken();
   const headers: Record<string, string> = {
     'Accept': 'application/vnd.github+json',
     'X-GitHub-Api-Version': '2026-03-10',
@@ -55,10 +86,10 @@ async function execute(
   args: z.infer<typeof parameters>,
   _ctx: ToolContext,
 ): Promise<ToolResult> {
-  const token = getToken();
+  const token = await getToken();
   if (!token) {
     return {
-      content: 'No GitHub token found. Set GITHUB_TOKEN or GH_TOKEN environment variable.\nYou can create a token at https://github.com/settings/tokens',
+      content: 'GitHub is not signed in. Open Settings and choose Sign in with GitHub, or run `notch github login`. You can also set GITHUB_TOKEN.',
       isError: true,
     };
   }
@@ -194,7 +225,7 @@ async function execute(
 
 export const githubTool: NotchTool<typeof parameters> = {
   name: 'github',
-  description: 'GitHub operations for pull requests, issues, and repository info. Local commit and push uses the git tool operation commit_and_push. Requires GITHUB_TOKEN or GH_TOKEN. Uses GitHub REST API version 2026-03-10.',
+  description: 'GitHub operations for pull requests, issues, and repository info. Local commit and push uses the git tool operation commit_and_push. Uses the GitHub CLI sign-in from Settings, or GITHUB_TOKEN. Uses GitHub REST API version 2026-03-10.',
   parameters,
   execute,
 };

@@ -4203,11 +4203,38 @@ var browserInteractTool = {
 // vendor/notch-cli/src/tools/github.ts
 import { z as z13 } from "zod";
 var GITHUB_API = "https://api.github.com";
-function getToken() {
-  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
+async function gitHubExecutable() {
+  const name = process.platform === "win32" ? "gh.exe" : "gh";
+  const candidates = [];
+  if (process.platform === "win32") {
+    for (const root of [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA]) {
+      if (root) candidates.push(path14.join(root, "GitHub CLI", name));
+    }
+  }
+  candidates.push(name);
+  for (const file of candidates) {
+    if (path14.basename(file).toLowerCase() !== name) continue;
+    if (file === name) return file;
+    try { await fs12.access(file); return file; } catch {}
+  }
+  return null;
+}
+async function getToken() {
+  if (process.env.GITHUB_TOKEN || process.env.GH_TOKEN) return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
+  const executable = await gitHubExecutable();
+  if (!executable) return null;
+  try {
+    const token = await new Promise((resolve, reject) => {
+      const env = { ...process.env };
+      delete env.GH_TOKEN; delete env.GITHUB_TOKEN; delete env.GH_ENTERPRISE_TOKEN; delete env.GITHUB_ENTERPRISE_TOKEN;
+      execFile(executable, ["auth", "token", "--hostname", "github.com"], { windowsHide: true, timeout: 15e3, env }, (error, stdout) => error ? reject(error) : resolve(String(stdout).trim()));
+    });
+    if (/^[\w.-]+$/.test(token) && token.length >= 8 && token.length <= 300) return token;
+  } catch {}
+  return null;
 }
 async function ghFetch(path26, opts = {}) {
-  const token = getToken();
+  const token = await getToken();
   const headers = {
     "Accept": "application/vnd.github+json",
     "X-GitHub-Api-Version": "2026-03-10",
@@ -4239,10 +4266,10 @@ var parameters11 = z13.object({
   pr_number: z13.number().optional().describe("PR number for status check")
 });
 async function execute(args, _ctx) {
-  const token = getToken();
+  const token = await getToken();
   if (!token) {
     return {
-      content: "No GitHub token found. Set GITHUB_TOKEN or GH_TOKEN environment variable.\nYou can create a token at https://github.com/settings/tokens",
+      content: "GitHub is not signed in. Open Settings and choose Sign in with GitHub, or run `notch github login`. You can also set GITHUB_TOKEN.",
       isError: true
     };
   }
@@ -4366,7 +4393,7 @@ async function execute(args, _ctx) {
 }
 var githubTool = {
   name: "github",
-  description: "GitHub operations for pull requests, issues, and repository info. Local commit and push uses the git tool operation commit_and_push. Requires GITHUB_TOKEN or GH_TOKEN. Uses GitHub REST API version 2026-03-10.",
+  description: "GitHub operations for pull requests, issues, and repository info. Local commit and push uses the git tool operation commit_and_push. Uses the GitHub CLI sign-in from Settings, or GITHUB_TOKEN. Uses GitHub REST API version 2026-03-10.",
   parameters: parameters11,
   execute
 };
