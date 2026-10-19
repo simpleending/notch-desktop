@@ -20,7 +20,7 @@ async function ghFetch(path: string, opts: RequestInit = {}): Promise<Response> 
   const token = getToken();
   const headers: Record<string, string> = {
     'Accept': 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2022-11-28',
+    'X-GitHub-Api-Version': '2026-03-10',
     ...(opts.headers as Record<string, string> ?? {}),
   };
   if (token) headers['Authorization'] = `Bearer ${token}`;
@@ -194,7 +194,7 @@ async function execute(
 
 export const githubTool: NotchTool<typeof parameters> = {
   name: 'github',
-  description: 'GitHub operations — create PRs, list issues, check PR status, view repo info. Requires GITHUB_TOKEN env var.',
+  description: 'GitHub operations for pull requests, issues, and repository info. Local commit and push uses the git tool operation commit_and_push. Requires GITHUB_TOKEN or GH_TOKEN. Uses GitHub REST API version 2026-03-10.',
   parameters,
   execute,
 };

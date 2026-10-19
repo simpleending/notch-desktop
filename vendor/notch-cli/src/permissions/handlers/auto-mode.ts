@@ -28,7 +28,7 @@ function hardDenyReason(toolName: string, args: Record<string, unknown>): string
     const flags = typeof args.flags === 'string' ? args.flags : '';
     const argsStr = typeof args.args === 'string' ? args.args : '';
     const combined = `${op} ${flags} ${argsStr}`.toLowerCase();
-    if (combined.includes('push') && /(-f\b|--force\b|--force-with-lease\b)/.test(combined)) {
+    if (op !== 'commit_and_push' && combined.includes('push') && /(-f\b|--force\b|--force-with-lease\b)/.test(combined)) {
       return 'force-push is never auto-approved';
     }
     if (combined.includes('reset') && combined.includes('--hard')) {
