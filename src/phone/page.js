@@ -1,12 +1,20 @@
 const root = document.documentElement;
-try {
-  const stored = localStorage.getItem('notch-phone-theme');
-  const theme = stored === 'light' || stored === 'dark' ? stored : (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
-  root.dataset.appearance = theme;
-  root.style.colorScheme = theme;
-} catch { /* Private browsing can block storage. The dark palette remains. */ }
+const themeQuery = matchMedia('(prefers-color-scheme: light)');
+function appearanceFor(mode) {
+  return mode === 'light' || mode === 'dark' ? mode : (themeQuery.matches ? 'light' : 'dark');
+}
+function readThemeMode() {
+  try {
+    const stored = localStorage.getItem('notch-phone-theme');
+    if (stored === 'light' || stored === 'dark' || stored === 'auto') return stored;
+  } catch { /* Private browsing can block storage. System appearance stays selected. */ }
+  return 'auto';
+}
+const initialTheme = readThemeMode();
+root.dataset.appearance = appearanceFor(initialTheme);
+root.style.colorScheme = root.dataset.appearance;
 
-const state = { theme: root.dataset.appearance || 'dark', token: '', hint: true, snapshot: null, offline: false, error: '', sending: false, pairing: false, draft: '', pairDraft: '', menu: false, recording: false };
+const state = { theme: initialTheme, token: '', hint: true, snapshot: null, offline: false, error: '', sending: false, pairing: false, draft: '', pairDraft: '', menu: false, recording: false, renaming: '', renameDraft: '', confirmArchive: '' };
 
 function storage(name, value) {
   try {
@@ -48,6 +56,7 @@ function icon(name) {
   if (name === 'mic') node.append(svg('path', { fill: 'currentColor', d: 'M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3zm-5.2-3a.8.8 0 0 0-1.6 0 6.8 6.8 0 0 0 6 6.75V20H9.2v1.6h5.6V20H13v-2.25a6.8 6.8 0 0 0 6-6.75.8.8 0 0 0-1.6 0 5.2 5.2 0 0 1-10.4 0z' }));
   else if (name === 'moon') node.append(svg('path', { fill: 'currentColor', d: 'M15.5 3.2a8.2 8.2 0 1 0 5.3 14.1A8.5 8.5 0 0 1 15.5 3.2z' }));
   else if (name === 'sun') node.append(svg('circle', { cx: '12', cy: '12', r: '3.2', ...stroke }), svg('path', { d: 'M12 3.2v1.8M12 19v1.8M3.2 12h1.8M19 12h1.8M5.6 5.6l1.3 1.3M17.1 17.1l1.3 1.3M18.4 5.6l-1.3 1.3M6.9 17.1l-1.3 1.3', ...stroke }));
+  else if (name === 'system') node.append(svg('path', { fill: 'currentColor', d: 'M12 6.5A5.5 5.5 0 0 0 12 17.5z' }), svg('circle', { cx: '12', cy: '12', r: '5.5', ...stroke }), svg('path', { d: 'M18.2 8.1l1.3-1.3M18.8 12h1.7M18.2 15.9l1.3 1.3', ...stroke }));
   else node.append(svg('path', { d: name === 'menu' ? 'M4 7h16M4 12h16M4 17h16' : name === 'close' ? 'M6 6l12 12M18 6L6 18' : 'M5 12h12M13 7l5 5-5 5', ...stroke }));
   return node;
 }
@@ -60,7 +69,17 @@ function fitComposer(node) {
 }
 
 function wordmarkSrc() {
-  return state.theme === 'light' ? '/assets/notch-wordmark-light.svg' : '/assets/notch-wordmark-dark.svg';
+  return appearanceFor(state.theme) === 'light' ? '/assets/notch-wordmark-light.svg' : '/assets/notch-wordmark-dark.svg';
+}
+
+function themeMeta(mode) {
+  if (mode === 'light') return { icon: 'sun', label: 'Light appearance', title: 'Switch to system appearance' };
+  if (mode === 'auto') return { icon: 'system', label: 'System appearance', title: 'Switch to dark appearance' };
+  return { icon: 'moon', label: 'Dark appearance', title: 'Switch to light appearance' };
+}
+
+function nextTheme(mode) {
+  return mode === 'dark' ? 'light' : mode === 'light' ? 'auto' : 'dark';
 }
 
 function wordmark() {
@@ -68,8 +87,8 @@ function wordmark() {
 }
 
 function themeButton() {
-  const dark = state.theme === 'dark';
-  return el('button', { class: 'icon-button theme', type: 'button', role: 'switch', 'aria-checked': dark ? 'true' : 'false', 'aria-label': dark ? 'Dark appearance' : 'Light appearance', title: dark ? 'Switch to light appearance' : 'Switch to dark appearance', onclick: () => setTheme(dark ? 'light' : 'dark') }, icon(dark ? 'moon' : 'sun'));
+  const meta = themeMeta(state.theme);
+  return el('button', { class: 'icon-button theme', type: 'button', 'aria-label': meta.label, title: meta.title, onclick: () => setTheme(nextTheme(state.theme)) }, icon(meta.icon));
 }
 
 function menuButton(snapshot, open) {
@@ -80,20 +99,27 @@ function menuButton(snapshot, open) {
 
 function setTheme(theme) {
   state.theme = theme;
-  root.dataset.appearance = theme;
-  root.style.colorScheme = theme;
-  const color = document.querySelector('meta[name="theme-color"]');
-  if (color) color.setAttribute('content', theme === 'light' ? '#f5f4f6' : '#141416');
   storage('notch-phone-theme', theme);
+  reflectTheme();
+}
+
+function reflectTheme() {
+  const appearance = appearanceFor(state.theme);
+  root.dataset.appearance = appearance;
+  root.style.colorScheme = appearance;
+  const color = document.querySelector('meta[name="theme-color"]');
+  if (color) color.setAttribute('content', appearance === 'light' ? '#f5f4f6' : '#141416');
   const mark = document.querySelector('.wordmark');
   if (mark) mark.src = wordmarkSrc();
   const button = document.querySelector('.theme');
   if (!button) return;
-  button.setAttribute('aria-checked', theme === 'dark' ? 'true' : 'false');
-  button.title = theme === 'dark' ? 'Switch to light appearance' : 'Switch to dark appearance';
-  button.setAttribute('aria-label', theme === 'dark' ? 'Dark appearance' : 'Light appearance');
-  button.replaceChildren(icon(theme === 'dark' ? 'moon' : 'sun'));
+  const meta = themeMeta(state.theme);
+  button.title = meta.title;
+  button.setAttribute('aria-label', meta.label);
+  button.replaceChildren(icon(meta.icon));
 }
+
+themeQuery.addEventListener('change', () => { if (state.theme === 'auto') reflectTheme(); });
 
 function headers(json) {
   return { 'x-notch-phone': '1', ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}), ...(json ? { 'Content-Type': 'application/json' } : {}) };
@@ -114,17 +140,16 @@ function nearBottom(node) {
 function paint() {
   const app = document.getElementById('app');
   if (!app) return;
-  const view = !state.snapshot ? 'pair' : state.menu ? 'menu' : 'chat';
+  if (!state.snapshot) state.menu = false;
+  const view = state.snapshot ? 'chat' : 'pair';
   if (app.dataset.view !== view) {
     app.dataset.view = view;
-    app.replaceChildren(view === 'chat' ? chat(state.snapshot) : view === 'menu' ? menu(state.snapshot) : pair());
+    app.replaceChildren(view === 'chat' ? chat(state.snapshot) : pair());
     const thread = document.getElementById('thread');
     if (thread) thread.scrollTop = thread.scrollHeight;
-    return;
-  }
-  if (view === 'chat') updateChat(state.snapshot);
-  else if (view === 'menu') updateMenu(state.snapshot);
+  } else if (view === 'chat') updateChat(state.snapshot);
   else updatePair();
+  syncMenu();
 }
 
 function leadText() {
@@ -181,6 +206,19 @@ async function submitPair(event) {
   }
 }
 
+function contextLine(snapshot) {
+  return [snapshot.model, snapshot.accessShort].filter(Boolean).join(' · ');
+}
+
+function emptyCopy(snapshot) {
+  if (snapshot.composer === 'computer') return 'This task is on the computer.';
+  return snapshot.project ? 'Ask a question, or describe a change.' : 'Open a folder in notch on the computer.';
+}
+
+function taskHeading(snapshot) {
+  return snapshot.taskTitle || (snapshot.project ? 'Start a task' : 'Open a folder in notch');
+}
+
 function statusLine(snapshot) {
   const offline = state.offline;
   const phase = offline ? 'offline' : snapshot.phase;
@@ -195,16 +233,16 @@ function chat(snapshot) {
     el('header', { class: 'bar' }, wordmark(), el('div', { class: 'bar-actions' }, menuButton(snapshot, false), themeButton())),
     state.hint ? el('div', { class: 'hint' }, el('span', null, 'Add notch to your Home Screen from the browser menu. It opens this computer.'), el('button', { type: 'button', onclick: event => { state.hint = false; storage('notch-phone-hint', 'hidden'); event.target.closest('.hint')?.remove(); } }, 'Hide')) : null,
     el('div', { class: 'status-row' }, statusLine(snapshot), snapshot.stopPhone ? el('button', { id: 'stop-phone', class: 'stop', type: 'button', onclick: () => act('/api/stop', { target: 'phone' }) }, 'Stop') : null),
-    el('section', { class: 'project', id: 'project', 'aria-label': 'Open project' },
-      el('p', { class: 'eyebrow' }, 'PROJECT'),
-      el('p', { class: 'project-name', id: 'project-name' }, snapshot.project || 'Open a project on this computer'),
-      el('button', { class: 'model', id: 'model-line', type: 'button', onclick: () => { state.menu = true; paint(); } }, [currentTask(snapshot)?.title, snapshot.model, snapshot.access].filter(Boolean).join(' · '))),
+    el('section', { class: 'project', id: 'project', 'aria-label': 'Current task' },
+      el('p', { class: 'eyebrow' }, 'TASK'),
+      el('p', { class: 'project-name', id: 'project-name' }, taskHeading(snapshot)),
+      el('button', { class: 'model', id: 'model-line', type: 'button', 'aria-label': 'Model and access', onclick: () => { state.menu = true; paint(); } }, contextLine(snapshot))),
     snapshot.computer?.visible ? el('section', { class: 'computer', id: 'computer', 'data-key': `${snapshot.computer.text || ''}\0${snapshot.computer.detail || 'Working with the open project.'}\0${snapshot.stopComputer ? 1 : 0}`, 'aria-label': 'On this computer' },
       el('p', { class: 'eyebrow' }, 'ON THIS COMPUTER'),
       snapshot.computer.text ? el('p', null, snapshot.computer.text) : el('p', { class: 'quiet' }, snapshot.computer.detail || 'Working with the open project.'),
       snapshot.stopComputer ? el('div', { class: 'actions' }, el('button', { type: 'button', onclick: () => act('/api/stop', { target: 'computer' }) }, 'Stop on the computer')) : null) : null,
     el('div', { class: 'thread', id: 'thread', 'aria-live': 'polite', 'data-key': `${snapshot.task || ''}\n${signature(messages, ['role', 'text']) || (snapshot.project ? 'empty-project' : 'empty')}` },
-      messages.length ? messages.map(message => el('article', { class: `bubble ${message.role}` }, message.text)) : el('p', { class: 'empty' }, snapshot.project ? 'Describe a change or ask a question. It runs on this computer, and this phone asks before files change or a command runs.' : 'Open a project in notch on the computer. This phone will use that folder.')),
+      messages.length ? messages.map(message => el('article', { class: `bubble ${message.role}` }, message.text)) : el('p', { class: 'empty' }, emptyCopy(snapshot))),
     el('div', { class: 'stack', id: 'approvals', hidden: pending.length ? null : true, 'data-key': signature(pending, ['id', 'title', 'detail', 'source']) }, pending.map(item => el('section', { class: 'approval', 'aria-label': 'Needs your approval' },
       el('p', { class: 'eyebrow' }, item.source === 'computer' ? 'NEEDS YOU · ON THE COMPUTER' : 'NEEDS YOU'),
       el('h2', null, item.title),
@@ -220,12 +258,22 @@ function chat(snapshot) {
       el('button', { id: 'send', class: 'float send', type: 'submit', 'aria-label': 'Send', disabled: snapshot.composer === 'computer' || !snapshot.project || snapshot.stopPhone || state.sending || !state.draft.trim() }, icon('send'))));
 }
 
-function currentTask(snapshot) { return (snapshot.tasks || []).find(item => item.current); }
-
 function menu(snapshot) {
-  return el('div', { class: 'menu', role: 'dialog', 'aria-label': 'Menu' },
+  return el('div', { id: 'menu-scrim', class: 'scrim', onclick: event => {
+    if (event.target !== event.currentTarget) return;
+    state.menu = false;
+    paint();
+  } }, el('div', { class: 'menu', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Menu' },
     el('header', { class: 'bar' }, wordmark(), el('div', { class: 'bar-actions' }, menuButton(snapshot, true), themeButton())),
-    menuBody(snapshot));
+    menuBody(snapshot)));
+}
+
+function syncMenu() {
+  const app = document.getElementById('app');
+  const existing = document.getElementById('menu-scrim');
+  if (!state.menu || !state.snapshot) { existing?.remove(); return; }
+  if (!existing) app.append(menu(state.snapshot));
+  else updateMenu(state.snapshot);
 }
 
 function menuBody(snapshot) {
@@ -236,21 +284,58 @@ function menuBody(snapshot) {
   return el('div', { class: 'menu-body', id: 'menu-body', 'data-key': menuKey(snapshot) },
     el('h2', null, 'TASKS'),
     el('button', { class: 'menu-row new', type: 'button', onclick: () => void act('/api/task', { action: 'new' }) }, el('span', null, 'New task'), el('small', null, 'Start')),
-    ...tasks.map(task => el('button', { class: 'menu-row', type: 'button', 'aria-pressed': task.current ? 'true' : 'false', onclick: () => void openTask(task.id) },
-      el('span', null, task.title), el('small', null, `${phases[task.phase] || 'Ready'} · ${task.source === 'computer' ? 'Computer' : task.model}`))),
+    ...tasks.map(task => taskRow(task, phases)),
     el('p', { class: 'note' }, snapshot.workspaceMode === 'isolated' ? 'OpenRouter tasks can run together in isolated worktrees. Local models still take turns.' : 'Tasks in the project folder take turns. Isolated worktrees, in Appearance on the computer, let OpenRouter tasks run together.'),
     el('h2', null, 'MODEL'),
     ...(models.length ? models.map(model => el('button', { class: 'menu-row', type: 'button', 'aria-pressed': model.key === snapshot.modelKey ? 'true' : 'false', disabled: snapshot.composer === 'computer', onclick: () => void act('/api/model', { key: model.key }) },
       el('span', null, model.name), el('small', null, model.provider === 'openrouter' ? 'OpenRouter' : 'On this computer'))) : [el('p', { class: 'note' }, 'Models are still loading on the computer.')]),
     el('p', { class: 'note' }, 'The model applies to the open phone task. A task that is already working keeps its model until it finishes.'),
+    el('h2', null, 'ACCESS'),
+    ...(snapshot.accessChoices || []).map(choice => el('button', { class: 'menu-row', type: 'button', 'aria-pressed': choice.key === snapshot.access ? 'true' : 'false', disabled: snapshot.composer === 'computer' || !snapshot.project, onclick: () => void act('/api/access', { mode: choice.key }) },
+      el('span', null, choice.label), el('small', null, choice.hint))),
+    el('p', { class: 'note' }, snapshot.composer === 'computer' ? 'This task is on the computer. Its access stays there.' : 'Ask waits before a file change or a command. Read only looks through the folder. Full access edits and runs commands without asking.'),
     el('h2', null, 'VOICE'),
     el('button', { class: 'menu-row', type: 'button', 'aria-pressed': state.recording ? 'true' : 'false', onclick: () => void dictate() }, el('span', null, state.recording ? 'Stop dictation' : 'Dictate'), el('small', null, voice.name || 'Speech')),
     el('p', { class: 'note' }, voice.ready ? `${voice.name || 'Speech'} on this computer writes into the composer. You still send the message.` : 'Set up speech in notch on the computer. The first microphone there downloads Cactus Whistle. Dictation then uses that model and leaves the words here for you to send.'),
     window.isSecureContext ? null : el('p', { class: 'note' }, 'The microphone needs the https address you host. On this Wi-Fi page you can still type.'));
 }
 
+function taskRow(task, phases) {
+  const detail = `${phases[task.phase] || 'Ready'} · ${task.source === 'computer' ? 'Computer' : task.model}`;
+  if (state.renaming === task.id) {
+    return el('form', { class: 'menu-row rename', onsubmit: event => { event.preventDefault(); void renameTask(task.id); } },
+      el('input', { value: state.renameDraft, maxlength: '80', 'aria-label': 'Task name', oninput: event => { state.renameDraft = event.target.value; } }),
+      el('button', { type: 'submit' }, 'Save'),
+      el('button', { type: 'button', onclick: () => { state.renaming = ''; state.error = ''; paint(); } }, 'Cancel'),
+      state.error ? el('p', { class: 'note', id: 'rename-error' }, state.error) : null);
+  }
+  if (state.confirmArchive === task.id) {
+    return el('div', { class: 'menu-row confirm' },
+      el('span', null, `Archive ${task.title} on this phone and the computer?`),
+      el('button', { type: 'button', onclick: () => void archiveTask(task.id) }, 'Archive'),
+      el('button', { type: 'button', onclick: () => { state.confirmArchive = ''; paint(); } }, 'Cancel'));
+  }
+  return el('div', { class: 'menu-row task' },
+    el('button', { class: 'task-open', type: 'button', 'aria-pressed': task.current ? 'true' : 'false', onclick: () => void openTask(task.id) },
+      el('span', null, task.title), el('small', null, detail)),
+    el('button', { class: 'task-action', type: 'button', onclick: () => { state.renaming = task.id; state.renameDraft = task.title; state.confirmArchive = ''; state.error = ''; paint(); } }, 'Rename'),
+    el('button', { class: 'task-action', type: 'button', onclick: () => { state.confirmArchive = task.id; state.renaming = ''; state.error = ''; paint(); } }, 'Archive'));
+}
+
 function menuKey(snapshot) {
-  return JSON.stringify({ tasks: snapshot.tasks, models: snapshot.models, modelKey: snapshot.modelKey, voice: snapshot.voice, mode: snapshot.workspaceMode, recording: state.recording, composer: snapshot.composer });
+  return JSON.stringify({ tasks: snapshot.tasks, models: snapshot.models, modelKey: snapshot.modelKey, access: snapshot.access, voice: snapshot.voice, mode: snapshot.workspaceMode, recording: state.recording, composer: snapshot.composer, renaming: state.renaming, confirm: state.confirmArchive, renameError: state.renaming ? state.error : '' });
+}
+
+async function renameTask(id) {
+  await act('/api/task', { action: 'rename', id, title: state.renameDraft });
+  if (!state.error) state.renaming = '';
+  paint();
+}
+
+async function archiveTask(id) {
+  await act('/api/task', { action: 'archive', id });
+  if (!state.error) state.confirmArchive = '';
+  paint();
 }
 
 async function openTask(id) {
@@ -262,6 +347,7 @@ function updateMenu(snapshot) {
   const body = document.getElementById('menu-body');
   const key = menuKey(snapshot);
   if (!body || body.dataset.key === key) return;
+  if (state.renaming && document.activeElement?.closest?.('.rename')) return;
   body.replaceWith(menuBody(snapshot));
 }
 
@@ -353,16 +439,16 @@ function updateChat(snapshot) {
   if (statusRow && snapshot.stopPhone && !stop) statusRow.append(el('button', { id: 'stop-phone', class: 'stop', type: 'button', onclick: () => act('/api/stop', { target: 'phone' }) }, 'Stop'));
   if (!snapshot.stopPhone && stop) stop.remove();
   const project = document.getElementById('project-name');
-  if (project) project.textContent = snapshot.project || 'Open a project on this computer';
+  if (project) project.textContent = taskHeading(snapshot);
   const model = document.getElementById('model-line');
-  if (model) model.textContent = [currentTask(snapshot)?.title, snapshot.model, snapshot.access].filter(Boolean).join(' · ');
+  if (model) model.textContent = contextLine(snapshot);
   syncComputer(snapshot);
   const messages = snapshot.messages || [];
   const thread = document.getElementById('thread');
   const messageKey = `${snapshot.task || ''}\n${signature(messages, ['role', 'text']) || (snapshot.project ? 'empty-project' : 'empty')}`;
   if (thread && thread.dataset.key !== messageKey) {
     thread.dataset.key = messageKey;
-    replaceChildren(thread, messages.length ? messages.map(message => el('article', { class: `bubble ${message.role}` }, message.text)) : [el('p', { class: 'empty' }, snapshot.project ? 'Describe a change or ask a question. It runs on this computer, and this phone asks before files change or a command runs.' : 'Open a project in notch on the computer. This phone will use that folder.')]);
+    replaceChildren(thread, messages.length ? messages.map(message => el('article', { class: `bubble ${message.role}` }, message.text)) : [el('p', { class: 'empty' }, emptyCopy(snapshot))]);
     if (stick) thread.scrollTop = thread.scrollHeight;
   }
   const pending = snapshot.pending || [];
@@ -448,7 +534,7 @@ function applySnapshot(snapshot) {
   state.snapshot = snapshot;
   state.offline = false;
   state.error = '';
-  if (snapshot.project) document.title = `notch · ${snapshot.project}`;
+  document.title = snapshot.taskTitle ? `notch · ${snapshot.taskTitle}` : 'notch';
   paint();
 }
 

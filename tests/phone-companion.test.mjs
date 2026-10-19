@@ -65,6 +65,12 @@ test('the phone page uses the desktop palette, wordmark and home-screen install'
     assert.match(page, /apple-mobile-web-app-title" content="notch"/);
     assert.match(css, /#18181b/); assert.match(css, /#dab5d1/); assert.match(css, /Manrope/);
     assert.match(script, /notch-wordmark-dark\.svg/); assert.match(script, /Home Screen/); assert.match(script, /freesyntax\.dev/);
+    assert.match(script, /System appearance/); assert.match(script, /menu-scrim/);
+    assert.match(script, /TASK/); assert.doesNotMatch(script, /FOLDER/);
+    assert.match(script, /Rename/); assert.match(script, /Archive/);
+    assert.match(script, /Ask a question, or describe a change/);
+    assert.doesNotMatch(script, /project-name', id: 'project-name' \}, snapshot\.project/);
+    assert.match(script, /ACCESS/); assert.doesNotMatch(script, /this phone asks before files change/);
     assert.doesNotMatch(script, /innerHTML/);
     assert.equal(manifest.display, 'standalone'); assert.equal(manifest.name, 'notch');
     assert.match(wordmark, /<svg/);
@@ -187,6 +193,110 @@ test('eight wrong codes lock pairing, and phone assets install beside the packag
   } finally { await phone.close(); await fs.rm(root, { recursive: true, force: true }); await fs.rm(target, { recursive: true, force: true }); }
 });
 
+test('phone access is chosen in the menu and does not copy full access from the computer', async () => {
+  const modes = [];
+  let release = () => {};
+  let gate = Promise.resolve();
+  const { root, project, host, phone } = await boot(async turn => {
+    modes.push(turn.accessMode);
+    await gate;
+    return { status: 'completed', text: 'done', messages: [...turn.messages, { role: 'assistant', content: 'done' }], iterations: 1 };
+  });
+  try {
+    await phone.update({ enabled: true });
+    await host.prepare({ cwd: project, model: 'ollama/fixture', permissionMode: 'bypassPermissions' });
+    const origin = await base(phone);
+    const token = (await (await fetch(`${origin}/api/pair`, { method: 'POST', headers: header(), body: JSON.stringify({ code: (await phone.status()).pairCode }) })).json()).token;
+    const before = await (await fetch(`${origin}/api/snapshot`, { headers: header(token) })).json();
+    assert.equal(before.project, path.basename(project));
+    assert.equal(before.access, 'ask');
+    assert.equal(before.accessShort, 'Ask');
+    assert.deepEqual(before.accessChoices.map(item => item.key), ['ask', 'read', 'full']);
+    gate = new Promise(resolve => { release = resolve; });
+    assert.equal((await fetch(`${origin}/api/access`, { method: 'POST', headers: header(token), body: JSON.stringify({ mode: 'full' }) })).status, 200);
+    assert.equal((await fetch(`${origin}/api/prompt`, { method: 'POST', headers: header(token), body: JSON.stringify({ text: 'Edit it' }) })).status, 200);
+    for (let attempt = 0; attempt < 40 && !modes.length; attempt++) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(modes[0], 'full-access');
+    const locked = await fetch(`${origin}/api/access`, { method: 'POST', headers: header(token), body: JSON.stringify({ mode: 'read' }) });
+    assert.equal(locked.status, 409);
+    release();
+    for (let attempt = 0; attempt < 40; attempt++) {
+      const body = await (await fetch(`${origin}/api/snapshot`, { headers: header(token) })).json();
+      if (body.tasks.some(task => task.current && task.phase === 'ready')) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    const created = await (await fetch(`${origin}/api/task`, { method: 'POST', headers: header(token), body: JSON.stringify({ action: 'new' }) })).json();
+    assert.equal(created.access, 'full');
+    const read = await (await fetch(`${origin}/api/access`, { method: 'POST', headers: header(token), body: JSON.stringify({ mode: 'read' }) })).json();
+    assert.equal(read.access, 'read');
+    assert.equal(read.accessLabel, 'Read only');
+    assert.equal((await fetch(`${origin}/api/access`, { method: 'POST', headers: header(token), body: JSON.stringify({ mode: 'yolo' }) })).status, 400);
+    gate = new Promise(resolve => { release = resolve; });
+    assert.equal((await fetch(`${origin}/api/prompt`, { method: 'POST', headers: header(token), body: JSON.stringify({ text: 'Look around' }) })).status, 200);
+    for (let attempt = 0; attempt < 40 && modes.length < 2; attempt++) await new Promise(resolve => setTimeout(resolve, 25));
+    assert.equal(modes[1], 'read-only');
+    release();
+  } finally { release(); await phone.close(); await fs.rm(root, { recursive: true, force: true }); await fs.rm(project, { recursive: true, force: true }); }
+});
+
+test('phone and computer tasks can be renamed and archived from the phone', async () => {
+  const sessions = [{ sessionId: 'desktop-lights', title: 'Lights', cwd: '', archived: false, updatedAt: 5, model: 'ollama/fixture' }];
+  const { root, project, host, phone } = await boot(async turn => ({ status: 'completed', text: 'done', messages: turn.messages, iterations: 1 }));
+  sessions[0].cwd = project;
+  host.chatSessions = {
+    async listSessions() { return sessions.filter(row => !row.archived); },
+    async rename(id, title) {
+      const row = sessions.find(item => item.sessionId === id);
+      if (!row) throw new Error('This session is not registered in notch.');
+      row.title = title;
+    },
+    async archive(id) {
+      const row = sessions.find(item => item.sessionId === id);
+      if (!row || row.archived) throw new Error('This session is not registered in notch.');
+      row.archived = true;
+    },
+  };
+  try {
+    await phone.update({ enabled: true });
+    await host.prepare({ cwd: project, model: 'ollama/fixture' });
+    const origin = await base(phone);
+    const token = (await (await fetch(`${origin}/api/pair`, { method: 'POST', headers: header(), body: JSON.stringify({ code: (await phone.status()).pairCode }) })).json()).token;
+    const first = await (await fetch(`${origin}/api/snapshot`, { headers: header(token) })).json();
+    assert.notEqual(first.taskTitle, path.basename(project));
+    assert.equal(first.taskTitle, 'New task');
+    assert.equal(first.tasks.find(task => task.source === 'computer').title, 'Lights');
+    const phoneId = first.tasks.find(task => task.source === 'phone').id;
+    assert.equal((await fetch(`${origin}/api/task`, { method: 'POST', headers: header(token), body: JSON.stringify({ action: 'rename', id: phoneId, title: '   ' }) })).status, 400);
+    const renamed = await (await fetch(`${origin}/api/task`, { method: 'POST', headers: header(token), body: JSON.stringify({ action: 'rename', id: phoneId, title: '  Evening rounds  ' }) })).json();
+    assert.equal(renamed.taskTitle, 'Evening rounds');
+    const catalog = JSON.parse(await fs.readFile(path.join(root, 'phone-task-catalog.json'), 'utf8'));
+    assert.equal(catalog.titles[phoneId], 'Evening rounds');
+    const opened = await (await fetch(`${origin}/api/task`, { method: 'POST', headers: header(token), body: JSON.stringify({ action: 'open', id: 'desktop-lights' }) })).json();
+    assert.equal(opened.task, 'desktop-lights');
+    assert.equal(opened.taskTitle, 'Lights');
+    assert.equal(opened.composer, 'computer');
+    const computerNamed = await (await fetch(`${origin}/api/task`, { method: 'POST', headers: header(token), body: JSON.stringify({ action: 'rename', id: 'desktop-lights', title: 'Kitchen' }) })).json();
+    assert.equal(computerNamed.taskTitle, 'Kitchen');
+    assert.equal(sessions[0].title, 'Kitchen');
+    const archivedComputer = await (await fetch(`${origin}/api/task`, { method: 'POST', headers: header(token), body: JSON.stringify({ action: 'archive', id: 'desktop-lights' }) })).json();
+    assert.equal(sessions[0].archived, true);
+    assert.equal(archivedComputer.tasks.some(task => task.id === 'desktop-lights'), false);
+    const archivedPhone = await (await fetch(`${origin}/api/task`, { method: 'POST', headers: header(token), body: JSON.stringify({ action: 'archive', id: phoneId }) })).json();
+    assert.equal(archivedPhone.tasks.some(task => task.id === phoneId), false);
+    assert.notEqual(archivedPhone.taskTitle, path.basename(project));
+    await phone.close();
+    const next = createPhoneCompanion(root, { host, safeStorage: storage, interfaces, port: 0 });
+    host.phone = next;
+    try {
+      await next.update({ enabled: true });
+      await host.prepare({ cwd: project, model: 'ollama/fixture' });
+      const restored = await next.snapshot();
+      assert.equal(restored.tasks.some(task => task.id === phoneId), false);
+      assert.equal(restored.tasks.some(task => task.id === 'desktop-lights'), false);
+    } finally { await next.close(); }
+  } finally { await phone.close(); await fs.rm(root, { recursive: true, force: true }); await fs.rm(project, { recursive: true, force: true }); }
+});
+
 test('phone tasks keep their own model, and dictation stays on this computer', async () => {
   let seenModel;
   const { root, project, host, phone } = await boot(async turn => { seenModel = turn.model; return { status: 'completed', text: 'done', messages: turn.messages, iterations: 1 }; });
@@ -212,6 +322,6 @@ test('phone tasks keep their own model, and dictation stays on this computer', a
     const speech = await fetch(`${origin}/api/dictate`, { method: 'POST', headers: { ...header(token), 'content-type': 'application/octet-stream' }, body: Buffer.alloc(4000) });
     assert.equal((await speech.json()).text, 'lights off');
     const page = await (await fetch(`${origin}/phone.js`)).text();
-    assert.match(page, /TASKS/); assert.match(page, /MODEL/); assert.match(page, /VOICE/);
+    assert.match(page, /TASKS/); assert.match(page, /MODEL/); assert.match(page, /ACCESS/); assert.match(page, /VOICE/);
   } finally { await phone.close(); await fs.rm(root, { recursive: true, force: true }); await fs.rm(project, { recursive: true, force: true }); }
 });

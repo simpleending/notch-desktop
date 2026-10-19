@@ -35,7 +35,7 @@ export function createPhoneSettings(React) {
     };
     return h('section', { className: 'notch-web-settings notch-phone-settings', 'aria-labelledby': 'notch-phone-title' },
       h('h3', { id: 'notch-phone-title' }, 'Phone'),
-      h('p', null, 'Use this computer from your phone. Add the page to your home screen from the browser. There is no app store and no notch account. The project, the model, and every approval stay here.'),
+      h('p', null, 'Use this computer from your phone. Add the page to your home screen from the browser. There is no app store and no notch account. The phone uses the folder open in notch. Model and access are chosen in the phone menu.'),
       h('label', { className: 'notch-setting-row' }, h('span', null, h('strong', null, 'Phone access'), h('small', null, 'Serves a private page from this computer while notch is open.')),
         h('input', { type: 'checkbox', 'aria-label': 'Phone access', checked: !!state?.enabled, disabled: busy || !state, onChange: event => void act('update', { enabled: event.target.checked }) })),
       state?.enabled ? h('div', { className: 'notch-phone-card' },

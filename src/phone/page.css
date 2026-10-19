@@ -70,6 +70,8 @@ button:disabled{cursor:default;opacity:.45}
 .pair form button{margin-top:14px;width:100%;padding:14px}
 .pair .fine{margin-top:22px;color:var(--muted);font-size:12px;line-height:1.6}
 .alert{margin:12px 0 0;color:var(--accent);font-size:13px}.alert:empty{display:none}
+.scrim{position:fixed;z-index:4;inset:0;background:#14141673}
+html[data-appearance=light] .scrim{background:#28242d2e}
 .menu{position:fixed;z-index:5;top:0;bottom:0;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;width:min(640px,100%);background:var(--surface)}
 .menu-body{flex:1;overflow:auto;padding:8px 18px calc(28px + env(safe-area-inset-bottom))}
 .menu-body h2{margin:22px 0 4px;font:10px/1.5 ui-monospace,"Cascadia Code",monospace;letter-spacing:1.8px;font-weight:400;color:var(--accent)}
@@ -79,4 +81,12 @@ button:disabled{cursor:default;opacity:.45}
 .menu-row small{flex:0 0 auto;color:var(--muted);font-size:12px}
 .menu-row[aria-pressed=true]{color:var(--ink)}
 .menu-row[aria-pressed=true] small{color:var(--accent)}
+.menu-row.task,.menu-row.confirm,.menu-row.rename{align-items:center}
+.task-open{flex:1;display:flex;justify-content:space-between;align-items:center;gap:12px;min-width:0;background:none;border:0;padding:0;text-align:left;color:inherit;font:inherit}
+.task-open[aria-pressed=true]{color:var(--ink)}
+.task-open[aria-pressed=true] small{color:var(--accent)}
+.task-action,.menu-row.rename button,.menu-row.confirm button{flex:0 0 auto;background:none;border:0;padding:0 0 0 12px;color:var(--muted);font-size:12px}
+.rename{flex-wrap:wrap}
+.rename input{flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:15px/1.4 Manrope,system-ui,sans-serif}
+.rename .note{flex-basis:100%}
 @media (prefers-reduced-motion:reduce){.status.working .dot{animation:none}}

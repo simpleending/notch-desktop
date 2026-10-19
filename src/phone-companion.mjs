@@ -29,7 +29,17 @@ function sameText(left, right) { return timingSafeEqual(createHash('sha256').upd
 function tokenHash(token) { return createHash('sha256').update(token).digest('hex'); }
 function phoneSessionId(cwd) { return `phone-${createHash('sha256').update(cwd).digest('hex').slice(0, 32)}`; }
 function computerName() { return os.hostname().replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 64) || 'This computer'; }
-function phoneMode(mode) { return mode === 'read-only' ? 'read-only' : 'default'; }
+const accessChoices = [
+  { key: 'ask', mode: 'default', label: 'Ask before changes', short: 'Ask', hint: 'Approvals' },
+  { key: 'read', mode: 'read-only', label: 'Read only', short: 'Read only', hint: 'Explore' },
+  { key: 'full', mode: 'bypassPermissions', label: 'Full access', short: 'Full access', hint: 'Trusted' },
+];
+function accessChoice(key) { return accessChoices.find(item => item.key === key) || accessChoices[0]; }
+function accessKeyFromMode(mode) {
+  if (mode === 'read-only') return 'read';
+  if (mode === 'bypassPermissions' || mode === 'full-access') return 'full';
+  return 'ask';
+}
 function validToken(value) { return typeof value === 'string' && /^[A-Za-z0-9_\-+=./]{8,4000}$/.test(value); }
 function scrub(text, secrets) {
   let clean = String(text || '');
@@ -125,12 +135,15 @@ export async function installPhoneAssets(root, target) {
 
 export function createPhoneCompanion(directory, { host, safeStorage, interfaces = () => os.networkInterfaces(), spawn = nodeSpawn, fetcher = globalThis.fetch, port: fixedPort, now = () => Date.now() } = {}) {
   const file = path.join(directory, 'phone-access.json');
+  const catalogFile = path.join(directory, 'phone-task-catalog.json');
   let settings = { version: 1, enabled: false, reach: 'lan', port: 47321, publicUrl: '', cloudflareHost: '', pairCode: '', pairExpires: 0, pairUses: 0, devices: [] };
   let ngrokToken, cloudflareToken, persistent = false, loadError = '', boundPort = 0, server, child, tunnelGeneration = 0, tunnelSignature = '';
   let tunnel = { state: 'off', message: '' }, runtimeError = '', queue = Promise.resolve(), revision = 0, notifyTimer;
   const waiters = [], failures = new Map(), live = new Map(), pending = new Map();
   let workspace, historyCache, modelProbe = 0, activeId = '', focus = '';
   const tasks = new Map();
+  let catalog = { titles: {}, archived: [] };
+  let desktopCache = { at: 0, cwd: '', rows: [] }, messageCache;
   let modeCache = { at: 0, mode: 'shared' }, voiceCache = { at: 0, ready: false, name: '' };
   const self = { note, prepare, attach, decide };
   let ready;
@@ -147,6 +160,7 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
     } catch (error) {
       if (error.code !== 'ENOENT') loadError = 'Phone settings could not be loaded. The saved file was left in place.';
     }
+    await loadCatalog();
   }
   async function persist() {
     const encryptedNgrok = persistent && ngrokToken ? (await safeStorage.encryptStringAsync(ngrokToken)).toString('base64') : undefined;
@@ -161,6 +175,43 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
     finally { await fs.unlink(temporary).catch(() => {}); }
   }
   function enqueue(task) { const run = queue.then(task, task); queue = run.then(() => {}, () => {}); return run; }
+  function archived(id) { return catalog.archived.includes(id); }
+  function sameFolder(left, right) {
+    const a = path.resolve(left), b = path.resolve(right);
+    return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  }
+  async function loadCatalog() {
+    try {
+      const stored = JSON.parse(await fs.readFile(catalogFile, 'utf8'));
+      if (stored.version !== 1 || !stored.titles || typeof stored.titles !== 'object' || Array.isArray(stored.titles) || !Array.isArray(stored.archived)) return;
+      const titles = {};
+      for (const [id, title] of Object.entries(stored.titles)) {
+        if (!validId(id) || typeof title !== 'string') continue;
+        const clean = title.replace(/\s+/g, ' ').trim();
+        if (clean && clean.length <= 80 && !/[\u0000-\u001f\u007f]/.test(clean)) titles[id] = clean;
+      }
+      catalog = { titles, archived: stored.archived.filter(validId).slice(-200) };
+    } catch { /* A missing catalog means no renamed or archived tasks yet. */ }
+  }
+  async function saveCatalog() {
+    const payload = JSON.stringify({ version: 1, titles: catalog.titles, archived: catalog.archived.slice(-200) });
+    const temporary = `${catalogFile}.${randomUUID()}.tmp`;
+    await fs.mkdir(directory, { recursive: true });
+    try { await fs.writeFile(temporary, payload, { mode: 0o600 }); await fs.rename(temporary, catalogFile); }
+    finally { await fs.unlink(temporary).catch(() => {}); }
+  }
+  function invalidateDesktop() { desktopCache = { at: 0, cwd: '', rows: [] }; }
+  async function desktopSessions() {
+    if (!workspace?.cwd || typeof host?.chatSessions?.listSessions !== 'function') return [];
+    if (desktopCache.cwd === workspace.cwd && now() - desktopCache.at < 2000) return desktopCache.rows;
+    let rows = [];
+    try {
+      const listed = await host.chatSessions.listSessions(40, 0, false, 'all');
+      rows = (Array.isArray(listed) ? listed : []).filter(row => row && validId(row.sessionId) && typeof row.cwd === 'string' && sameFolder(row.cwd, workspace.cwd) && row.archived !== true && row.catalogVisibility !== 'hidden' && row.sessionKind !== 'automationExecution' && !archived(row.sessionId));
+    } catch { rows = []; }
+    desktopCache = { at: now(), cwd: workspace.cwd, rows };
+    return rows;
+  }
   function ensureCode(force = false) {
     if (!force && settings.pairCode && settings.pairExpires > now() && settings.pairUses < 4) return false;
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -246,13 +297,13 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
     notify();
   }
   function primaryId() { return workspace?.cwd ? phoneSessionId(workspace.cwd) : ''; }
-  function blankTask(id, model) { return { id, messages: [], draft: '', model: model && model !== 'auto' ? model : (host?.getDefaultModel?.() || 'auto'), created: now() }; }
+  function blankTask(id, model, access = 'ask') { return { id, messages: [], draft: '', model: model && model !== 'auto' ? model : (host?.getDefaultModel?.() || 'auto'), access: accessChoice(access).key, created: now() }; }
   function ensureTasks() {
     const id = primaryId();
     if (!id) return null;
-    if (!tasks.has(id)) tasks.set(id, blankTask(id, workspace.model));
-    if (!activeId || !tasks.has(activeId)) activeId = id;
-    return tasks.get(activeId);
+    if (!tasks.has(id) && !archived(id)) tasks.set(id, blankTask(id, workspace.model));
+    if (!activeId || !tasks.has(activeId) || archived(activeId)) activeId = [...tasks.keys()].find(key => !archived(key)) || '';
+    return activeId ? tasks.get(activeId) : null;
   }
   function modelRows() {
     return (host?.getCachedModels?.() || []).filter(row => row && row.key && row.key !== 'auto').slice(0, 24).map(row => ({
@@ -261,8 +312,16 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
   }
   function modelName(key) { return modelRows().find(row => row.key === key)?.name || (key && key !== 'auto' ? key : 'Model'); }
   function taskTitle(task) {
+    if (catalog.titles[task.id]) return catalog.titles[task.id];
     const text = task.messages.find(message => message.role === 'user')?.text?.replace(/\s+/g, ' ').trim();
     return text ? text.slice(0, 80) : 'New task';
+  }
+  function displayTitle(id, fallback, desktopTitle) {
+    if (catalog.titles[id]) return catalog.titles[id];
+    const named = typeof desktopTitle === 'string' ? desktopTitle.replace(/\s+/g, ' ').trim() : '';
+    if (named) return named.slice(0, 80);
+    const text = String(fallback || '').replace(/\s+/g, ' ').trim();
+    return text ? text.slice(0, 80) : 'On this computer';
   }
   function taskPhase(task) {
     if ([...pending.values()].some(item => !item.settled && item.sessionId === task.id)) return 'needs-you';
@@ -382,34 +441,70 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
     historyCache = { cwd: workspace.cwd, at: now(), messages: rows };
     return rows;
   }
+  async function savedMessages(id) {
+    if (!host?.loadSession || !workspace?.cwd) return [];
+    if (messageCache?.id === id && now() - messageCache.at < 2000) return messageCache.messages;
+    let rows = [];
+    try {
+      const saved = await host.loadSession(id, workspace.cwd);
+      rows = (saved.messages || []).map(message => ({ role: message.role === 'assistant' ? 'assistant' : 'user', text: visibleText(message) })).filter(message => message.text).slice(-40);
+    } catch { rows = []; }
+    messageCache = { id, at: now(), messages: rows };
+    return rows;
+  }
+  function computerPhase(id, bag) {
+    if ([...pending.values()].some(entry => !entry.settled && entry.sessionId === id)) return 'needs-you';
+    return bag?.query.active ? 'working' : 'ready';
+  }
   async function snapshot() {
+    await ensure();
     await recall();
     const models = (host?.getCachedModels?.() || []).filter(row => row && row.key !== 'auto');
     if (!models.length && now() - modelProbe > 15000) { modelProbe = now(); void Promise.resolve(host?.listModels?.()).then(() => notify()).catch(() => {}); }
     const rows = modelRows();
     const task = ensureTasks();
     if (task?.id === primaryId() && !task.messages.length) task.messages = await history();
-    const computer = [...live.values()].filter(item => item.source === 'computer');
+    const computer = [...live.values()].filter(item => item.source === 'computer' && !archived(item.query.id));
+    const desktop = await desktopSessions();
+    const desktopById = new Map(desktop.map(row => [row.sessionId, row]));
     const focused = focus && computer.find(item => item.query.id === focus);
-    if (focus && !focused) focus = '';
-    const modelKey = focused ? (focused.request?.model || 'auto') : (task?.model || 'auto');
+    const selectedDesktop = !focused && focus && desktopById.has(focus) ? focus : '';
+    if (focus && !focused && !selectedDesktop) focus = '';
+    const viewingComputer = !!(focused || selectedDesktop);
+    const modelKey = focused ? (focused.request?.model || 'auto') : (task?.model || desktopById.get(selectedDesktop)?.model || 'auto');
     const model = modelName(modelKey);
+    const access = accessChoice(focused ? accessKeyFromMode(focused.request?.permissionMode) : task?.access);
     const active = [...live.values()].some(item => item.query.active);
     const phase = pending.size ? 'needs-you' : active ? 'working' : rows.some(row => row.enabled) ? 'ready' : 'loading';
     const labels = { 'needs-you': 'Needs you', working: 'Working', ready: 'Ready', loading: 'Loading model' };
     const current = focused || computer.find(item => item.query.active) || computer.at(-1);
-    const shown = focused ? (focused.text ? [{ role: 'assistant', text: focused.text }] : []) : [...(task?.messages || []), ...(task?.draft ? [{ role: 'assistant', text: task.draft }] : [])];
+    const shown = focused
+      ? (focused.text ? [{ role: 'assistant', text: focused.text }] : [])
+      : selectedDesktop ? await savedMessages(selectedDesktop)
+      : [...(task?.messages || []), ...(task?.draft ? [{ role: 'assistant', text: task.draft }] : [])];
     const voice = await voiceSummary();
     const mode = await workspaceMode();
+    const openId = focused ? focused.query.id : selectedDesktop || task?.id || null;
+    const phoneTasks = [...tasks.values()].filter(item => !archived(item.id)).map(item => ({ id: item.id, title: displayTitle(item.id, taskTitle(item), desktopById.get(item.id)?.title), phase: taskPhase(item), model: modelName(item.model), source: 'phone', current: !viewingComputer && item.id === activeId }));
+    const seen = new Set(phoneTasks.map(item => item.id));
+    const computerTasks = [];
+    for (const row of desktop) {
+      if (seen.has(row.sessionId)) continue;
+      seen.add(row.sessionId);
+      const bag = computer.find(item => item.query.id === row.sessionId);
+      computerTasks.push({ id: row.sessionId, title: displayTitle(row.sessionId, bag?.request?.prompt, row.title), phase: computerPhase(row.sessionId, bag), model: modelName(bag?.request?.model || row.model), source: 'computer', current: row.sessionId === openId && viewingComputer });
+    }
+    for (const item of computer) {
+      if (seen.has(item.query.id)) continue;
+      computerTasks.push({ id: item.query.id, title: displayTitle(item.query.id, item.request?.prompt, ''), phase: computerPhase(item.query.id, item), model: modelName(item.request?.model), source: 'computer', current: item.query.id === focus });
+    }
+    const openTaskRow = [...phoneTasks, ...computerTasks].find(item => item.id === openId);
     return {
-      phase, label: labels[phase], project: workspace?.name || null, model, modelKey, task: focused ? focused.query.id : task?.id || null, composer: focused ? 'computer' : 'phone',
-      access: phoneMode(workspace?.permissionMode) === 'read-only' ? 'Read only, same as the computer' : 'Asks before changes and commands',
+      phase, label: labels[phase], project: workspace?.name || null, model, modelKey, task: openId, taskTitle: openTaskRow?.title || null, composer: viewingComputer ? 'computer' : 'phone',
+      access: access.key, accessLabel: access.label, accessShort: access.short, accessChoices: accessChoices.map(({ key, label, hint }) => ({ key, label, hint })),
       workspaceMode: mode, voice: { ready: !!voice.ready, name: voice.name || '' },
       models: rows,
-      tasks: [
-        ...[...tasks.values()].map(item => ({ id: item.id, title: taskTitle(item), phase: taskPhase(item), model: modelName(item.model), source: 'phone', current: !focused && item.id === activeId })),
-        ...computer.map(item => ({ id: item.query.id, title: String(item.request?.prompt || 'On this computer').replace(/\s+/g, ' ').trim().slice(0, 80) || 'On this computer', phase: [...pending.values()].some(entry => !entry.settled && entry.sessionId === item.query.id) ? 'needs-you' : item.query.active ? 'working' : 'ready', model: modelName(item.request?.model), source: 'computer', current: item.query.id === focus })),
-      ],
+      tasks: [...phoneTasks, ...computerTasks],
       computer: current ? { visible: !!(current.query.active || current.text), text: (current.text || '').slice(-1500), detail: current.query.active ? 'Working with the open project.' : '' } : { visible: false },
       messages: shown.slice(-80),
       pending: [...pending.values()].filter(item => !item.settled).slice(0, 8).map(item => ({ id: item.id, title: item.title, detail: item.detail, source: item.source })),
@@ -489,24 +584,84 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
     await persist(); notify();
     return token;
   }
-  function validId(id) { return typeof id === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(id); }
+  function validId(id) { return typeof id === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(id); }
+  function cleanTitle(value) {
+    if (typeof value !== 'string') throw httpError('Name the task in 80 characters or fewer.', 400);
+    const title = value.replace(/\s+/g, ' ').trim();
+    if (!title || title.length > 80 || /[\u0000-\u001f\u007f]/.test(title)) throw httpError('Name the task in 80 characters or fewer.', 400);
+    return title;
+  }
   async function newTask() {
     await recall();
     if (!workspace?.cwd) throw httpError('Open a project in notch on this computer first.', 409);
     ensureTasks();
-    if ([...tasks.values()].length >= 8) throw httpError('This phone already has eight tasks.', 409);
+    if ([...tasks.values()].filter(item => !archived(item.id)).length >= 8) throw httpError('This phone already has eight tasks.', 409);
     const id = `phone-${createHash('sha256').update(`${workspace.cwd}\0${randomUUID()}`).digest('hex').slice(0, 32)}`;
-    const model = tasks.get(activeId)?.model || host?.getDefaultModel?.() || 'auto';
-    tasks.set(id, blankTask(id, model));
+    const previous = tasks.get(activeId);
+    const model = previous?.model || host?.getDefaultModel?.() || 'auto';
+    tasks.set(id, blankTask(id, model, previous?.access || 'ask'));
     activeId = id; focus = ''; notify();
     return snapshot();
   }
   async function openTask(id) {
     if (!validId(id)) throw httpError('Choose a task.', 400);
+    await recall();
+    if (archived(id)) throw httpError('That task is archived.', 409);
     if (tasks.has(id)) { activeId = id; focus = ''; notify(); return snapshot(); }
     const bag = live.get(id);
     if (bag?.source === 'computer') { focus = id; notify(); return snapshot(); }
+    if ((await desktopSessions()).some(row => row.sessionId === id)) { focus = id; notify(); return snapshot(); }
     throw httpError('That task is not on this phone.', 404);
+  }
+  async function knownTask(id) {
+    if (tasks.has(id) && !archived(id)) return 'phone';
+    if (live.get(id)?.source === 'computer' && !archived(id)) return 'computer';
+    if ((await desktopSessions()).some(row => row.sessionId === id)) return 'computer';
+    return '';
+  }
+  async function renameTask(id, raw) {
+    if (!validId(id)) throw httpError('Choose a task.', 400);
+    const title = cleanTitle(raw);
+    await ensure();
+    await recall();
+    const kind = await knownTask(id);
+    if (!kind) throw httpError('That task is not on this phone.', 404);
+    if (host?.chatSessions?.rename) {
+      try { await host.chatSessions.rename(id, title); }
+      catch (error) { if (kind === 'computer') throw httpError(error.message || 'The computer could not rename that task.', 409); }
+    }
+    catalog.titles[id] = title;
+    const phone = tasks.get(id);
+    if (phone) phone.title = title;
+    invalidateDesktop();
+    messageCache = undefined;
+    await saveCatalog();
+    notify();
+    return snapshot();
+  }
+  async function archiveTask(id) {
+    if (!validId(id)) throw httpError('Choose a task.', 400);
+    await ensure();
+    await recall();
+    const kind = await knownTask(id);
+    if (!kind) throw httpError('That task is not on this phone.', 404);
+    if (live.get(id)?.query.active) throw httpError('This task is still working.', 409);
+    if (host?.chatSessions?.archive) {
+      try { await host.chatSessions.archive(id); }
+      catch (error) {
+        const missing = /not registered|does not exist|not found/i.test(String(error?.message || ''));
+        if (kind === 'computer' && !missing) throw httpError(error.message || 'The computer could not archive that task.', 409);
+      }
+    }
+    if (!catalog.archived.includes(id)) catalog.archived.push(id);
+    if (catalog.archived.length > 200) catalog.archived.splice(0, catalog.archived.length - 200);
+    tasks.delete(id);
+    if (activeId === id) activeId = '';
+    if (focus === id) focus = '';
+    invalidateDesktop();
+    await saveCatalog();
+    notify();
+    return snapshot();
   }
   async function chooseModel(key) {
     if (typeof key !== 'string' || !/^[A-Za-z0-9_.:~/-]{1,200}$/.test(key)) throw httpError('Choose a model from this computer.', 400);
@@ -517,6 +672,16 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
     const row = modelRows().find(item => item.key === key && item.enabled);
     if (!row) throw httpError('Choose an available model from this computer.', 400);
     task.model = row.key; notify();
+    return snapshot();
+  }
+  async function chooseAccess(key) {
+    const choice = accessChoices.find(item => item.key === key);
+    if (!choice) throw httpError('Choose ask, read only, or full access.', 400);
+    const task = ensureTasks();
+    if (!task) throw httpError('Open a project in notch on this computer first.', 409);
+    if (focus) throw httpError('The computer task keeps the access already set there.', 409);
+    if (taskPhase(task) === 'working') throw httpError('This task is already working. Access stays until it finishes.', 409);
+    task.access = choice.key; notify();
     return snapshot();
   }
   async function dictate(pcm) {
@@ -545,7 +710,7 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
     if (task.id === primaryId() && !task.messages.length) task.messages = await history();
     task.messages.push({ role: 'user', text: body }); historyCache = undefined; notify();
     try {
-      host.query({ cwd: workspace.cwd, sessionId: task.id, model: task.model || 'auto', permissionMode: phoneMode(workspace.permissionMode), prompt: body, phoneOrigin: true });
+      host.query({ cwd: workspace.cwd, sessionId: task.id, model: task.model || 'auto', permissionMode: accessChoice(task.access).mode, prompt: body, phoneOrigin: true });
     } catch (error) {
       task.messages.pop();
       task.messages.push({ role: 'error', text: error.message || 'The task could not start.' }); notify();
@@ -616,8 +781,14 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
     if (req.method !== 'POST') throw httpError('That page is not on this computer.', 404);
     const body = await readJson(req);
     if (pathname === '/api/prompt') return send(res, 200, await submit(body.text, validId(body.task) ? body.task : ''));
-    if (pathname === '/api/task') return send(res, 200, body.action === 'new' ? await newTask() : await openTask(body.id));
+    if (pathname === '/api/task') {
+      if (body.action === 'new') return send(res, 200, await newTask());
+      if (body.action === 'rename') return send(res, 200, await renameTask(body.id, body.title));
+      if (body.action === 'archive') return send(res, 200, await archiveTask(body.id));
+      return send(res, 200, await openTask(body.id));
+    }
     if (pathname === '/api/model') return send(res, 200, await chooseModel(body.key));
+    if (pathname === '/api/access') return send(res, 200, await chooseAccess(body.mode));
     if (pathname === '/api/approval') return send(res, 200, await answer(body.id, body.behavior, body.remember === true));
     if (pathname === '/api/stop') return send(res, 200, await stop(body.target === 'computer' ? 'computer' : 'phone'));
     throw httpError('That page is not on this computer.', 404);

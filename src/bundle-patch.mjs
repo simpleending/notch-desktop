@@ -106,6 +106,12 @@ export function patchWorkbench(source) {
   const registration = 'function Z9t(t){';
   if (!source.includes(registration)) throw new Error('Upstream runtime validation differs from the baseline.');
   source = source.replace(registration, registration + 'if(t.runtime?.provider==="qoder"&&globalThis.__notchHost){t={...t,runtime:{...t.runtime,status:"ready"},registration:{...t.registration,id:t.registration?.id??"notch-builtin",status:"ready"}};}');
+  const sessionList = 't.handle(H.chatSessionsList,(I,f,y,Q,E)=>e.listSessions($v(f,50,100),$v(y,0,1e4),Q===!0,OCt(E)))';
+  const publishedSessions = 'globalThis.__notchHost&&(globalThis.__notchHost.chatSessions=e),' + sessionList;
+  if (!source.includes(publishedSessions)) {
+    if (!source.includes(sessionList)) throw new Error('Chat session list registration differs from the inspected baseline.');
+    source = source.replace(sessionList, publishedSessions);
+  }
   return { source, changes: changes.map(([className, method]) => `${className}.${method}`) };
 }
 export function recapLanguageMatches(text, language = globalThis.__notchInterfaceLanguage ?? 'en') {
