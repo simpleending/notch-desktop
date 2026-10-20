@@ -2,7 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { gitProcessEnv } from '../vendor/notch-core/desktop-harness.js';
-import { githubRepository } from './github-repository.mjs';
+import { githubRepository, githubCloneUrl } from './github-repository.mjs';
 
 export const DEVICE_URL = 'https://github.com/login/device';
 export const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -250,8 +250,9 @@ export function createGitHubAuth({
       return status();
     },
     async clone(repo) {
+      const cloneUrl = githubCloneUrl(repo);
       repo = githubRepository(repo);
-      if (!repo) throw new Error('Choose a repository from the list or enter owner/repo or an HTTPS or SSH GitHub repository URL.');
+      if (!repo || !cloneUrl) throw new Error('Choose a repository from the list or enter owner/repo or an HTTPS or SSH GitHub repository URL.');
       if (phase !== 'ready') throw new Error('GitHub setup is already running.');
       const current = await status(true);
       if (!current.account) throw new Error(current.message);
@@ -260,7 +261,7 @@ export function createGitHubAuth({
       const gh = await locateGitHubCli({ platform, env: childEnv(), run, exists });
       const destination = path.join(directory, repo.split('/')[1]);
       phase = 'cloning'; message = `Cloning ${repo}…`;
-      try { await run(gh || 'git', gh ? ['repo', 'clone', `https://github.com/${repo}.git`, destination] : ['clone', `https://github.com/${repo}.git`, destination], { timeout: 600_000, env: gitProcessEnv(childEnv()) }); }
+      try { await run(gh || 'git', gh ? ['repo', 'clone', cloneUrl, destination] : ['clone', cloneUrl, destination], { timeout: 600_000, env: gitProcessEnv(childEnv()) }); }
       catch (error) { message = ''; throw new Error(redactGitHubOutput(error.stderr || error.message) || 'Clone failed.'); }
       finally { phase = 'ready'; }
       clonedPath = destination; message = `Cloned ${repo} to ${destination}.`;

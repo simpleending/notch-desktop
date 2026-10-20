@@ -29,7 +29,9 @@ Windows releases check GitHub for new stable versions after opening, download up
 
 ## GitHub and Git remotes
 
-Open **Settings → Appearance → GitHub** to install GitHub CLI and sign in through the browser. The sign-in is shared with the CLI. Repository discovery includes organizations and collaborators; use **Load more repositories**, enter `owner/repo`, or paste a GitHub HTTPS or SSH repository URL. After cloning, choose **Open project** to work in that folder.
+Open **Settings → Appearance → GitHub** to install GitHub CLI and sign in through the browser. The sign-in is shared with the CLI. Once signed in, the repository browser loads your personal, organization and collaborator repositories. Scroll the list, filter loaded repositories by name or description, narrow it by owner, or use **Load more repositories** to include older repositories. Choose **Clone**, then **Open project** to work in that folder. Existing local projects are available from Workspaces.
+
+Choose **HTTPS** or **SSH** as the clone protocol, or paste a GitHub repository URL to keep its explicit protocol. SSH clones, pulls and pushes use your device’s SSH keys, agent and Git configuration. Browser sign-in authenticates GitHub API access and HTTPS Git; SSH requires a key authorized on GitHub and a verified GitHub host key.
 
 Appearance has shortcuts to GitHub, updates, web research, phone access and reading preferences. Model lists support arrows, Page Up/Down and Home/End; the search field keeps its normal text-editing shortcuts. Downloads show their requirements before you confirm, and **Back to models** restores focus to your previous choice.
 

@@ -6,7 +6,7 @@ import { openClonedProject } from '../src/workbench-skin.mjs';
 function harness(initial, bridge) {
   const states = [initial, null, '', '']; let cursor = 0;
   const reference = { current: 0 };
-  const React = { useState() { const index = cursor++; return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; }, useRef: () => reference, useEffect() {}, createElement(type, props, ...children) { return { type, props: props || {}, children }; } };
+  const React = { useState(initialValue) { const index = cursor++; if (!(index in states)) states[index] = initialValue; return [states[index], value => { states[index] = typeof value === 'function' ? value(states[index]) : value; }]; }, useRef: () => reference, useEffect() {}, createElement(type, props, ...children) { return { type, props: props || {}, children }; } };
   const previous = globalThis.window; globalThis.window = { notchModels: { github: bridge } };
   const Component = createGitHubSettings(React);
   const render = props => { cursor = 0; return Component(props); };
@@ -44,11 +44,11 @@ test('repository pagination, account repair and clone handoff are accessible', a
     input.props.onChange({ target: { value: 'organization/project' } });
     await view.all(view.render(props)).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(calls.at(-1), ['clone', 'organization/project']);
+    assert.deepEqual(calls.at(-1), ['clone', 'https://github.com/organization/project.git']);
     input.props.onChange({ target: { value: 'git@github.com:organization/project.git' } });
     await view.all(view.render(props)).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
     await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(calls.at(-1), ['clone', 'organization/project']);
+    assert.deepEqual(calls.at(-1), ['clone', 'git@github.com:organization/project.git']);
   } finally { view.close(); }
 });
 
@@ -62,4 +62,30 @@ test('opening a clone creates a workspace once and navigates to it', async () =>
   assert.deepEqual(workspaces[0].rootPaths, ['C:\\projects\\clone']);
   assert.equal(workspaces[0].name, 'clone');
   assert.deepEqual(routes, Array(2).fill({ kind: 'new-chat', workspaceId: 'fixture-workspace' }));
+});
+
+test('repository browser filters owners and descriptions, names clone actions, and keeps SSH when selecting a row', async () => {
+  const calls = [], rows = [
+    { nameWithOwner: 'personal/editor', description: 'Editor', isPrivate: true },
+    { nameWithOwner: 'team/backend', description: 'Searchable service', isPrivate: false },
+  ];
+  const initial = { installed: true, account: 'user', phase: 'ready', repos: rows, hasMore: true, repoPage: 1 };
+  const view = harness(initial, async (...args) => { calls.push(args); return initial; });
+  const labeled = (tree, text) => view.all(tree).find(node => node.type === 'label' && node.children.includes(text)).children.find(node => node && typeof node === 'object');
+  try {
+    const list = () => view.all(view.render()).find(node => node.type === 'ul');
+    assert.equal(list().props['aria-label'], 'GitHub repositories');
+    assert.equal(list().props.tabIndex, 0);
+    labeled(view.render(), 'Filter loaded repositories').props.onChange({ target: { value: 'searchable' } });
+    assert.deepEqual(view.all(list()).filter(node => node.type === 'strong').map(node => node.children[0]), ['team/backend']);
+    labeled(view.render(), 'Repository owner').props.onChange({ target: { value: 'personal' } });
+    assert.match(JSON.stringify(list()), /No loaded repositories match/);
+    labeled(view.render(), 'Filter loaded repositories').props.onChange({ target: { value: '' } });
+    labeled(view.render(), 'Clone protocol').props.onChange({ target: { value: 'ssh' } });
+    const clone = view.all(list()).find(node => node.type === 'button');
+    assert.equal(clone.props['aria-label'], 'Clone personal/editor');
+    await clone.props.onClick();
+    assert.deepEqual(calls.at(-1), ['clone', 'git@github.com:personal/editor.git']);
+    assert.ok(view.button(view.render(), 'Load more repositories'));
+  } finally { view.close(); }
 });

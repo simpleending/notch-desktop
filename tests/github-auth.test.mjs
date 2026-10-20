@@ -4,11 +4,40 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createGitHubAuth, parseDeviceCode, parseGitHubAccount, redactGitHubOutput, safeDeviceUrl, REPO_NAME } from '../src/github-auth.mjs';
 import { registerModelIpc, patchModelPreload, modelPreload } from '../src/model-ipc.mjs';
-import { githubRepository } from '../src/github-repository.mjs';
+import { githubRepository, githubCloneUrl } from '../src/github-repository.mjs';
 
 test('pasted GitHub repository URLs normalize without accepting other hosts or traversal', () => {
-  for (const value of [' owner/repo ', 'https://github.com/owner/repo.git', 'https://github.com/owner/repo/?tab=readme', 'git@github.com:owner/repo.git']) assert.equal(githubRepository(value), 'owner/repo');
-  for (const value of ['http://github.com/owner/repo', 'https://github.com.evil.example/owner/repo', 'https://secret@github.com/owner/repo', 'https://github.com:444/owner/repo', 'owner/..', 'owner/repo/tree/main', null]) assert.equal(githubRepository(value), null);
+  for (const value of [' owner/repo ', 'https://github.com/owner/repo.git', 'https://github.com/owner/repo/?tab=readme', 'git@github.com:owner/repo.git', 'ssh://git@github.com/owner/repo.git']) assert.equal(githubRepository(value), 'owner/repo');
+  for (const value of ['http://github.com/owner/repo', 'https://github.com.evil.example/owner/repo', 'https://secret@github.com/owner/repo', 'https://github.com:444/owner/repo', 'ssh://other@github.com/owner/repo', 'ssh://git:secret@github.com/owner/repo', 'ssh://git@github.com:2222/owner/repo', 'ssh://git@evil.example/owner/repo', 'owner/..', 'owner/repo/tree/main', null]) assert.equal(githubRepository(value), null);
+});
+
+test('clone URL preserves explicit SSH and HTTPS and applies the chosen protocol to repository names', () => {
+  assert.equal(githubCloneUrl('owner/repo'), 'https://github.com/owner/repo.git');
+  assert.equal(githubCloneUrl('owner/repo', 'ssh'), 'git@github.com:owner/repo.git');
+  assert.equal(githubCloneUrl('git@github.com:owner/repo.git'), 'git@github.com:owner/repo.git');
+  assert.equal(githubCloneUrl('ssh://git@github.com/owner/repo.git'), 'git@github.com:owner/repo.git');
+  assert.equal(githubCloneUrl('https://github.com/owner/repo', 'ssh'), 'https://github.com/owner/repo.git');
+  assert.equal(githubCloneUrl('owner/repo', 'file'), null);
+});
+
+test('SSH clone survives settings IPC, GitHub CLI and the system SSH environment without an HTTPS fallback', async () => {
+  const calls = [], handlers = new Map();
+  const auth = createGitHubAuth({ platform: 'linux', env: { GIT_SSH_COMMAND: 'ssh -i local-key', SSH_AUTH_SOCK: '/local/agent' }, exists: async () => true,
+    pickDirectory: async () => '/work', run: async (file, args, options) => {
+      calls.push({ file, args, env: options.env });
+      if (file === 'which') return { stdout: '/usr/bin/gh', stderr: '' };
+      if (args[1] === 'status') return { stdout: JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'user' }] } }), stderr: '' };
+      return { stdout: '', stderr: '' };
+    },
+  });
+  registerModelIpc({ handle: (key, fn) => handlers.set(key, fn) }, { modelManager: {}, github: auth });
+  const frame = { url: 'notch-app://renderer/index.html' }, event = { senderFrame: frame, sender: { mainFrame: frame } };
+  await handlers.get('notch-models:github')(event, 'clone', 'git@github.com:team/project.git');
+  const clone = calls.find(call => call.args[0] === 'repo');
+  assert.deepEqual(clone.args, ['repo', 'clone', 'git@github.com:team/project.git', path.join('/work', 'project')]);
+  assert.equal(clone.env.GIT_SSH_COMMAND, 'ssh -i local-key');
+  assert.equal(clone.env.SSH_AUTH_SOCK, '/local/agent');
+  assert.throws(() => handlers.get('notch-models:github')(event, 'clone', 'ssh://git@evil.example/team/project'), /GitHub repository/);
 });
 
 test('failed GitHub CLI discovery and process startup leave sign-in retryable', async () => {
