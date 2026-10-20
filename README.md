@@ -27,6 +27,14 @@ Windows releases check GitHub for new stable versions after opening, download up
 - **Work your way.** Choose dark or light mode, adjust the text, and search your project’s files.
 - **Keep knowledge and sites locally.** Knowledge Center saves searchable text notes and imports Markdown, text, CSV and JSON files. Sites saves HTML drafts with an offline static preview and HTML export. Both work without an account, keep drafts across restarts, and store their data in your device’s notch profile. Extensions opens the local extension manager; Workspace Index describes the automatic local file search.
 
+## GitHub and Git remotes
+
+Open **Settings → Appearance → GitHub** to install GitHub CLI and sign in through the browser. The sign-in is shared with the CLI. Repository discovery includes organizations and collaborators; use **Load more repositories** or enter `owner/repo` directly. After cloning, choose **Open project** to work in that folder.
+
+`GH_TOKEN` takes precedence over `GITHUB_TOKEN`, and both override saved GitHub CLI credentials. Settings shows the effective account. Update or remove an environment token before browser sign-in; use **Sign in with another account** to change a saved account. GitHub CLI uses system credential storage when available and can fall back to its configuration file when secure storage is unavailable.
+
+For an existing Git project, `git remote -v` shows its remotes. Connect a missing destination with `git remote add origin <repository-url>`. Other Git hosts use your system Git credentials or SSH keys. Ask notch to commit and push to review the destination and files before publishing; sensitive file paths and renames stay excluded. A push rejection leaves the commit local so you can resolve authentication, permissions or remote changes and retry.
+
 ## Colibri (experimental)
 
 Colibri selects its tokenizer and supported chat template from the selected checkpoint and model family. Managed launches isolate tokenizer, template and stop-token settings from other models.

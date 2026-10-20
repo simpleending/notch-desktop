@@ -13,7 +13,7 @@ test('default desktop tasks share the project, queue whole turns, and retain ind
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'notch-desktop-shared-')),cwd=path.join(root,'project');await fs.mkdir(cwd);await fs.writeFile(path.join(cwd,'shared.txt'),'original');
   const host=createHost(path.join(root,'profile')),model='openrouter/fixture/shared',previous=globalThis.fetch;
   host.listModels=async()=>[{key:model,enabled:true}];host.resolveModelChoice=()=>model;
-  host.modelManager={key:async()=>'fixture-only'};
+  host.modelManager={key:async()=>'fixture-only',fallbacks:()=>[]};
   let release;const calls=[],tasks=[];
   globalThis.fetch=async(_url,init)=>{
     const body=JSON.parse(init.body),label=body.messages.find(row=>row.role==='user').content,results=body.messages.filter(row=>row.role==='tool');calls.push(label);
@@ -47,7 +47,7 @@ test('parallel desktop cloud tasks isolate shell files, deliver native changes, 
   const cloud='openrouter/fixture/chat';
   const host=createHost(path.join(root,'profile'));
   host.listModels=async()=>[{key:cloud,enabled:true}]; host.resolveModelChoice=()=>cloud;
-  host.modelManager={getWorkspaceMode:async()=>'isolated',cloudCatalog:async()=>[{key:cloud,enabled:true,maxInputTokens:16384,maxOutputTokens:2048,defaultContextWindow:16384}],key:async()=>'fixture-only',context:()=>16384,requestedContext:()=>undefined};
+  host.modelManager={getWorkspaceMode:async()=>'isolated',cloudCatalog:async()=>[{key:cloud,enabled:true,maxInputTokens:16384,maxOutputTokens:2048,defaultContextWindow:16384}],key:async()=>'fixture-only',context:()=>16384,requestedContext:()=>undefined,fallbacks:()=>[]};
   const sourceEvents = (event) => async input => { hookEvents.push({event,input}); if (event==='pre') assert.equal(await fs.readFile(path.join(cwd,'shared.txt'),'utf8'),'original'); };
   globalThis.fetch=async(url,init)=>{
     assert.equal(String(url),'https://openrouter.ai/api/v1/chat/completions');

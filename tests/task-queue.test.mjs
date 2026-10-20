@@ -28,7 +28,7 @@ test('real desktop provider queue isolates chats, cancels a waiter and leaves Op
     if(url.startsWith('http://127.0.0.1:11436'))throw new Error('No managed daemon');
     return {ok:true,json:async()=>url.endsWith('/api/tags')?{models:[{name:'queue-fixture',size:2**30}]}:url.endsWith('/api/ps')?{models:[]}:{capabilities:['tools'],model_info:{'general.architecture':'fixture','fixture.context_length':8192,'fixture.block_count':16,'fixture.attention.head_count_kv':4,'fixture.attention.key_length':128,'fixture.attention.value_length':128}}};
   }});
-  host.modelManager={status:async()=>({}),mlxModels:async()=>[],cloudCatalog:async()=>[{key:cloudKey,provider:'openrouter',enabled:true,defaultContextWindow:8192,maxInputTokens:8192,maxOutputTokens:1024}],key:async()=>'fixture-only',context:()=>8192,requestedContext:()=>undefined};
+  host.modelManager={status:async()=>({}),mlxModels:async()=>[],cloudCatalog:async()=>[{key:cloudKey,provider:'openrouter',enabled:true,defaultContextWindow:8192,maxInputTokens:8192,maxOutputTokens:1024}],key:async()=>'fixture-only',context:()=>8192,requestedContext:()=>undefined,fallbacks:()=>[]};
   const tasks=[];
   const start=(sessionId,prompt,model=localKey)=>{const query=host.query({cwd,sessionId,prompt,model,permissionMode:'read-only',tools:['Read']}),events=[];const done=(async()=>{for await(const event of query)events.push(event);return events;})();tasks.push({query,done});return {query,done,events};};
   try{

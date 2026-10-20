@@ -36,9 +36,10 @@ export function redactGitHubOutput(text) {
     .slice(0, 500);
 }
 
-export function gitHubChildEnv(env) {
+export function gitHubChildEnv(env, browserLogin = false) {
   const next = { ...env };
-  for (const key of TOKEN_ENV) delete next[key];
+  if (browserLogin) for (const key of TOKEN_ENV) delete next[key];
+  next.GH_HOST = 'github.com';
   return next;
 }
 
@@ -119,145 +120,140 @@ function emptyState(extra = {}) {
 }
 
 export function createGitHubAuth({
-  platform = process.platform,
-  env = process.env,
-  run = defaultRun,
-  spawnProcess = spawn,
-  openExternal = async () => {},
-  pickDirectory = async () => null,
-  exists,
+  platform = process.platform, env = process.env, run = defaultRun, spawnProcess = spawn,
+  openExternal = async () => {}, pickDirectory = async () => null, exists, fetchApi = fetch,
 } = {}) {
-  let phase = 'ready';
-  let code = null;
-  let url = DEVICE_URL;
-  let message = '';
-  let loginChild = null;
-  let repos = null;
-
+  let phase = 'ready', code = null, url = DEVICE_URL, message = '', loginChild = null;
+  let repos = null, repoPage = 0, hasMore = false, clonedPath = null;
+  let cached = null, checkedAt = 0, checking = null, loginGeneration = 0;
   const childEnv = () => gitHubChildEnv(env);
-  const environmentToken = () => TOKEN_ENV.some(key => !!env[key]);
+  const environmentToken = () => !!(env.GH_TOKEN || env.GITHUB_TOKEN);
 
-  async function status() {
-    const installedPath = await locateGitHubCli({ platform, env: childEnv(), run, exists });
-    let account = null;
-    if (installedPath) {
-      try {
-        const result = await run(installedPath, ['auth', 'status', '--hostname', 'github.com'], { timeout: 15_000, env: childEnv() });
-        account = parseGitHubAccount(`${result.stdout}\n${result.stderr}`);
-      } catch (error) {
-        account = parseGitHubAccount(`${error.stdout || ''}\n${error.stderr || ''}`);
-      }
+  async function status(force = false) {
+    if (force) checkedAt = 0;
+    if (!cached || Date.now() - checkedAt >= 15_000) {
+      checking ||= (async () => {
+        const installedPath = await locateGitHubCli({ platform, env: childEnv(), run, exists });
+        let account = null;
+        try {
+          if (installedPath) {
+            const result = await run(installedPath, ['auth', 'status', '--active', '--hostname', 'github.com', '--json', 'hosts'], { timeout: 15_000, env: childEnv() });
+            account = JSON.parse(result.stdout).hosts?.['github.com']?.find(row => row.active === true && row.state === 'success')?.login || null;
+          } else if (environmentToken()) {
+            const response = await fetchApi('https://api.github.com/user', { headers: { Authorization: `Bearer ${env.GH_TOKEN || env.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2026-03-10' }, signal: AbortSignal.timeout(15_000) });
+            if (response.ok) account = (await response.json()).login || null;
+          }
+        } catch { /* Never report an inactive or invalid account as signed in. */ }
+        if (cached?.account !== account) { repos = null; repoPage = 0; hasMore = false; if (cached && phase === 'ready') message = ''; }
+        cached = { installed: !!installedPath, account, installedPath };
+        checkedAt = Date.now();
+      })().finally(() => { checking = null; });
+      await checking;
     }
-    const tokenWarning = environmentToken() ? ' A GITHUB_TOKEN in the environment overrides this sign-in.' : '';
-    if (phase === 'installing' || phase === 'waiting' || phase === 'cloning') {
-      return emptyState({ installed: !!installedPath, account, phase, code, url, message, environmentToken: environmentToken(), repos });
-    }
-    return emptyState({
-      installed: !!installedPath,
-      account,
-      phase: 'ready',
-      message: account ? `Signed in as ${account}.${tokenWarning}` : installedPath ? `GitHub CLI is installed. Sign in with the browser to clone and push.${tokenWarning}` : 'Install GitHub CLI, then sign in with the browser.',
-      environmentToken: environmentToken(),
-      repos,
-    });
+    const { installed, account } = cached;
+    const source = env.GH_TOKEN ? 'GH_TOKEN' : 'GITHUB_TOKEN';
+    const summary = environmentToken()
+      ? account ? `Signed in as ${account} using ${source}.` : `${source} is configured but GitHub could not validate it. Update or remove it to use browser sign-in.`
+      : account ? `Signed in as ${account}.` : installed ? 'Sign in with GitHub to clone and push, or sign in again to repair authentication.' : 'Install GitHub CLI, then sign in with the browser.';
+    return emptyState({ installed, account, phase, code, url, message: message || summary, environmentToken: environmentToken(), repos, repoPage, hasMore, clonedPath });
   }
 
   return {
     status,
-    async install() {
-      if (phase === 'installing' || phase === 'waiting') throw new Error('GitHub setup is already running.');
-      if (await locateGitHubCli({ platform, env: childEnv(), run, exists })) return status();
+    async install(fromLogin = false) {
+      if (phase !== 'ready' && !(fromLogin && phase === 'waiting')) throw new Error('GitHub setup is already running.');
+      if (await locateGitHubCli({ platform, env: childEnv(), run, exists })) return status(true);
       const installer = await locateInstaller(platform, env, run, exists);
-      if (!installer) throw new Error(platform === 'linux' ? 'Install GitHub CLI from https://github.com/cli/cli/blob/trunk/docs/install_linux.md and then sign in.' : 'Install GitHub CLI from https://cli.github.com/ and then sign in.');
-      phase = 'installing'; message = platform === 'win32' ? 'Installing GitHub CLI with WinGet…' : 'Installing GitHub CLI with Homebrew…'; code = null;
+      if (!installer) throw new Error('Install GitHub CLI from https://cli.github.com/ and then sign in.');
+      phase = 'installing'; message = 'Installing GitHub CLI…';
       try {
-        await run(installer.file, installer.args, { timeout: 600_000, env: childEnv() });
-      } catch (error) {
-        const installed = await locateGitHubCli({ platform, env: childEnv(), run, exists });
-        if (!installed) {
-          phase = 'ready';
-          throw new Error(redactGitHubOutput(`${error.stderr || ''}\n${error.stdout || ''}\n${error.message}`) || 'GitHub CLI installation failed.');
+        try { await run(installer.file, installer.args, { timeout: 600_000, env: childEnv() }); }
+        catch (error) {
+          if (!await locateGitHubCli({ platform, env: childEnv(), run, exists })) throw new Error(redactGitHubOutput(error.stderr || error.message) || 'GitHub CLI installation failed.');
         }
-      }
-      phase = 'ready'; message = 'GitHub CLI is installed.';
-      const installed = await locateGitHubCli({ platform, env: childEnv(), run, exists });
-      if (!installed) { throw new Error('GitHub CLI installed, but it is not available yet. Open notch again and sign in.'); }
-      return status();
+      } finally { phase = 'ready'; message = ''; }
+      const next = await status(true);
+      if (!next.installed) throw new Error('GitHub CLI installed, but is not available yet. Restart notch and try again.');
+      return next;
     },
     async login() {
-      if (loginChild) throw new Error('GitHub sign-in is already open.');
-      let installed = await locateGitHubCli({ platform, env: childEnv(), run, exists });
-      if (!installed) await this.install();
-      installed = await locateGitHubCli({ platform, env: childEnv(), run, exists });
-      if (!installed) throw new Error('GitHub CLI is not installed.');
-      phase = 'waiting'; code = null; url = DEVICE_URL; message = 'Waiting for the one-time code…'; repos = null;
-      const child = spawnProcess(installed, ['auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--web', '--skip-ssh-key'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: childEnv() });
+      if (environmentToken()) throw new Error('Remove GH_TOKEN and GITHUB_TOKEN from the environment before browser sign-in, or update the configured token.');
+      if (phase !== 'ready' || loginChild) throw new Error('GitHub setup is already running.');
+      const generation = ++loginGeneration;
+      phase = 'waiting'; code = null; message = 'Starting GitHub sign-in…';
+      let gh = await locateGitHubCli({ platform, env: childEnv(), run, exists });
+      if (generation !== loginGeneration) return status();
+      if (!gh) { await this.install(true); gh = await locateGitHubCli({ platform, env: childEnv(), run, exists }); }
+      if (generation !== loginGeneration) return status();
+      if (!gh) throw new Error('GitHub CLI is not installed.');
+      phase = 'waiting'; code = null; url = DEVICE_URL; message = 'Waiting for the one-time code…';
+      const child = spawnProcess(gh, ['auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--web', '--skip-ssh-key'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: gitHubChildEnv(env, true) });
       loginChild = child;
-      let output = '';
-      let opened = false;
-      let setupWarning = '';
+      let output = '', opened = false, setupWarning = '';
       const take = chunk => {
+        if (generation !== loginGeneration) return;
         output += String(chunk);
         if (output.length > 100_000) { child.kill(); return; }
-        const nextCode = parseDeviceCode(output);
-        if (nextCode) code = nextCode;
+        code = parseDeviceCode(output);
         const found = output.match(/https:\/\/github\.com\/login\/device[^\s)'"]*/);
-        const safe = found ? safeDeviceUrl(found[0]) : null;
-        if (safe) url = safe;
-        if (code && !opened) {
-          opened = true;
-          message = `Enter ${code} in the browser.`;
-          Promise.resolve(openExternal(url)).catch(() => {});
-        }
+        url = found && safeDeviceUrl(found[0]) || DEVICE_URL;
+        if (code && !opened) { opened = true; message = `Enter ${code} in the browser.`; Promise.resolve(openExternal(url)).catch(() => {}); }
       };
-      child.stdout?.on('data', take);
-      child.stderr?.on('data', take);
+      child.stdout?.on('data', take); child.stderr?.on('data', take);
       try {
-        const exitCode = await new Promise((resolve, reject) => {
-          child.once('error', reject);
-          child.once('close', resolve);
-        });
+        const exitCode = await new Promise((resolve, reject) => { child.once('error', reject); child.once('close', resolve); });
+        if (generation !== loginGeneration) return status();
         if (exitCode !== 0) throw new Error(redactGitHubOutput(output) || `GitHub sign-in exited with status ${exitCode}.`);
-        try { await run(installed, ['auth', 'setup-git', '--hostname', 'github.com'], { timeout: 20_000, env: childEnv() }); }
+        try { await run(gh, ['auth', 'setup-git', '--hostname', 'github.com'], { timeout: 20_000, env: childEnv() }); }
         catch (error) { setupWarning = redactGitHubOutput(error.stderr || error.message); }
-      } finally { if (loginChild === child) loginChild = null; phase = 'ready'; }
-      const next = await status();
-      if (!next.account) throw new Error(redactGitHubOutput(output) || 'GitHub sign-in did not finish.');
-      if (setupWarning) next.message = `Signed in as ${next.account}. Git credential setup needs another try: ${setupWarning}`;
+      } finally { if (loginChild === child) { loginChild = null; phase = 'ready'; code = null; message = ''; } }
+      const next = await status(true);
+      if (!next.account) throw new Error('GitHub sign-in did not finish. Sign in again.');
+      if (setupWarning) message = next.message = `${next.message} Git credential setup needs another try: ${setupWarning}`;
+      if (/credentials saved in plain text/i.test(output)) message = next.message = `${next.message} GitHub CLI could not use secure storage and saved credentials in its configuration file.`;
       return next;
     },
     async cancel() {
-      loginChild?.kill();
-      loginChild = null;
-      if (phase === 'waiting') { phase = 'ready'; message = 'GitHub sign-in cancelled.'; code = null; }
+      loginGeneration += 1;
+      const child = loginChild; loginChild = null;
+      phase = 'ready'; code = null; message = 'GitHub sign-in cancelled.';
+      child?.kill();
       return status();
     },
-    async repos() {
-      const current = await status();
-      if (!current.installed || !current.account) throw new Error('Sign in with GitHub first.');
-      const gh = await locateGitHubCli({ platform, env: childEnv(), run, exists });
-      const result = await run(gh, ['repo', 'list', '--limit', '20', '--json', 'nameWithOwner,description,isPrivate'], { timeout: 30_000, env: childEnv() });
-      const rows = JSON.parse(result.stdout);
+    async repos(page = 1) {
+      if (!Number.isSafeInteger(page) || page < 1 || (page !== 1 && page !== repoPage + 1)) throw new Error('Choose the next repository page.');
+      const current = await status(true);
+      if (!current.account) throw new Error(current.message);
+      const endpoint = `/user/repos?affiliation=owner,collaborator,organization_member&sort=updated&per_page=100&page=${page}`;
+      let rows;
+      if (cached.installedPath) rows = JSON.parse((await run(cached.installedPath, ['api', '--hostname', 'github.com', endpoint], { timeout: 30_000, env: childEnv() })).stdout);
+      else {
+        const response = await fetchApi(`https://api.github.com${endpoint}`, { headers: { Authorization: `Bearer ${env.GH_TOKEN || env.GITHUB_TOKEN}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2026-03-10' }, signal: AbortSignal.timeout(30_000) });
+        if (!response.ok) throw new Error(`GitHub repository request failed: ${response.status}`);
+        rows = await response.json();
+      }
       if (!Array.isArray(rows)) throw new Error('GitHub returned an unexpected repository list.');
-      repos = rows.filter(row => REPO_NAME.test(row?.nameWithOwner)).map(row => ({ nameWithOwner: row.nameWithOwner, description: typeof row.description === 'string' ? row.description.slice(0, 180) : '', isPrivate: row.isPrivate === true }));
-      return { ...current, repos };
+      const next = rows.filter(row => REPO_NAME.test(row?.full_name)).map(row => ({ nameWithOwner: row.full_name, description: typeof row.description === 'string' ? row.description.slice(0, 180) : '', isPrivate: row.private === true }));
+      repos = [...new Map([...(page === 1 ? [] : repos || []), ...next].map(row => [row.nameWithOwner, row])).values()];
+      repoPage = page; hasMore = rows.length === 100; message = '';
+      return status();
     },
     async clone(repo) {
-      if (!REPO_NAME.test(repo || '')) throw new Error('Choose a repository from the list.');
-      const current = await status();
-      if (!current.account) throw new Error('Sign in with GitHub first.');
+      if (typeof repo !== 'string' || !REPO_NAME.test(repo) || repo.split('/').some(part => part === '.' || part === '..')) throw new Error('Choose a repository from the list or enter owner/repo.');
+      if (phase !== 'ready') throw new Error('GitHub setup is already running.');
+      const current = await status(true);
+      if (!current.account) throw new Error(current.message);
       const directory = await pickDirectory();
       if (!directory) return current;
       const gh = await locateGitHubCli({ platform, env: childEnv(), run, exists });
-      if (!gh) throw new Error('GitHub CLI is not installed.');
+      if (!gh) throw new Error('Install GitHub CLI before cloning.');
       const destination = path.join(directory, repo.split('/')[1]);
       phase = 'cloning'; message = `Cloning ${repo}…`;
-      try { await run(gh, ['repo', 'clone', repo, destination], { timeout: 600_000, env: childEnv() }); }
-      catch (error) { phase = 'ready'; throw new Error(redactGitHubOutput(`${error.stderr || ''}\n${error.message}`) || 'Clone failed.'); }
-      phase = 'ready';
-      const next = await status();
-      next.message = `Cloned ${repo}.`;
-      return next;
+      try { await run(gh, ['repo', 'clone', `https://github.com/${repo}.git`, destination], { timeout: 600_000, env: childEnv() }); }
+      catch (error) { message = ''; throw new Error(redactGitHubOutput(error.stderr || error.message) || 'Clone failed.'); }
+      finally { phase = 'ready'; }
+      clonedPath = destination; message = `Cloned ${repo} to ${destination}.`;
+      return status();
     },
   };
 }

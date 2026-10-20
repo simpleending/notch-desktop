@@ -57,7 +57,7 @@ export interface DesktopTurn {
   fallbacks?: string[];
 }
 
-const desktopToolNames: Record<string, string> = { Read: 'read', TaskChanges: 'task_changes', Write: 'write', Edit: 'edit', Bash: 'shell', Glob: 'glob', Grep: 'grep', Git: 'git', ApplyPatch: 'apply_patch', WebFetch: 'web_fetch', WebSearch: 'web_search', BrowserRead: 'browser_read', BrowserInteract: 'browser_interact', Agent: 'task' };
+const desktopToolNames: Record<string, string> = { Read: 'read', TaskChanges: 'task_changes', Write: 'write', Edit: 'edit', Bash: 'shell', Glob: 'glob', Grep: 'grep', Git: 'git', GitHub: 'github', ApplyPatch: 'apply_patch', WebFetch: 'web_fetch', WebSearch: 'web_search', BrowserRead: 'browser_read', BrowserInteract: 'browser_interact', Agent: 'task' };
 export function desktopToolName(name: string): string { return desktopToolNames[name] ?? name; }
 export function definitionRules(values: string[] = [], level: 'allow' | 'deny'): PermissionRule[] {
   return values.map(value => {

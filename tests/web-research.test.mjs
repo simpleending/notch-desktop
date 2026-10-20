@@ -39,6 +39,8 @@ test('without system encryption keys stay in memory and browser installs cannot 
 test('web tool and settings bridges patch once and fail closed on a changed native catalog', () => {
   const original = 'const KHe=["Read","Write","Edit","Glob","Grep","Bash","WebSearch","WebFetch","ImageGen"];';
   const patched = patchWebToolCatalog(original); assert.match(patched, /"BrowserRead","BrowserInteract"/); assert.equal(patchWebToolCatalog(patched), patched); assert.throws(() => patchWebToolCatalog('changed'), /differs/);
+  assert.match(patched, /"Git","GitHub"/);
+  assert.equal(patchWebToolCatalog(patched.replace('"Git","GitHub",', '')), patched);
   const bridge = patchModelPreload(''); assert.match(bridge, /web:patch=>/); assert.match(bridge, /webInstall:/); assert.equal(patchModelPreload(bridge), bridge);
 });
 

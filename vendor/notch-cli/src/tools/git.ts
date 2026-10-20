@@ -12,7 +12,26 @@ import { simpleGit, type SimpleGit } from 'simple-git';
 import { z } from 'zod';
 import type { NotchTool, ToolResult, ToolContext } from './types.js';
 
-const PROTECTED_BRANCHES = ['main', 'master', 'production', 'release'];
+const PROTECTED = new Set(['main', 'master', 'production', 'release']);
+
+export function forcePushError(args: string[], currentBranch: string): string | null {
+  const force = args.some(arg => arg.startsWith('+') || /^--(?:for|mir)/.test(arg) || /^-[^-]*f/.test(arg));
+  if (!force) return null;
+  const flags = args.filter(arg => arg.startsWith('-'));
+  const values = args.filter(arg => !arg.startsWith('-'));
+  // Require explicit destinations rather than guessing push.default or remote push mappings.
+  if (flags.some(arg => !/^(?:--force(?:-with-lease(?:=.*)?)?|-[fuvq]+|--(?:verbose|quiet|porcelain|set-upstream))$/.test(arg)) || values.length < 2) {
+    return 'Blocked: force-push needs an explicit remote and unprotected destination branch.';
+  }
+  for (const refspec of values.slice(1)) {
+    let destination = refspec.replace(/^\+/, '').split(':').at(-1) || '';
+    if (destination === 'HEAD') destination = currentBranch;
+    destination = destination.replace(/^refs\/heads\//, '');
+    if (!destination || destination.includes('*') || PROTECTED.has(destination)) return 'Blocked: cannot force-push to a protected or ambiguous destination branch.';
+  }
+  return null;
+}
+
 const SECRET_PATH = /(?:^|\/)(?:\.env(?:\.|$)|credentials(?:\.json)?$|[^/]+\.(?:pem|p12|pfx|key)$|id_rsa(?:\.pub)?$|id_ed25519(?:\.pub)?$)/i;
 
 const parameters = z.object({
@@ -41,20 +60,18 @@ function gitExec(cwd: string, args: string[], signal?: AbortSignal): Promise<{ s
   });
 }
 
-function changedFiles(porcelain: string): string[] {
-  const parts = porcelain.split('\0').filter(entry => entry.length > 0);
-  const files: string[] = [];
-  for (let index = 0; index < parts.length; index += 1) {
-    const entry = parts[index] ?? '';
-    if (entry.length < 4) continue;
-    const status = entry.slice(0, 2);
-    const file = entry.slice(3);
-    if (status.startsWith('R') || status.startsWith('C')) {
-      files.push(parts[index + 1] || file);
-      index += 1;
-    } else files.push(file);
+function changedFiles(porcelain: string): { safe: string[]; secrets: string[] } {
+  const entries = porcelain.split('\0').filter(Boolean);
+  const safe = new Set<string>();
+  const secrets = new Set<string>();
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+    const files = [entry.slice(3)];
+    if (/[RC]/.test(entry.slice(0, 2))) files.push(entries[++index]!);
+    const target = files.some(isSecretPath) ? secrets : safe;
+    for (const file of files) target.add(file);
   }
-  return [...new Set(files.filter(Boolean))];
+  return { safe: [...safe].filter(file => !secrets.has(file)), secrets: [...secrets] };
 }
 
 async function commitAndPush(message: string, ctx: ToolContext): Promise<ToolResult> {
@@ -62,50 +79,50 @@ async function commitAndPush(message: string, ctx: ToolContext): Promise<ToolRes
   if (!clean || clean.length > 2000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(clean)) {
     return { content: 'Commit and push needs a message of 2,000 characters or fewer.', isError: true, notExecuted: true };
   }
-  let inside = '';
-  try { inside = (await gitExec(ctx.cwd, ['rev-parse', '--is-inside-work-tree'], ctx.abortSignal)).stdout.trim(); }
-  catch { return { content: 'This folder is not a Git repository.', isError: true, notExecuted: true }; }
-  if (inside !== 'true') return { content: 'This folder is not a Git repository.', isError: true, notExecuted: true };
-  const branch = (await gitExec(ctx.cwd, ['rev-parse', '--abbrev-ref', 'HEAD'], ctx.abortSignal)).stdout.trim();
-  if (!branch || branch === 'HEAD') return { content: 'Commit and push needs a branch. This repository is in detached HEAD.', isError: true, notExecuted: true };
-  const changes = changedFiles((await gitExec(ctx.cwd, ['status', '--porcelain', '-z'], ctx.abortSignal)).stdout);
-  const secrets = changes.filter(isSecretPath);
-  const safe = changes.filter(file => !isSecretPath(file));
-  let upstream = '';
-  let ahead = 0;
-  try {
-    upstream = (await gitExec(ctx.cwd, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], ctx.abortSignal)).stdout.trim();
-    const counts = (await gitExec(ctx.cwd, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD'], ctx.abortSignal)).stdout.trim().split(/\s+/);
-    ahead = Number(counts[1] || 0);
-  } catch { upstream = ''; }
-  if (!safe.length && ahead < 1) {
-    return { content: secrets.length ? `Nothing safe to commit. Left unstaged: ${secrets.join(', ')}.` : 'Nothing to commit or push.', isError: secrets.length > 0, notExecuted: true };
-  }
-  const confirmed = await ctx.confirm([
-    `Commit and push ${branch}${upstream ? ` to ${upstream}` : ' to origin'}?`,
-    safe.length ? `Commit: ${clean.split('\n')[0]}` : `Push ${ahead} existing commit${ahead === 1 ? '' : 's'}.`,
+  const run = (args: string[]) => gitExec(ctx.cwd, args, ctx.abortSignal);
+  const optional = (args: string[]) => run(args).then(result => result.stdout.trim()).catch(error => { ctx.abortSignal?.throwIfAborted(); return ''; });
+  if (await optional(['rev-parse', '--is-inside-work-tree']) !== 'true') return { content: 'This folder is not a Git repository. Initialize Git and connect a remote first.', isError: true, notExecuted: true };
+  const branch = await optional(['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  if (!branch) return { content: 'Commit and push needs a branch. This repository is in detached HEAD.', isError: true, notExecuted: true };
+  const hasHead = !!await optional(['rev-parse', '--verify', 'HEAD']);
+  const { safe, secrets } = changedFiles((await run(['status', '--porcelain', '-z', '--untracked-files=all'])).stdout);
+  const upstream = await optional(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}']);
+  const remotes = (await optional(['remote'])).split(/\r?\n/).filter(Boolean);
+  const trackingRemote = await optional(['config', '--get', `branch.${branch}.remote`]);
+  const remote = await optional(['config', '--get', `branch.${branch}.pushRemote`]) || await optional(['config', '--get', 'remote.pushDefault']) || trackingRemote || (remotes.includes('origin') ? 'origin' : remotes.length === 1 ? remotes[0]! : '');
+  if (!remote || remote === '.' || !remotes.includes(remote)) return { content: 'No push remote is configured. Connect one with git remote add origin <repository-url>, or choose a branch push remote.', isError: true, notExecuted: true };
+  const destination = remote === trackingRemote ? (await optional(['config', '--get', `branch.${branch}.merge`]) || `refs/heads/${branch}`) : `refs/heads/${branch}`;
+  const remoteUrl = await optional(['remote', 'get-url', '--push', '--all', remote]);
+  const ahead = upstream ? Number((await optional(['rev-list', '--count', '@{upstream}..HEAD'])) || 0) : hasHead ? 1 : 0;
+  if (!safe.length && ahead < 1) return { content: secrets.length ? `Nothing safe to commit. Left unstaged: ${secrets.join(', ')}.` : 'Nothing to commit or push.', isError: secrets.length > 0, notExecuted: true };
+  if (!await ctx.confirm([
+    `Commit and push ${branch} to ${remote}/${destination.replace(/^refs\/heads\//, '')}?`,
+    `Remote: ${remoteUrl.replace(/(https?:\/\/)[^/@]+@/g, '$1')}`,
+    safe.length ? `Commit: ${clean.split('\n')[0]}` : 'Push existing local commits.',
     safe.length ? `Files: ${safe.join(', ')}` : '',
     secrets.length ? `Left unstaged: ${secrets.join(', ')}` : '',
-  ].filter(Boolean).join('\n'));
-  if (!confirmed) return { content: 'Commit and push cancelled.', isError: true, notExecuted: true };
+  ].filter(Boolean).join('\n'))) return { content: 'Commit and push cancelled.', isError: true, notExecuted: true };
+  ctx.abortSignal?.throwIfAborted();
   if (safe.length) {
-    await gitExec(ctx.cwd, ['add', '-A'], ctx.abortSignal);
-    if (secrets.length) await gitExec(ctx.cwd, ['reset', '-q', '--', ...secrets], ctx.abortSignal);
-    try { await gitExec(ctx.cwd, ['commit', '-m', clean], ctx.abortSignal); }
-    catch (error) {
-      const text = (error as Error).message;
-      if (/user\.(name|email)|tell me who you are/i.test(text)) return { content: 'Commit needs a Git name and email on this computer. Set them with git config user.name and git config user.email, then ask again.', isError: true };
-      return { content: `Commit failed:\n${text}`, isError: true };
+    if (secrets.length) await run(['--literal-pathspecs', ...(hasHead ? ['reset', '-q', '--', ...secrets] : ['rm', '--cached', '-q', '--ignore-unmatch', '--', ...secrets])]);
+    await run(['--literal-pathspecs', 'add', '-A', '--', ...safe]);
+    const stagedSecrets = changedFiles((await run(['status', '--porcelain', '-z', '--untracked-files=all'])).stdout).secrets;
+    if (stagedSecrets.length) await run(['--literal-pathspecs', ...(hasHead ? ['reset', '-q', '--', ...stagedSecrets] : ['rm', '--cached', '-q', '--ignore-unmatch', '--', ...stagedSecrets])]);
+    if ((await run(['diff', '--cached', '--name-only', '-z'])).stdout) {
+      try { await run(['commit', '-m', clean]); }
+      catch (error) {
+        const text = (error as Error).message;
+        if (/user\.(name|email)|tell me who you are/i.test(text)) return { content: 'Commit needs a Git name and email. Set git config user.name and git config user.email, then ask again.', isError: true };
+        return { content: `Commit failed:\n${text}`, isError: true };
+      }
     }
   }
   try {
-    const push = upstream
-      ? await gitExec(ctx.cwd, ['push'], ctx.abortSignal)
-      : await gitExec(ctx.cwd, ['push', '-u', 'origin', 'HEAD'], ctx.abortSignal);
-    const sha = (await gitExec(ctx.cwd, ['rev-parse', '--short', 'HEAD'], ctx.abortSignal)).stdout.trim();
+    const push = await run(['push', '-u', remote, `HEAD:${destination}`]);
+    const sha = (await run(['rev-parse', '--short', 'HEAD'])).stdout.trim();
     return { content: [`Committed and pushed ${branch} (${sha}).`, secrets.length ? `Left unstaged: ${secrets.join(', ')}.` : '', [push.stdout, push.stderr].filter(Boolean).join('\n').trim()].filter(Boolean).join('\n') };
   } catch (error) {
-    const sha = await gitExec(ctx.cwd, ['rev-parse', '--short', 'HEAD'], ctx.abortSignal).then(result => result.stdout.trim()).catch(() => '');
+    const sha = await optional(['rev-parse', '--short', 'HEAD']);
     return { content: `Commit ${sha || 'created'} is local. Push failed:\n${(error as Error).message}`, isError: true };
   }
 }
@@ -198,14 +215,8 @@ export const gitTool: NotchTool<typeof parameters> = {
         case 'push': {
           const currentBranch = (await git.status()).current ?? '';
           const args = params.args?.split(' ') ?? [];
-          const isForce = args.includes('--force') || args.includes('-f');
-
-          if (isForce && PROTECTED_BRANCHES.includes(currentBranch)) {
-            return {
-              content: `Blocked: cannot force-push to protected branch "${currentBranch}". Use --force-with-lease instead.`,
-              isError: true,
-            };
-          }
+          const blocked = forcePushError(args, currentBranch);
+          if (blocked) return { content: blocked, isError: true, notExecuted: true };
 
           await git.push(args);
           return { content: `Pushed ${currentBranch} successfully` };

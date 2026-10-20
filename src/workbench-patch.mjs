@@ -173,12 +173,20 @@ export function patchThemeBroadcast(source) {
     return replaceOnce(body,'const m1=reactExports.useMemo(',effect+'const m1=reactExports.useMemo(');
   });
 }
+const gitHubAppearance = 'function AppearanceSettings(){const preferences=useWorkbenchPreferences(),{i18n}=useTranslation(),{localWorkspaceService}=useServices(),navigation=useNavigation();const onOpenProject=path=>openClonedProject(path,localWorkspaceService,navigation);return reactExports.createElement(NotchAppearance,{preferences,language:resolveInterfaceLanguage(i18n.resolvedLanguage??i18n.language),setLanguage:setInterfaceLanguage,onOpenProject});}';
+
 export function patchWorkbenchRenderer(source) {
   source = patchLocalOnlyRenderer(source);
   source = patchThemeBroadcast(source);
   // Keep extension management on its existing local installer, away from the retired account marketplace.
   if (source.includes('function ExtensionsView(')) source = patchFunction(source, 'ExtensionsView', 'function ExtensionsView({initialKind="plugin"}){return jsxRuntimeExports.jsx(InstalledExtensionsSettings,{initialKind});}');
-  if (source.includes('/* notch workbench skin */')) return patchEnglishRenderer(patchSecondaryArtwork(source));
+  if (source.includes('/* notch workbench skin */')) {
+    if (source.includes('function AppearanceSettings(')) {
+      source = patchFunction(source, 'AppearanceSettings', gitHubAppearance);
+      source = source.replace(/import\s*\{([^}]+)\}\s*from\s*(['"])\.\/workbench-skin\.mjs\2/, (match, names) => names.split(',').some(name => name.trim() === 'openClonedProject') ? match : match.replace('{', '{openClonedProject,'));
+    }
+    return patchEnglishRenderer(patchSecondaryArtwork(source));
+  }
   source = patchFunction(source, 'preloadDoodleAssets', 'function preloadDoodleAssets(){}');
   for (const name of ['AgentGreetingMark', 'AppleTreeDoodle', 'ImageDoodle', 'PartnerPlanGreetingMark', 'MobileAppDownloadPromo', 'NewChatCursorGrid', 'FeedbackFloatingButton', 'FeedbackDialog']) {
     source = patchFunction(source, name, `function ${name}(){return null;}`);
@@ -202,7 +210,7 @@ export function patchWorkbenchRenderer(source) {
     section = replaceOnce(section, 'placeholder:i2("newChat.placeholder")', 'placeholder:"Describe what you want to build or change…"');
     return replaceOnce(section, '"data-new-chat-b1-content":!0', '"data-new-chat-b1-content":!0,"data-notch-home":!0');
   });
-  source = patchFunction(source, 'AppearanceSettings', 'function AppearanceSettings(){const preferences=useWorkbenchPreferences(),{i18n}=useTranslation();return reactExports.createElement(NotchAppearance,{preferences,language:resolveInterfaceLanguage(i18n.resolvedLanguage??i18n.language),setLanguage:setInterfaceLanguage});}');
+  source = patchFunction(source, 'AppearanceSettings', gitHubAppearance);
   source = patchFunction(source, 'SettingsView', section => {
     section = replaceOnce(section, 'const H2=M2.flatMap(D3=>D3.items)', 'const H2=M2.flatMap(D3=>D3.items).filter(item=>!["pet","mobile","playground"].includes(item.id))');
     return replaceOnce(section, 'N2=p1?void 0:w2===', 'N2=p1?void 0:["pet","mobile","playground"].includes(w2)?"appearance":w2===');
@@ -235,7 +243,7 @@ export function patchWorkbenchRenderer(source) {
   source = replaceOnce(source, 'const NotchSetup=createNotchSetup(reactExports);', 'const {Brand:NotchWindowBrand,ThemeControls:NotchThemeControls,ModeSwitch:NotchModeSwitch,Welcome:NotchWelcome,QuickStart:NotchQuickStart,PanelLauncher:NotchPanelLauncher,Appearance:NotchAppearance,LocalProfile:NotchLocalProfile,Symbol:NotchSymbol}=createNotchWorkbench(reactExports,useTheme);const NotchSetup=createNotchSetup(reactExports);');
   // Initialize after the bundle's house components, before React renders.
   source = source.replace('const NotchSetup=createNotchSetup(reactExports);','const NotchModelMenu=createModelMenu(reactExports,{Popover,PopoverTrigger,PopoverContent},useTheme);const NotchSetup=createNotchSetup(reactExports);');
-  return patchEnglishRenderer(patchSecondaryArtwork('/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench} from "./workbench-skin.mjs";\n' + source));
+  return patchEnglishRenderer(patchSecondaryArtwork('/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench,openClonedProject} from "./workbench-skin.mjs";\n' + source));
 }
 
 export async function verifyWorkbenchImports(assets, checkExports = true) {

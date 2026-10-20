@@ -7,56 +7,14 @@
  * Copyright 2026 Driftrail. Apache-2.0.
  */
 
-import { execFile } from 'node:child_process';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { z } from 'zod';
 import type { NotchTool, ToolResult, ToolContext } from './types.js';
+import { readGitHubCliToken } from '../github/gh.js';
 
 const GITHUB_API = 'https://api.github.com';
 
-async function gitHubExecutable(): Promise<string | null> {
-  const name = process.platform === 'win32' ? 'gh.exe' : 'gh';
-  const candidates: string[] = [];
-  if (process.platform === 'win32') {
-    for (const root of [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA]) {
-      if (root) candidates.push(path.join(root, 'GitHub CLI', name));
-    }
-  }
-  candidates.push(name);
-  for (const file of candidates) {
-    if (path.basename(file).toLowerCase() !== name) continue;
-    if (file === name) return file;
-    try { await fs.access(file); return file; } catch { /* Try the next install location. */ }
-  }
-  return null;
-}
-
-async function getToken(): Promise<string | null> {
-  if (process.env.GITHUB_TOKEN || process.env.GH_TOKEN) return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
-  const executable = await gitHubExecutable();
-  if (!executable) return null;
-  try {
-    const token = await new Promise<string>((resolve, reject) => {
-      const env = { ...process.env };
-      delete env.GH_TOKEN; delete env.GITHUB_TOKEN; delete env.GH_ENTERPRISE_TOKEN; delete env.GITHUB_ENTERPRISE_TOKEN;
-      execFile(executable, ['auth', 'token', '--hostname', 'github.com'], { windowsHide: true, timeout: 15_000, env }, (error, stdout) => error ? reject(error) : resolve(String(stdout).trim()));
-    });
-    if (/^[\w.-]+$/.test(token) && token.length >= 8 && token.length <= 300) return token;
-  } catch { /* The GitHub CLI is not signed in. */ }
-  return null;
-}
-
-async function ghFetch(path: string, opts: RequestInit = {}): Promise<Response> {
-  const token = await getToken();
-  const headers: Record<string, string> = {
-    'Accept': 'application/vnd.github+json',
-    'X-GitHub-Api-Version': '2026-03-10',
-    ...(opts.headers as Record<string, string> ?? {}),
-  };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-
-  return fetch(`${GITHUB_API}${path}`, { ...opts, headers });
+async function getToken(signal?: AbortSignal): Promise<string | null> {
+  return readGitHubCliToken(process.env, signal);
 }
 
 const parameters = z.object({
@@ -68,13 +26,13 @@ const parameters = z.object({
     'create_issue',
     'pr_status',
   ]).describe('The GitHub operation to perform'),
-  owner: z.string().describe('Repository owner (user or org)'),
-  repo: z.string().describe('Repository name'),
+  owner: z.string().regex(/^[A-Za-z0-9-]+$/).describe('Repository owner (user or org)'),
+  repo: z.string().regex(/^[A-Za-z0-9_.-]+$/).refine(value => value !== '.' && value !== '..').describe('Repository name'),
   // PR fields
   title: z.string().optional().describe('PR or issue title'),
   body: z.string().optional().describe('PR or issue body/description'),
   head: z.string().optional().describe('PR source branch'),
-  base: z.string().optional().describe('PR target branch (default: main)'),
+  base: z.string().optional().describe('PR target branch (defaults to the repository default branch)'),
   // Issue fields
   labels: z.array(z.string()).optional().describe('Labels for issue'),
   // Filter
@@ -84,17 +42,21 @@ const parameters = z.object({
 
 async function execute(
   args: z.infer<typeof parameters>,
-  _ctx: ToolContext,
+  ctx: ToolContext,
 ): Promise<ToolResult> {
-  const token = await getToken();
-  if (!token) {
-    return {
-      content: 'GitHub is not signed in. Open Settings and choose Sign in with GitHub, or run `notch github login`. You can also set GITHUB_TOKEN.',
-      isError: true,
-    };
-  }
-
+  const signal = AbortSignal.any([...(ctx.abortSignal ? [ctx.abortSignal] : []), AbortSignal.timeout(30_000)]);
   try {
+    signal.throwIfAborted();
+    const token = await getToken(signal);
+    signal.throwIfAborted();
+    if (!token) return { content: 'GitHub is not signed in. Run notch github login or sign in from the IDE GitHub settings. You can also set GH_TOKEN.', isError: true };
+    const ghFetch = async (endpoint: string, opts: RequestInit = {}): Promise<Response> => {
+      signal.throwIfAborted();
+      return fetch(`${GITHUB_API}${endpoint}`, { ...opts, signal, headers: {
+        Accept: 'application/vnd.github+json', 'Content-Type': 'application/json',
+        'X-GitHub-Api-Version': '2026-03-10', Authorization: `Bearer ${token}`,
+      } });
+    };
     switch (args.action) {
       case 'repo_info': {
         const res = await ghFetch(`/repos/${args.owner}/${args.repo}`);
@@ -127,22 +89,37 @@ async function execute(
 
       case 'list_issues': {
         const state = args.state ?? 'open';
-        const res = await ghFetch(`/repos/${args.owner}/${args.repo}/issues?state=${state}&per_page=15`);
-        if (!res.ok) return { content: `GitHub API error: ${res.status}`, isError: true };
-        const issues = await res.json() as any[];
-        // Filter out PRs (GitHub API includes PRs in issues)
-        const realIssues = issues.filter((i: any) => !i.pull_request);
-        if (realIssues.length === 0) return { content: `No ${state} issues.` };
-        const lines = realIssues.map((i: any) => {
+        const realIssues: any[] = [];
+        let page = 1;
+        let more = false;
+        do {
+          const res = await ghFetch(`/repos/${args.owner}/${args.repo}/issues?state=${state}&per_page=100&page=${page}`);
+          if (!res.ok) return { content: `GitHub API error: ${res.status}`, isError: true };
+          const rows = await res.json() as any[];
+          realIssues.push(...rows.filter(issue => !issue.pull_request));
+          more = /rel="next"/.test(res.headers.get('link') || '');
+          page += 1;
+        } while (realIssues.length < 15 && more);
+        if (!realIssues.length) return { content: `No ${state} issues.` };
+        more ||= realIssues.length > 15;
+        const lines = realIssues.slice(0, 15).map((i: any) => {
           const labels = i.labels.map((l: any) => l.name).join(', ');
           return `#${i.number} [${i.state}] ${i.title}${labels ? ` [${labels}]` : ''} by @${i.user.login}`;
         });
-        return { content: lines.join('\n') };
+        return { content: lines.join('\n') + (more ? '\nShowing the first 15 issues; more issues are available.' : '') };
       }
 
       case 'create_pr': {
         if (!args.title || !args.head) {
           return { content: 'title and head branch are required for create_pr', isError: true };
+        }
+        let base = args.base;
+        if (!base) {
+          const info = await ghFetch(`/repos/${args.owner}/${args.repo}`);
+          if (!info.ok) return { content: `Cannot resolve the repository default branch: GitHub API error ${info.status}`, isError: true };
+          const repo = await info.json() as { default_branch?: string };
+          base = repo.default_branch;
+          if (!base) return { content: 'The repository has no default branch. Push an initial commit first.', isError: true };
         }
         const res = await ghFetch(`/repos/${args.owner}/${args.repo}/pulls`, {
           method: 'POST',
@@ -150,7 +127,7 @@ async function execute(
             title: args.title,
             body: args.body ?? '',
             head: args.head,
-            base: args.base ?? 'main',
+            base,
           }),
         });
         if (!res.ok) {
@@ -219,13 +196,13 @@ async function execute(
         return { content: `Unknown action: ${args.action}`, isError: true };
     }
   } catch (err: any) {
-    return { content: `GitHub error: ${err.message}`, isError: true };
+    return { content: signal.aborted ? (ctx.abortSignal?.aborted ? 'GitHub request cancelled.' : 'GitHub request timed out. Try again.') : `GitHub error: ${err.message}`, isError: true };
   }
 }
 
 export const githubTool: NotchTool<typeof parameters> = {
   name: 'github',
-  description: 'GitHub operations for pull requests, issues, and repository info. Local commit and push uses the git tool operation commit_and_push. Uses the GitHub CLI sign-in from Settings, or GITHUB_TOKEN. Uses GitHub REST API version 2026-03-10.',
+  description: 'GitHub operations — create PRs, list issues, check PR status, view repo info. Local commit and push uses git commit_and_push. Uses the GitHub sign-in in Settings or GH_TOKEN.',
   parameters,
   execute,
 };

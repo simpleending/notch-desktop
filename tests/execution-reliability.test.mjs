@@ -17,7 +17,7 @@ async function fixture(t){
   });
   async function host(){
     const host=createHost(directory,{hardware:async()=>({totalMemory:16*2**30,availableMemory:8*2**30}),fetcher:async()=>Response.json({models:[]})});
-    host.modelManager={status:async()=>({openrouter:true}),key:async()=> 'fixture-only',mlxModels:async()=>[],getWorkspaceMode:async()=> 'shared',
+    host.modelManager={status:async()=>({openrouter:true}),key:async()=> 'fixture-only',fallbacks:()=>[],mlxModels:async()=>[],getWorkspaceMode:async()=> 'shared',
       context:(_model,_choices,fallback)=>fallback,cloudCatalog:async()=>[{key:'openrouter/lab/coder',enabled:true,defaultContextWindow:32768,maxInputTokens:32768,maxOutputTokens:4000,availableContextWindows:[32768]}]};
     await host.listModels(true);return host;
   }

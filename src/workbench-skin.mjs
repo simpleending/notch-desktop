@@ -5,6 +5,12 @@ import { createGitHubSettings } from './github-settings-view.mjs';
 import { createVoiceModels } from './voice-model-picker.mjs';
 const darkWordmark = new URL('./notch-wordmark-dark.svg', import.meta.url).href;
 const lightWordmark = new URL('./notch-wordmark-light.svg', import.meta.url).href;
+export async function openClonedProject(directory, localWorkspaceService, navigation) {
+  await localWorkspaceService.load();
+  const existing = localWorkspaceService.stateObs.get().workspaces.find(workspace => workspace.rootPaths.includes(directory));
+  const workspace = existing || await localWorkspaceService.create({ name: directory.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || directory, rootPaths: [directory], productMode: 'coding' });
+  navigation.push({ kind: 'new-chat', workspaceId: workspace.workspaceId });
+}
 export function createNotchWorkbench(React, useTheme, primitives = {}) {
   const h = React.createElement;
   const WebSettings = createWebSettings(React);
@@ -60,7 +66,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
         h('button', { key: label, type: 'button', disabled, onClick, 'aria-label': label }, label,
           h('span', { 'aria-hidden': true }, '→')))));
   }
-  function Appearance({ preferences, language, setLanguage }) {
+  function Appearance({ preferences, language, setLanguage, onOpenProject }) {
     const { themeMode, setThemeMode } = useTheme();
     const [workspace, setWorkspace] = React.useState('shared');
     const [workspaceError, setWorkspaceError] = React.useState('');
@@ -82,7 +88,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
         h('select', { 'aria-label':'Task workspace', value:workspace, disabled:savingWorkspace, onChange:event=>changeWorkspace(event.target.value) }, h('option',{value:'shared'},'Project folder'),h('option',{value:'isolated'},'Isolated worktrees'))),
       workspaceError ? h('p',{role:'alert'},workspaceError) : null,
       h(PhoneSettings),
-      h(GitHubSettings),
+      h(GitHubSettings, { onOpenProject }),
       h(UpdateSettings),
       h(WebSettings),
       h('fieldset', { className: 'notch-appearance-modes' }, h('legend', null, 'Appearance'),

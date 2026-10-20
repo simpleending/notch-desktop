@@ -15,6 +15,13 @@ test('branding verification rejects copied modules with mismatched renderer expo
     const disabled=['AppleTreeDoodle','ImageDoodle','PartnerPlanGreetingMark','MobileAppDownloadPromo','FeedbackFloatingButton','FeedbackDialog','DesktopPetSurface','ProfileStickerCanvas'];
     await fs.writeFile(path.join(assets,'index.js'),`/* notch workbench skin */\n/* notch setup renderer */\n${imports}\nfunction OnboardingOverlaySurface(){}\nfunction ProfileStickerExperience({children}){return children;}\n${disabled.map(name=>`function ${name}(){return null;}`).join('\n')}`);
     assert.equal((await verifyRendererBranding(root)).bundles,1);
+    const renderer=path.join(assets,'index.js');
+    await fs.writeFile(renderer,(await fs.readFile(renderer,'utf8')).replace('{createnotchWorkbench}', '{createnotchWorkbench,openClonedProject}'));
+    await fs.appendFile(path.join(assets,'workbench-skin.mjs'),'\nexport async function openClonedProject(){}');
+    assert.equal((await verifyRendererBranding(root)).bundles,1);
+    await fs.writeFile(path.join(assets,'workbench-skin.mjs'),'export function createnotchWorkbench(){}');
+    await assert.rejects(verifyRendererBranding(root),/workbench-skin.mjs/);
+    await fs.appendFile(path.join(assets,'workbench-skin.mjs'),'\nexport async function openClonedProject(){}');
     await fs.writeFile(path.join(assets,'notch-setup.mjs'),'export function createNotchSetup(){}');
     await assert.rejects(verifyRendererBranding(root),/import does not match/);
   } finally {await fs.rm(root,{recursive:true,force:true});}

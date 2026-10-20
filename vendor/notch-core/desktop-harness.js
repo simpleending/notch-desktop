@@ -35,8 +35,8 @@ import {
 } from "./chunk-S5MWOFHZ.js";
 
 // vendor/notch-cli/src/desktop-harness.ts
-import path25 from "path";
-import fs22 from "fs/promises";
+import path26 from "path";
+import fs23 from "fs/promises";
 import os7 from "os";
 
 // vendor/notch-cli/src/config.ts
@@ -2511,7 +2511,7 @@ var ExecutionGuard = class {
 // vendor/notch-cli/src/agent/loop.ts
 import { isStepCount as isStepCount2, asSchema, jsonSchema } from "ai";
 import { ToolLoopAgent } from "ai";
-import { promises as fs20 } from "fs";
+import { promises as fs21 } from "fs";
 import { execSync } from "child_process";
 
 // vendor/notch-cli/src/tools/index.ts
@@ -3298,13 +3298,29 @@ ${trimmed || "(no output)"}${suffix}${/\[timeout\]/.test(result.stderr) ? "\nIf 
 };
 
 // vendor/notch-cli/src/tools/index.ts
-import path21 from "path";
+import path22 from "path";
 
 // vendor/notch-cli/src/tools/git.ts
 import { execFile as execFile2 } from "child_process";
 import { simpleGit } from "simple-git";
 import { z as z6 } from "zod";
-var PROTECTED_BRANCHES = ["main", "master", "production", "release"];
+var PROTECTED = /* @__PURE__ */ new Set(["main", "master", "production", "release"]);
+function forcePushError(args, currentBranch) {
+  const force = args.some((arg) => arg.startsWith("+") || /^--(?:for|mir)/.test(arg) || /^-[^-]*f/.test(arg));
+  if (!force) return null;
+  const flags = args.filter((arg) => arg.startsWith("-"));
+  const values = args.filter((arg) => !arg.startsWith("-"));
+  if (flags.some((arg) => !/^(?:--force(?:-with-lease(?:=.*)?)?|-[fuvq]+|--(?:verbose|quiet|porcelain|set-upstream))$/.test(arg)) || values.length < 2) {
+    return "Blocked: force-push needs an explicit remote and unprotected destination branch.";
+  }
+  for (const refspec of values.slice(1)) {
+    let destination = refspec.replace(/^\+/, "").split(":").at(-1) || "";
+    if (destination === "HEAD") destination = currentBranch;
+    destination = destination.replace(/^refs\/heads\//, "");
+    if (!destination || destination.includes("*") || PROTECTED.has(destination)) return "Blocked: cannot force-push to a protected or ambiguous destination branch.";
+  }
+  return null;
+}
 var SECRET_PATH = /(?:^|\/)(?:\.env(?:\.|$)|credentials(?:\.json)?$|[^/]+\.(?:pem|p12|pfx|key)$|id_rsa(?:\.pub)?$|id_ed25519(?:\.pub)?$)/i;
 var parameters6 = z6.object({
   operation: z6.enum([
@@ -3340,74 +3356,72 @@ function gitExec(cwd, args, signal) {
   });
 }
 function changedFiles(porcelain) {
-  const parts = porcelain.split("\0").filter((entry) => entry.length > 0);
-  const files2 = [];
-  for (let index = 0; index < parts.length; index += 1) {
-    const entry = parts[index] ?? "";
-    if (entry.length < 4) continue;
-    const status = entry.slice(0, 2);
-    const file2 = entry.slice(3);
-    if (status.startsWith("R") || status.startsWith("C")) {
-      files2.push(parts[index + 1] || file2);
-      index += 1;
-    } else files2.push(file2);
+  const entries = porcelain.split("\0").filter(Boolean);
+  const safe = /* @__PURE__ */ new Set();
+  const secrets = /* @__PURE__ */ new Set();
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const files2 = [entry.slice(3)];
+    if (/[RC]/.test(entry.slice(0, 2))) files2.push(entries[++index]);
+    const target = files2.some(isSecretPath) ? secrets : safe;
+    for (const file2 of files2) target.add(file2);
   }
-  return [...new Set(files2.filter(Boolean))];
+  return { safe: [...safe].filter((file2) => !secrets.has(file2)), secrets: [...secrets] };
 }
 async function commitAndPush(message, ctx) {
   const clean = message.replace(/\r\n/g, "\n").trim();
   if (!clean || clean.length > 2e3 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(clean)) {
     return { content: "Commit and push needs a message of 2,000 characters or fewer.", isError: true, notExecuted: true };
   }
-  let inside2 = "";
-  try {
-    inside2 = (await gitExec(ctx.cwd, ["rev-parse", "--is-inside-work-tree"], ctx.abortSignal)).stdout.trim();
-  } catch {
-    return { content: "This folder is not a Git repository.", isError: true, notExecuted: true };
-  }
-  if (inside2 !== "true") return { content: "This folder is not a Git repository.", isError: true, notExecuted: true };
-  const branch = (await gitExec(ctx.cwd, ["rev-parse", "--abbrev-ref", "HEAD"], ctx.abortSignal)).stdout.trim();
-  if (!branch || branch === "HEAD") return { content: "Commit and push needs a branch. This repository is in detached HEAD.", isError: true, notExecuted: true };
-  const changes = changedFiles((await gitExec(ctx.cwd, ["status", "--porcelain", "-z"], ctx.abortSignal)).stdout);
-  const secrets = changes.filter(isSecretPath);
-  const safe = changes.filter((file2) => !isSecretPath(file2));
-  let upstream = "";
-  let ahead = 0;
-  try {
-    upstream = (await gitExec(ctx.cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], ctx.abortSignal)).stdout.trim();
-    const counts = (await gitExec(ctx.cwd, ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], ctx.abortSignal)).stdout.trim().split(/\s+/);
-    ahead = Number(counts[1] || 0);
-  } catch {
-    upstream = "";
-  }
-  if (!safe.length && ahead < 1) {
-    return { content: secrets.length ? `Nothing safe to commit. Left unstaged: ${secrets.join(", ")}.` : "Nothing to commit or push.", isError: secrets.length > 0, notExecuted: true };
-  }
-  const confirmed = await ctx.confirm([
-    `Commit and push ${branch}${upstream ? ` to ${upstream}` : " to origin"}?`,
-    safe.length ? `Commit: ${clean.split("\n")[0]}` : `Push ${ahead} existing commit${ahead === 1 ? "" : "s"}.`,
+  const run = (args) => gitExec(ctx.cwd, args, ctx.abortSignal);
+  const optional = (args) => run(args).then((result) => result.stdout.trim()).catch((error) => {
+    ctx.abortSignal?.throwIfAborted();
+    return "";
+  });
+  if (await optional(["rev-parse", "--is-inside-work-tree"]) !== "true") return { content: "This folder is not a Git repository. Initialize Git and connect a remote first.", isError: true, notExecuted: true };
+  const branch = await optional(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+  if (!branch) return { content: "Commit and push needs a branch. This repository is in detached HEAD.", isError: true, notExecuted: true };
+  const hasHead = !!await optional(["rev-parse", "--verify", "HEAD"]);
+  const { safe, secrets } = changedFiles((await run(["status", "--porcelain", "-z", "--untracked-files=all"])).stdout);
+  const upstream = await optional(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]);
+  const remotes = (await optional(["remote"])).split(/\r?\n/).filter(Boolean);
+  const trackingRemote = await optional(["config", "--get", `branch.${branch}.remote`]);
+  const remote = await optional(["config", "--get", `branch.${branch}.pushRemote`]) || await optional(["config", "--get", "remote.pushDefault"]) || trackingRemote || (remotes.includes("origin") ? "origin" : remotes.length === 1 ? remotes[0] : "");
+  if (!remote || remote === "." || !remotes.includes(remote)) return { content: "No push remote is configured. Connect one with git remote add origin <repository-url>, or choose a branch push remote.", isError: true, notExecuted: true };
+  const destination = remote === trackingRemote ? await optional(["config", "--get", `branch.${branch}.merge`]) || `refs/heads/${branch}` : `refs/heads/${branch}`;
+  const remoteUrl = await optional(["remote", "get-url", "--push", "--all", remote]);
+  const ahead = upstream ? Number(await optional(["rev-list", "--count", "@{upstream}..HEAD"]) || 0) : hasHead ? 1 : 0;
+  if (!safe.length && ahead < 1) return { content: secrets.length ? `Nothing safe to commit. Left unstaged: ${secrets.join(", ")}.` : "Nothing to commit or push.", isError: secrets.length > 0, notExecuted: true };
+  if (!await ctx.confirm([
+    `Commit and push ${branch} to ${remote}/${destination.replace(/^refs\/heads\//, "")}?`,
+    `Remote: ${remoteUrl.replace(/(https?:\/\/)[^/@]+@/g, "$1")}`,
+    safe.length ? `Commit: ${clean.split("\n")[0]}` : "Push existing local commits.",
     safe.length ? `Files: ${safe.join(", ")}` : "",
     secrets.length ? `Left unstaged: ${secrets.join(", ")}` : ""
-  ].filter(Boolean).join("\n"));
-  if (!confirmed) return { content: "Commit and push cancelled.", isError: true, notExecuted: true };
+  ].filter(Boolean).join("\n"))) return { content: "Commit and push cancelled.", isError: true, notExecuted: true };
+  ctx.abortSignal?.throwIfAborted();
   if (safe.length) {
-    await gitExec(ctx.cwd, ["add", "-A"], ctx.abortSignal);
-    if (secrets.length) await gitExec(ctx.cwd, ["reset", "-q", "--", ...secrets], ctx.abortSignal);
-    try {
-      await gitExec(ctx.cwd, ["commit", "-m", clean], ctx.abortSignal);
-    } catch (error) {
-      const text2 = error.message;
-      if (/user\.(name|email)|tell me who you are/i.test(text2)) return { content: "Commit needs a Git name and email on this computer. Set them with git config user.name and git config user.email, then ask again.", isError: true };
-      return { content: `Commit failed:
+    if (secrets.length) await run(["--literal-pathspecs", ...hasHead ? ["reset", "-q", "--", ...secrets] : ["rm", "--cached", "-q", "--ignore-unmatch", "--", ...secrets]]);
+    await run(["--literal-pathspecs", "add", "-A", "--", ...safe]);
+    const stagedSecrets = changedFiles((await run(["status", "--porcelain", "-z", "--untracked-files=all"])).stdout).secrets;
+    if (stagedSecrets.length) await run(["--literal-pathspecs", ...hasHead ? ["reset", "-q", "--", ...stagedSecrets] : ["rm", "--cached", "-q", "--ignore-unmatch", "--", ...stagedSecrets]]);
+    if ((await run(["diff", "--cached", "--name-only", "-z"])).stdout) {
+      try {
+        await run(["commit", "-m", clean]);
+      } catch (error) {
+        const text2 = error.message;
+        if (/user\.(name|email)|tell me who you are/i.test(text2)) return { content: "Commit needs a Git name and email. Set git config user.name and git config user.email, then ask again.", isError: true };
+        return { content: `Commit failed:
 ${text2}`, isError: true };
+      }
     }
   }
   try {
-    const push = upstream ? await gitExec(ctx.cwd, ["push"], ctx.abortSignal) : await gitExec(ctx.cwd, ["push", "-u", "origin", "HEAD"], ctx.abortSignal);
-    const sha = (await gitExec(ctx.cwd, ["rev-parse", "--short", "HEAD"], ctx.abortSignal)).stdout.trim();
+    const push = await run(["push", "-u", remote, `HEAD:${destination}`]);
+    const sha = (await run(["rev-parse", "--short", "HEAD"])).stdout.trim();
     return { content: [`Committed and pushed ${branch} (${sha}).`, secrets.length ? `Left unstaged: ${secrets.join(", ")}.` : "", [push.stdout, push.stderr].filter(Boolean).join("\n").trim()].filter(Boolean).join("\n") };
   } catch (error) {
-    const sha = await gitExec(ctx.cwd, ["rev-parse", "--short", "HEAD"], ctx.abortSignal).then((result) => result.stdout.trim()).catch(() => "");
+    const sha = await optional(["rev-parse", "--short", "HEAD"]);
     return { content: `Commit ${sha || "created"} is local. Push failed:
 ${error.message}`, isError: true };
   }
@@ -3487,13 +3501,8 @@ Proceed?`
         case "push": {
           const currentBranch = (await git2.status()).current ?? "";
           const args = params.args?.split(" ") ?? [];
-          const isForce = args.includes("--force") || args.includes("-f");
-          if (isForce && PROTECTED_BRANCHES.includes(currentBranch)) {
-            return {
-              content: `Blocked: cannot force-push to protected branch "${currentBranch}". Use --force-with-lease instead.`,
-              isError: true
-            };
-          }
+          const blocked = forcePushError(args, currentBranch);
+          if (blocked) return { content: blocked, isError: true, notExecuted: true };
           await git2.push(args);
           return { content: `Pushed ${currentBranch} successfully` };
         }
@@ -4202,46 +4211,81 @@ var browserInteractTool = {
 
 // vendor/notch-cli/src/tools/github.ts
 import { z as z13 } from "zod";
-var GITHUB_API = "https://api.github.com";
-async function gitHubExecutable() {
-  const name = process.platform === "win32" ? "gh.exe" : "gh";
+
+// vendor/notch-cli/src/github/gh.ts
+import { execFile as execFile4, spawn as spawn3 } from "child_process";
+import fs13 from "fs/promises";
+import path15 from "path";
+var TOKEN_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
+function gitHubChildEnv(env = process.env, browserLogin = false) {
+  const next = { ...env };
+  if (browserLogin) for (const key of TOKEN_ENV) delete next[key];
+  next.GH_HOST = "github.com";
+  return next;
+}
+function executableName(platform) {
+  return platform === "win32" ? "gh.exe" : "gh";
+}
+function acceptGitHubExecutable(file2, platform = process.platform) {
+  return path15.basename(file2).toLowerCase() === executableName(platform);
+}
+function runFile(file2, args, env, timeout, signal) {
+  return new Promise((resolve, reject) => {
+    execFile4(file2, args, { windowsHide: true, timeout, maxBuffer: 4 * 1024 * 1024, env, signal }, (error, stdout, stderr) => {
+      const result = { stdout: String(stdout ?? ""), stderr: String(stderr ?? "") };
+      if (error) {
+        error.stdout = result.stdout;
+        error.stderr = result.stderr;
+        reject(error);
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+async function exists(file2) {
+  try {
+    await fs13.access(file2);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function locateGitHubCli(env = process.env) {
+  const platform = process.platform;
   const candidates = [];
-  if (process.platform === "win32") {
-    for (const root of [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA]) {
-      if (root) candidates.push(path14.join(root, "GitHub CLI", name));
+  if (platform === "win32") {
+    for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA]) if (root) candidates.push(path15.join(root, "GitHub CLI", "gh.exe"));
+    const where = env.SystemRoot ? path15.join(env.SystemRoot, "System32", "where.exe") : "where.exe";
+    try {
+      candidates.unshift(...(await runFile(where, ["gh.exe"], env, 5e3)).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+    } catch {
+    }
+  } else {
+    try {
+      candidates.unshift(...(await runFile("which", ["gh"], env, 5e3)).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+    } catch {
     }
   }
-  candidates.push(name);
-  for (const file of candidates) {
-    if (path14.basename(file).toLowerCase() !== name) continue;
-    if (file === name) return file;
-    try { await fs12.access(file); return file; } catch {}
+  for (const file2 of candidates) if (acceptGitHubExecutable(file2, platform) && await exists(file2)) return file2;
+  return null;
+}
+async function readGitHubCliToken(env = process.env, signal) {
+  if (env.GH_TOKEN || env.GITHUB_TOKEN) return env.GH_TOKEN || env.GITHUB_TOKEN || null;
+  const executable = await locateGitHubCli(gitHubChildEnv(env));
+  if (!executable) return null;
+  try {
+    const token = (await runFile(executable, ["auth", "token", "--hostname", "github.com"], gitHubChildEnv(env), 15e3, signal)).stdout.trim();
+    if (/^[\w.-]+$/.test(token) && token.length >= 8 && token.length <= 300) return token;
+  } catch {
   }
   return null;
 }
-async function getToken() {
-  if (process.env.GITHUB_TOKEN || process.env.GH_TOKEN) return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || null;
-  const executable = await gitHubExecutable();
-  if (!executable) return null;
-  try {
-    const token = await new Promise((resolve, reject) => {
-      const env = { ...process.env };
-      delete env.GH_TOKEN; delete env.GITHUB_TOKEN; delete env.GH_ENTERPRISE_TOKEN; delete env.GITHUB_ENTERPRISE_TOKEN;
-      execFile(executable, ["auth", "token", "--hostname", "github.com"], { windowsHide: true, timeout: 15e3, env }, (error, stdout) => error ? reject(error) : resolve(String(stdout).trim()));
-    });
-    if (/^[\w.-]+$/.test(token) && token.length >= 8 && token.length <= 300) return token;
-  } catch {}
-  return null;
-}
-async function ghFetch(path26, opts = {}) {
-  const token = await getToken();
-  const headers = {
-    "Accept": "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2026-03-10",
-    ...opts.headers ?? {}
-  };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return fetch(`${GITHUB_API}${path26}`, { ...opts, headers });
+
+// vendor/notch-cli/src/tools/github.ts
+var GITHUB_API = "https://api.github.com";
+async function getToken(signal) {
+  return readGitHubCliToken(process.env, signal);
 }
 var parameters11 = z13.object({
   action: z13.enum([
@@ -4252,28 +4296,35 @@ var parameters11 = z13.object({
     "create_issue",
     "pr_status"
   ]).describe("The GitHub operation to perform"),
-  owner: z13.string().describe("Repository owner (user or org)"),
-  repo: z13.string().describe("Repository name"),
+  owner: z13.string().regex(/^[A-Za-z0-9-]+$/).describe("Repository owner (user or org)"),
+  repo: z13.string().regex(/^[A-Za-z0-9_.-]+$/).refine((value) => value !== "." && value !== "..").describe("Repository name"),
   // PR fields
   title: z13.string().optional().describe("PR or issue title"),
   body: z13.string().optional().describe("PR or issue body/description"),
   head: z13.string().optional().describe("PR source branch"),
-  base: z13.string().optional().describe("PR target branch (default: main)"),
+  base: z13.string().optional().describe("PR target branch (defaults to the repository default branch)"),
   // Issue fields
   labels: z13.array(z13.string()).optional().describe("Labels for issue"),
   // Filter
   state: z13.enum(["open", "closed", "all"]).optional().describe("Filter by state"),
   pr_number: z13.number().optional().describe("PR number for status check")
 });
-async function execute(args, _ctx) {
-  const token = await getToken();
-  if (!token) {
-    return {
-      content: "GitHub is not signed in. Open Settings and choose Sign in with GitHub, or run `notch github login`. You can also set GITHUB_TOKEN.",
-      isError: true
-    };
-  }
+async function execute(args, ctx) {
+  const signal = AbortSignal.any([...ctx.abortSignal ? [ctx.abortSignal] : [], AbortSignal.timeout(3e4)]);
   try {
+    signal.throwIfAborted();
+    const token = await getToken(signal);
+    signal.throwIfAborted();
+    if (!token) return { content: "GitHub is not signed in. Run notch github login or sign in from the IDE GitHub settings. You can also set GH_TOKEN.", isError: true };
+    const ghFetch = async (endpoint, opts = {}) => {
+      signal.throwIfAborted();
+      return fetch(`${GITHUB_API}${endpoint}`, { ...opts, signal, headers: {
+        Accept: "application/vnd.github+json",
+        "Content-Type": "application/json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        Authorization: `Bearer ${token}`
+      } });
+    };
     switch (args.action) {
       case "repo_info": {
         const res = await ghFetch(`/repos/${args.owner}/${args.repo}`);
@@ -4304,20 +4355,36 @@ async function execute(args, _ctx) {
       }
       case "list_issues": {
         const state = args.state ?? "open";
-        const res = await ghFetch(`/repos/${args.owner}/${args.repo}/issues?state=${state}&per_page=15`);
-        if (!res.ok) return { content: `GitHub API error: ${res.status}`, isError: true };
-        const issues = await res.json();
-        const realIssues = issues.filter((i) => !i.pull_request);
-        if (realIssues.length === 0) return { content: `No ${state} issues.` };
-        const lines = realIssues.map((i) => {
+        const realIssues = [];
+        let page = 1;
+        let more = false;
+        do {
+          const res = await ghFetch(`/repos/${args.owner}/${args.repo}/issues?state=${state}&per_page=100&page=${page}`);
+          if (!res.ok) return { content: `GitHub API error: ${res.status}`, isError: true };
+          const rows = await res.json();
+          realIssues.push(...rows.filter((issue) => !issue.pull_request));
+          more = /rel="next"/.test(res.headers.get("link") || "");
+          page += 1;
+        } while (realIssues.length < 15 && more);
+        if (!realIssues.length) return { content: `No ${state} issues.` };
+        more ||= realIssues.length > 15;
+        const lines = realIssues.slice(0, 15).map((i) => {
           const labels = i.labels.map((l) => l.name).join(", ");
           return `#${i.number} [${i.state}] ${i.title}${labels ? ` [${labels}]` : ""} by @${i.user.login}`;
         });
-        return { content: lines.join("\n") };
+        return { content: lines.join("\n") + (more ? "\nShowing the first 15 issues; more issues are available." : "") };
       }
       case "create_pr": {
         if (!args.title || !args.head) {
           return { content: "title and head branch are required for create_pr", isError: true };
+        }
+        let base = args.base;
+        if (!base) {
+          const info = await ghFetch(`/repos/${args.owner}/${args.repo}`);
+          if (!info.ok) return { content: `Cannot resolve the repository default branch: GitHub API error ${info.status}`, isError: true };
+          const repo = await info.json();
+          base = repo.default_branch;
+          if (!base) return { content: "The repository has no default branch. Push an initial commit first.", isError: true };
         }
         const res = await ghFetch(`/repos/${args.owner}/${args.repo}/pulls`, {
           method: "POST",
@@ -4325,7 +4392,7 @@ async function execute(args, _ctx) {
             title: args.title,
             body: args.body ?? "",
             head: args.head,
-            base: args.base ?? "main"
+            base
           })
         });
         if (!res.ok) {
@@ -4388,24 +4455,24 @@ async function execute(args, _ctx) {
         return { content: `Unknown action: ${args.action}`, isError: true };
     }
   } catch (err) {
-    return { content: `GitHub error: ${err.message}`, isError: true };
+    return { content: signal.aborted ? ctx.abortSignal?.aborted ? "GitHub request cancelled." : "GitHub request timed out. Try again." : `GitHub error: ${err.message}`, isError: true };
   }
 }
 var githubTool = {
   name: "github",
-  description: "GitHub operations for pull requests, issues, and repository info. Local commit and push uses the git tool operation commit_and_push. Uses the GitHub CLI sign-in from Settings, or GITHUB_TOKEN. Uses GitHub REST API version 2026-03-10.",
+  description: "GitHub operations \u2014 create PRs, list issues, check PR status, view repo info. Local commit and push uses git commit_and_push. Uses the GitHub sign-in in Settings or GH_TOKEN.",
   parameters: parameters11,
   execute
 };
 
 // vendor/notch-cli/src/tools/lsp.ts
-import { execFile as execFile4 } from "child_process";
+import { execFile as execFile5 } from "child_process";
 import { createRequire as createRequire2 } from "module";
 import { promisify as promisify3 } from "util";
-import fs13 from "fs/promises";
-import path15 from "path";
+import fs14 from "fs/promises";
+import path16 from "path";
 import { z as z14 } from "zod";
-var execFileAsync2 = promisify3(execFile4);
+var execFileAsync2 = promisify3(execFile5);
 var parameters12 = z14.object({
   action: z14.enum(["definition", "references", "diagnostics", "hover"]).describe("LSP action: definition (go-to-def), references (find usages), diagnostics (type errors), hover (type info)"),
   file: z14.string().describe("File path (relative or absolute)"),
@@ -4414,7 +4481,7 @@ var parameters12 = z14.object({
   symbol: z14.string().optional().describe("Symbol name to search for (alternative to line/character)")
 });
 function detectLanguage(filePath) {
-  const ext = path15.extname(filePath).toLowerCase();
+  const ext = path16.extname(filePath).toLowerCase();
   switch (ext) {
     case ".ts":
     case ".tsx":
@@ -4446,11 +4513,11 @@ async function isAvailable(cmd, signal) {
 async function tsDiagnostics(filePath, cwd, signal) {
   let compiler;
   try {
-    compiler = createRequire2(path15.join(cwd, "package.json")).resolve("typescript/bin/tsc");
+    compiler = createRequire2(path16.join(cwd, "package.json")).resolve("typescript/bin/tsc");
   } catch {
     throw new Error("TypeScript is not installed in this project. Install its development dependencies before checking diagnostics.");
   }
-  const project = await fs13.stat(path15.join(cwd, "tsconfig.json")).then((s) => s.isFile(), (error) => {
+  const project = await fs14.stat(path16.join(cwd, "tsconfig.json")).then((s) => s.isFile(), (error) => {
     if (error.code === "ENOENT") return false;
     throw error;
   });
@@ -4585,8 +4652,8 @@ ${lines.join("\n")}`;
 }
 async function getHoverInfo(symbol, filePath, line, cwd, signal, ripgrep = "rg") {
   try {
-    const absPath = path15.isAbsolute(filePath) ? filePath : path15.resolve(cwd, filePath);
-    const content = await fs13.readFile(absPath, "utf-8");
+    const absPath = path16.isAbsolute(filePath) ? filePath : path16.resolve(cwd, filePath);
+    const content = await fs14.readFile(absPath, "utf-8");
     const lines = content.split("\n");
     const startLine = Math.max(0, line - 3);
     const endLine = Math.min(lines.length, line + 2);
@@ -4605,7 +4672,7 @@ ${def}`;
   }
 }
 async function getDiagnostics(filePath, cwd, signal) {
-  const absPath = path15.isAbsolute(filePath) ? filePath : path15.resolve(cwd, filePath);
+  const absPath = path16.isAbsolute(filePath) ? filePath : path16.resolve(cwd, filePath);
   const { lang } = detectLanguage(absPath);
   switch (lang) {
     case "typescript":
@@ -4685,7 +4752,7 @@ var lspTool = {
   parameters: parameters12,
   async execute(params, ctx) {
     const filePath = params.file;
-    const absPath = path15.isAbsolute(filePath) ? filePath : path15.resolve(ctx.cwd, filePath);
+    const absPath = path16.isAbsolute(filePath) ? filePath : path16.resolve(ctx.cwd, filePath);
     try {
       ctx.abortSignal?.throwIfAborted();
       switch (params.action) {
@@ -4728,7 +4795,7 @@ var lspTool = {
 async function extractSymbol(filePath, line, character) {
   if (!line) return null;
   try {
-    const content = await fs13.readFile(filePath, "utf-8");
+    const content = await fs14.readFile(filePath, "utf-8");
     const lines = content.split("\n");
     const lineText = lines[line - 1];
     if (!lineText) return null;
@@ -4750,8 +4817,8 @@ async function extractSymbol(filePath, line, character) {
 }
 
 // vendor/notch-cli/src/tools/notebook.ts
-import fs14 from "fs/promises";
-import path16 from "path";
+import fs15 from "fs/promises";
+import path17 from "path";
 import { z as z15 } from "zod";
 var parameters13 = z15.object({
   action: z15.enum(["read", "edit", "add", "remove"]).describe("Action: read (view cells), edit (modify cell source), add (insert new cell), remove (delete cell)"),
@@ -4763,7 +4830,7 @@ var parameters13 = z15.object({
 });
 function formatNotebook(nb, filePath) {
   const parts = [
-    `# ${path16.basename(filePath)}`,
+    `# ${path17.basename(filePath)}`,
     `# ${nb.cells.length} cells | nbformat ${nb.nbformat}.${nb.nbformat_minor}`,
     ""
   ];
@@ -4794,11 +4861,11 @@ var notebookTool = {
   description: "Read and edit Jupyter .ipynb notebook files. Actions: read (view all cells with outputs), edit (modify a cell), add (insert a new cell), remove (delete a cell).",
   parameters: parameters13,
   async execute(params, ctx) {
-    const filePath = path16.isAbsolute(params.path) ? params.path : path16.resolve(ctx.cwd, params.path);
+    const filePath = path17.isAbsolute(params.path) ? params.path : path17.resolve(ctx.cwd, params.path);
     try {
       switch (params.action) {
         case "read": {
-          const raw = await fs14.readFile(filePath, "utf-8");
+          const raw = await fs15.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           return { content: formatNotebook(nb, filePath) };
         }
@@ -4809,7 +4876,7 @@ var notebookTool = {
           if (params.content === void 0) {
             return { content: "content is required for edit action.", isError: true };
           }
-          const raw = await fs14.readFile(filePath, "utf-8");
+          const raw = await fs15.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           if (params.cell_index < 0 || params.cell_index >= nb.cells.length) {
             return { content: `Cell index ${params.cell_index} out of range (0-${nb.cells.length - 1}).`, isError: true };
@@ -4818,14 +4885,14 @@ var notebookTool = {
             (l, i, arr) => i < arr.length - 1 ? l + "\n" : l
           );
           nb.cells[params.cell_index].source = lines;
-          await fs14.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Cell [${params.cell_index}] updated in ${path16.basename(filePath)}.` };
+          await fs15.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Cell [${params.cell_index}] updated in ${path17.basename(filePath)}.` };
         }
         case "add": {
           if (params.content === void 0) {
             return { content: "content is required for add action.", isError: true };
           }
-          const raw = await fs14.readFile(filePath, "utf-8");
+          const raw = await fs15.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           const cellType = params.cell_type ?? "code";
           const lines = params.content.split("\n").map(
@@ -4839,21 +4906,21 @@ var notebookTool = {
           };
           const insertIdx = params.insert_after !== void 0 ? params.insert_after + 1 : nb.cells.length;
           nb.cells.splice(insertIdx, 0, newCell);
-          await fs14.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path16.basename(filePath)}.` };
+          await fs15.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path17.basename(filePath)}.` };
         }
         case "remove": {
           if (params.cell_index === void 0) {
             return { content: "cell_index is required for remove action.", isError: true };
           }
-          const raw = await fs14.readFile(filePath, "utf-8");
+          const raw = await fs15.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           if (params.cell_index < 0 || params.cell_index >= nb.cells.length) {
             return { content: `Cell index ${params.cell_index} out of range (0-${nb.cells.length - 1}).`, isError: true };
           }
           const removed = nb.cells.splice(params.cell_index, 1)[0];
-          await fs14.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path16.basename(filePath)}. ${nb.cells.length} cells remaining.` };
+          await fs15.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path17.basename(filePath)}. ${nb.cells.length} cells remaining.` };
         }
         default:
           return { content: `Unknown action: ${params.action}`, isError: true };
@@ -5695,15 +5762,15 @@ ${body}` };
 import { z as z20 } from "zod";
 
 // vendor/notch-cli/src/mcp/stdio-transport.ts
-import { spawn as spawn3 } from "child_process";
+import { spawn as spawn4 } from "child_process";
 
 // vendor/notch-cli/src/plugins/discovery.ts
-import fs15 from "fs/promises";
-import path17 from "path";
+import fs16 from "fs/promises";
+import path18 from "path";
 import os4 from "os";
 async function discoverPlugins(projectRoot) {
-  const globalDir = path17.join(os4.homedir(), ".notch", "plugins");
-  const projectDir = path17.join(projectRoot, ".notch", "plugins");
+  const globalDir = path18.join(os4.homedir(), ".notch", "plugins");
+  const projectDir = path18.join(projectRoot, ".notch", "plugins");
   const plugins = /* @__PURE__ */ new Map();
   for (const plugin of await scanDirectory(globalDir)) {
     plugins.set(plugin.name, plugin);
@@ -5716,13 +5783,13 @@ async function discoverPlugins(projectRoot) {
 async function scanDirectory(dir) {
   const results = [];
   try {
-    const entries = await fs15.readdir(dir, { withFileTypes: true });
+    const entries = await fs16.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const pluginDir = path17.join(dir, entry.name);
-      const pkgPath = path17.join(pluginDir, "package.json");
+      const pluginDir = path18.join(dir, entry.name);
+      const pkgPath = path18.join(pluginDir, "package.json");
       try {
-        const raw = await fs15.readFile(pkgPath, "utf-8");
+        const raw = await fs16.readFile(pkgPath, "utf-8");
         const pkg = JSON.parse(raw);
         if (pkg["notch-plugin"] && pkg.name) {
           results.push({
@@ -5742,7 +5809,7 @@ async function scanDirectory(dir) {
 }
 
 // vendor/notch-cli/src/plugins/loader.ts
-import path18 from "path";
+import path19 from "path";
 import { pathToFileURL } from "url";
 
 // vendor/notch-cli/src/commands/registry.ts
@@ -5753,7 +5820,7 @@ function registerCommand(name, handler) {
 
 // vendor/notch-cli/src/plugins/loader.ts
 async function loadPlugin(discovered, projectRoot, log) {
-  const entryPath = path18.resolve(discovered.path, discovered.manifest.main);
+  const entryPath = path19.resolve(discovered.path, discovered.manifest.main);
   const tools = [];
   const hooks = [];
   const ctx = {
@@ -5845,9 +5912,9 @@ var PluginManager = class {
 var pluginManager = new PluginManager();
 
 // vendor/notch-cli/src/safety/guardian.ts
-import fs16 from "fs/promises";
+import fs17 from "fs/promises";
 import { fileURLToPath } from "url";
-import path19 from "path";
+import path20 from "path";
 import { generateText } from "ai";
 import { z as z21 } from "zod";
 
@@ -6043,8 +6110,8 @@ async function loadPolicy() {
   if (cachedPolicy) return cachedPolicy;
   try {
     const here = fileURLToPath(import.meta.url);
-    const mdPath = path19.join(path19.dirname(here), "guardian-policy.md");
-    const raw = await fs16.readFile(mdPath, "utf-8");
+    const mdPath = path20.join(path20.dirname(here), "guardian-policy.md");
+    const raw = await fs17.readFile(mdPath, "utf-8");
     if (raw.length > 200) {
       cachedPolicy = raw;
       return raw;
@@ -7086,25 +7153,25 @@ var COORDINATOR_ALLOWED_TOOL_NAMES = /* @__PURE__ */ new Set([
 ]);
 
 // vendor/notch-cli/src/concurrency/file-access.ts
-import fs17 from "fs/promises";
-import path20 from "path";
+import fs18 from "fs/promises";
+import path21 from "path";
 import { createHash as createHash2 } from "crypto";
 import { createReadStream } from "fs";
 async function canonical2(file2) {
   let resolved;
   try {
-    resolved = await fs17.realpath(file2);
+    resolved = await fs18.realpath(file2);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    const parent = path20.dirname(file2);
+    const parent = path21.dirname(file2);
     if (parent === file2) throw error;
-    resolved = path20.join(await canonical2(parent), path20.basename(file2));
+    resolved = path21.join(await canonical2(parent), path21.basename(file2));
   }
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 async function fingerprint(file2, signal) {
   try {
-    if (!(await fs17.stat(file2)).isFile()) throw new Error(`Not a regular file: ${file2}`);
+    if (!(await fs18.stat(file2)).isFile()) throw new Error(`Not a regular file: ${file2}`);
     const hash2 = createHash2("sha256");
     for await (const chunk of createReadStream(file2, { signal })) hash2.update(chunk);
     return hash2.digest("hex");
@@ -7123,10 +7190,10 @@ async function guardedFileAccess(name, params, ctx, execute2) {
     let targets = [];
     if (["read", "write", "edit", "notebook"].includes(name)) targets = [params.path];
     if (name === "apply_patch") targets = parsePatch(params.input).flatMap((action) => action.kind === "update" && action.moveTo ? [action.target, action.moveTo] : [action.target]);
-    const files2 = await Promise.all(targets.map((file2) => canonical2(path20.resolve(ctx.cwd, file2))));
+    const files2 = await Promise.all(targets.map((file2) => canonical2(path21.resolve(ctx.cwd, file2))));
     if (ctx.taskWorkspace) for (const file2 of files2) {
-      const relative = path20.relative(await canonical2(ctx.cwd), file2);
-      if (path20.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path20.sep) || relative.split(path20.sep).some((part) => part.toLowerCase() === ".git")) return { isError: true, content: "Use a path inside this task workspace. Use task_changes to inspect the original project." };
+      const relative = path21.relative(await canonical2(ctx.cwd), file2);
+      if (path21.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path21.sep) || relative.split(path21.sep).some((part) => part.toLowerCase() === ".git")) return { isError: true, content: "Use a path inside this task workspace. Use task_changes to inspect the original project." };
     }
     const before = await Promise.all(files2.map((file2) => fingerprint(file2, ctx.abortSignal)));
     const reading = name === "read" || name === "notebook" && params.action === "read";
@@ -7237,7 +7304,7 @@ ${JSON.stringify(params, null, 2).slice(0, 500)}`, notExecuted: true };
       }
       params = validated.data;
       if (ctx.remoteWorkspace && t.name === "shell") {
-        const problem = validateCommand(params.command, ctx.cwd, path21.posix);
+        const problem = validateCommand(params.command, ctx.cwd, path22.posix);
         if (problem) return { content: problem, isError: true };
       }
       if (ctx.checkPermission) {
@@ -7704,15 +7771,15 @@ async function autoCompressWithStats(messages, model, contextWindow, signal, his
 }
 
 // vendor/notch-cli/src/context/project-instructions.ts
-import fs18 from "fs/promises";
-import path22 from "path";
+import fs19 from "fs/promises";
+import path23 from "path";
 import os5 from "os";
 var INSTRUCTION_FILES = [".notch.md", "NOTCH.md", ".notch/instructions.md"];
 async function loadProjectInstructions(projectRoot) {
   const sources = [];
   const homeDir = os5.homedir();
   for (const file2 of INSTRUCTION_FILES) {
-    const globalPath = path22.join(homeDir, file2);
+    const globalPath = path23.join(homeDir, file2);
     const content = await safeRead(globalPath);
     if (content) {
       sources.push({ path: globalPath, content, scope: "global" });
@@ -7720,7 +7787,7 @@ async function loadProjectInstructions(projectRoot) {
     }
   }
   for (const file2 of INSTRUCTION_FILES) {
-    const projectPath = path22.join(projectRoot, file2);
+    const projectPath = path23.join(projectRoot, file2);
     const content = await safeRead(projectPath);
     if (content) {
       sources.push({ path: projectPath, content, scope: "project" });
@@ -7742,7 +7809,7 @@ ${sections.join("\n\n")}`;
 }
 async function safeRead(filePath) {
   try {
-    const content = await fs18.readFile(filePath, "utf-8");
+    const content = await fs19.readFile(filePath, "utf-8");
     return content.trim() || null;
   } catch {
     return null;
@@ -7750,28 +7817,28 @@ async function safeRead(filePath) {
 }
 
 // vendor/notch-cli/src/memory/store.ts
-import fs19 from "fs/promises";
-import path23 from "path";
+import fs20 from "fs/promises";
+import path24 from "path";
 import os6 from "os";
 import { generateText as generateText4 } from "ai";
-var MEMORY_DIR = path23.join(os6.homedir(), ".notch", "memory");
-var INDEX_FILE = path23.join(MEMORY_DIR, "MEMORY.md");
-var SUMMARY_FILE = path23.join(MEMORY_DIR, "SUMMARY.md");
-var SUMMARY_FILENAME = path23.basename(SUMMARY_FILE);
+var MEMORY_DIR = path24.join(os6.homedir(), ".notch", "memory");
+var INDEX_FILE = path24.join(MEMORY_DIR, "MEMORY.md");
+var SUMMARY_FILE = path24.join(MEMORY_DIR, "SUMMARY.md");
+var SUMMARY_FILENAME = path24.basename(SUMMARY_FILE);
 var DEFAULT_PROMPT_CHAR_BUDGET = Number(process.env.NOTCH_MEMORY_PROMPT_CHARS ?? 6e3);
 var MAX_SINGLE_MEMORY_CHARS = Number(process.env.NOTCH_MEMORY_ITEM_CHARS ?? 4e3);
 var MAX_COMPACTION_INPUT_CHARS = Number(process.env.NOTCH_MEMORY_COMPACT_INPUT_CHARS ?? 3e4);
 async function ensureDir() {
-  await fs19.mkdir(MEMORY_DIR, { recursive: true });
+  await fs20.mkdir(MEMORY_DIR, { recursive: true });
 }
 async function loadMemories() {
   await ensureDir();
-  const files2 = await fs19.readdir(MEMORY_DIR);
+  const files2 = await fs20.readdir(MEMORY_DIR);
   const memories = [];
   for (const file2 of files2) {
     if (!file2.endsWith(".md") || file2 === "MEMORY.md" || file2 === SUMMARY_FILENAME) continue;
     try {
-      const content = await fs19.readFile(path23.join(MEMORY_DIR, file2), "utf-8");
+      const content = await fs20.readFile(path24.join(MEMORY_DIR, file2), "utf-8");
       const memory = parseMemoryFile(content, file2);
       if (memory) memories.push(memory);
     } catch {
@@ -7842,7 +7909,7 @@ function extractField(frontmatter, field) {
 }
 async function loadMemorySummary() {
   try {
-    const raw = await fs19.readFile(SUMMARY_FILE, "utf-8");
+    const raw = await fs20.readFile(SUMMARY_FILE, "utf-8");
     return raw.replace(/^# Notch Memory Summary\s*/i, "").replace(/^_Updated:.*?_\s*/im, "").trim();
   } catch {
     return "";
@@ -8739,7 +8806,7 @@ async function buildSystemPrompt(projectRoot, _modelId, toolContext) {
         if (process.platform === "win32") lines.push("- The shell tool currently uses cmd.exe. Use portable Node commands or invoke PowerShell explicitly; Unix commands such as cat are not available by default.");
         lines.push(`- Current date (UTC): ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         try {
-          const entries = await fs20.readdir(projectRoot);
+          const entries = await fs21.readdir(projectRoot);
           const preview = entries.filter((e) => !e.startsWith(".")).slice(0, 30).join(", ");
           if (preview) lines.push(`- Top-level entries: ${preview}`);
         } catch {
@@ -8794,13 +8861,13 @@ ${memoryStr}`, {
 }
 
 // vendor/notch-cli/src/agent/checkpoints.ts
-import fs21 from "fs/promises";
-import path24 from "path";
+import fs22 from "fs/promises";
+import path25 from "path";
 import { randomUUID as randomUUID5 } from "crypto";
 var CheckpointManager = class _CheckpointManager {
   remote;
   get paths() {
-    return this.remote ? path24.posix : path24;
+    return this.remote ? path25.posix : path25;
   }
   checkpoints = [];
   nextId = 1;
@@ -8814,12 +8881,12 @@ var CheckpointManager = class _CheckpointManager {
   static async open(cwd, file2, remote) {
     const manager = new _CheckpointManager();
     manager.remote = remote;
-    const realCwd = remote ? path24.posix.normalize(cwd) : await fs21.realpath(cwd);
-    const stat = remote ? void 0 : await fs21.stat(realCwd, { bigint: true });
-    manager.storage = { cwd: realCwd, file: path24.resolve(file2), identity: remote ? remote.identity : `${stat.dev}:${stat.ino}` };
+    const realCwd = remote ? path25.posix.normalize(cwd) : await fs22.realpath(cwd);
+    const stat = remote ? void 0 : await fs22.stat(realCwd, { bigint: true });
+    manager.storage = { cwd: realCwd, file: path25.resolve(file2), identity: remote ? remote.identity : `${stat.dev}:${stat.ino}` };
     let raw;
     try {
-      raw = await fs21.readFile(file2, "utf8");
+      raw = await fs22.readFile(file2, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") return manager;
       throw error;
@@ -8880,26 +8947,26 @@ var CheckpointManager = class _CheckpointManager {
     if (!this.isWithin(file2)) throw new Error("Undo path is outside this workspace.");
     if (this.remote) return this.remote.safePath(file2);
     if (this.storage) {
-      const relative = path24.relative(path24.dirname(this.storage.file), file2);
-      if (path24.resolve(file2) === this.storage.file || this.isWithin(path24.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path24.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
+      const relative = path25.relative(path25.dirname(this.storage.file), file2);
+      if (path25.resolve(file2) === this.storage.file || this.isWithin(path25.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path25.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
     }
     let cursor = file2;
     while (true) {
       try {
-        const stat = await fs21.lstat(cursor);
+        const stat = await fs22.lstat(cursor);
         if (stat.isSymbolicLink() || cursor === file2 && stat.nlink > 1) throw new Error("Undo refuses symbolic links and shared hard links.");
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      if (cursor === this.storage?.cwd || path24.dirname(cursor) === cursor) break;
-      cursor = path24.dirname(cursor);
+      if (cursor === this.storage?.cwd || path25.dirname(cursor) === cursor) break;
+      cursor = path25.dirname(cursor);
     }
   }
   async read(file2) {
     await this.safePath(file2);
     if (this.remote) return this.remote.read(file2);
     try {
-      const bytes = await fs21.readFile(file2), content = bytes.toString("utf8");
+      const bytes = await fs22.readFile(file2), content = bytes.toString("utf8");
       if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${file2}`);
       return content;
     } catch (error) {
@@ -8915,20 +8982,20 @@ var CheckpointManager = class _CheckpointManager {
       identity: this.storage.identity,
       nextId: this.nextId,
       checkpoints: this.checkpoints,
-      pending: [...this.pendingFiles].map(([path26, before]) => ({ path: path26, before, after: this.pendingAfter.get(path26) })),
+      pending: [...this.pendingFiles].map(([path27, before]) => ({ path: path27, before, after: this.pendingAfter.get(path27) })),
       messageId: this.messageId,
       restoring: this.restoring
     });
     if (Buffer.byteLength(data) > 64 * 2 ** 20) throw new Error("Undo history exceeds 64 MiB; no further writes are allowed.");
     const file2 = this.storage.file;
     const save2 = this.saving.then(async () => {
-      await fs21.mkdir(path24.dirname(file2), { recursive: true });
+      await fs22.mkdir(path25.dirname(file2), { recursive: true });
       const temporary = `${file2}.${randomUUID5()}.tmp`;
       try {
-        await fs21.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
-        await fs21.rename(temporary, file2);
+        await fs22.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
+        await fs22.rename(temporary, file2);
       } finally {
-        await fs21.unlink(temporary).catch(() => {
+        await fs22.unlink(temporary).catch(() => {
         });
       }
     });
@@ -9060,19 +9127,19 @@ var CheckpointManager = class _CheckpointManager {
       }
       if (snap.before === null) {
         try {
-          await fs21.unlink(snap.path);
+          await fs22.unlink(snap.path);
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
         }
       } else {
-        await fs21.mkdir(path24.dirname(snap.path), { recursive: true });
+        await fs22.mkdir(path25.dirname(snap.path), { recursive: true });
         const temporary = `${snap.path}.${randomUUID5()}.undo-tmp`;
-        const mode = current === null ? 384 : (await fs21.stat(snap.path)).mode & 511;
+        const mode = current === null ? 384 : (await fs22.stat(snap.path)).mode & 511;
         try {
-          await fs21.writeFile(temporary, snap.before, { mode, flag: "wx", flush: true });
-          await fs21.rename(temporary, snap.path);
+          await fs22.writeFile(temporary, snap.before, { mode, flag: "wx", flush: true });
+          await fs22.rename(temporary, snap.path);
         } finally {
-          await fs21.unlink(temporary).catch(() => {
+          await fs22.unlink(temporary).catch(() => {
           });
         }
       }
@@ -9111,8 +9178,8 @@ var CheckpointManager = class _CheckpointManager {
         }
       }
     }
-    return Array.from(fileMap.entries()).map(([path26, { before, after }]) => ({
-      path: path26,
+    return Array.from(fileMap.entries()).map(([path27, { before, after }]) => ({
+      path: path27,
       before,
       after
     }));
@@ -9120,7 +9187,7 @@ var CheckpointManager = class _CheckpointManager {
 };
 
 // vendor/notch-cli/src/desktop-harness.ts
-var desktopToolNames = { Read: "read", TaskChanges: "task_changes", Write: "write", Edit: "edit", Bash: "shell", Glob: "glob", Grep: "grep", Git: "git", ApplyPatch: "apply_patch", WebFetch: "web_fetch", WebSearch: "web_search", BrowserRead: "browser_read", BrowserInteract: "browser_interact", Agent: "task" };
+var desktopToolNames = { Read: "read", TaskChanges: "task_changes", Write: "write", Edit: "edit", Bash: "shell", Glob: "glob", Grep: "grep", Git: "git", GitHub: "github", ApplyPatch: "apply_patch", WebFetch: "web_fetch", WebSearch: "web_search", BrowserRead: "browser_read", BrowserInteract: "browser_interact", Agent: "task" };
 function desktopToolName(name) {
   return desktopToolNames[name] ?? name;
 }
@@ -9133,8 +9200,8 @@ function definitionRules(values = [], level) {
   });
 }
 async function runDesktopTurn(turn) {
-  const cwd = turn.remoteWorkspace ? turn.cwd : await fs22.realpath(turn.cwd);
-  if (!turn.remoteWorkspace && !(await fs22.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
+  const cwd = turn.remoteWorkspace ? turn.cwd : await fs23.realpath(turn.cwd);
+  if (!turn.remoteWorkspace && !(await fs23.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
   if (!["approve", "read-only", "full-access"].includes(turn.accessMode)) throw new Error("Invalid desktop access mode.");
   turn.signal.throwIfAborted();
   const configRoot = turn.remoteWorkspace ? os7.homedir() : cwd;
@@ -9213,10 +9280,10 @@ async function runDesktopTurn(turn) {
       if (event === "post-tool") await turn.checkpoints.recordAfter();
       if (event !== "pre-tool") return;
       const args = payload.args;
-      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path25.posix : path25).resolve(cwd, args.path));
+      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path26.posix : path26).resolve(cwd, args.path));
       if (payload.tool === "apply_patch" && typeof args.input === "string") for (const action of parsePatch(args.input)) {
-        await turn.checkpoints.recordBefore(path25.resolve(cwd, action.target));
-        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path25.resolve(cwd, action.moveTo));
+        await turn.checkpoints.recordBefore(path26.resolve(cwd, action.target));
+        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path26.resolve(cwd, action.moveTo));
       }
     }
   };

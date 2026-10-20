@@ -42,10 +42,10 @@ test('browser sign-in opens only the GitHub device page and hides the token', as
   let auth;
   auth = createGitHubAuth({
     platform: 'win32',
-    env: { ProgramFiles: 'C:\\Program Files', SystemRoot: 'C:\\Windows', LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local', GITHUB_TOKEN: 'gho_fromenv' },
+    env: { ProgramFiles: 'C:\\Program Files', SystemRoot: 'C:\\Windows', LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' },
     exists: async file => file === gh,
     run: async (_file, args) => {
-      if (args[0] === 'auth' && args[1] === 'status') return { stdout: '', stderr: 'Logged in to github.com account octocat\n  - Token: gho_secretvalue' };
+      if (args[0] === 'auth' && args[1] === 'status') return { stdout: JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'octocat' }] } }), stderr: '' };
       return { stdout: '', stderr: '' };
     },
     spawnProcess: () => {
@@ -67,7 +67,7 @@ test('browser sign-in opens only the GitHub device page and hides the token', as
   assert.equal(seen, 'WXYZ-1234');
   assert.equal(JSON.stringify(status).includes('gho_secretvalue'), false);
   assert.equal(JSON.stringify(status).includes('gho_fromenv'), false);
-  assert.equal(status.environmentToken, true);
+  assert.equal(status.environmentToken, false);
 });
 
 test('clone accepts only listed owner/name repositories', async () => {
@@ -80,7 +80,7 @@ test('clone accepts only listed owner/name repositories', async () => {
     run: async (file, args) => {
       calls.push([file, args]);
       if (file === 'which') return { stdout: `${gh}\n`, stderr: '' };
-      if (args[1] === 'status') return { stdout: 'Logged in to github.com account octocat', stderr: '' };
+      if (args[1] === 'status') return { stdout: JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'octocat' }] } }), stderr: '' };
       return { stdout: '', stderr: '' };
     },
     pickDirectory: async () => '/work',
@@ -89,7 +89,9 @@ test('clone accepts only listed owner/name repositories', async () => {
   assert.equal(REPO_NAME.test('octocat/hello'), true);
   const status = await auth.clone('octocat/hello');
   assert.match(status.message, /Cloned octocat\/hello/);
-  assert.deepEqual(calls.find(call => call[1][0] === 'repo'), [gh, ['repo', 'clone', 'octocat/hello', path.join('/work', 'hello')]]);
+  assert.equal(status.clonedPath, path.join('/work', 'hello'));
+  assert.equal((await auth.status()).message, status.message);
+  assert.deepEqual(calls.find(call => call[1][0] === 'repo'), [gh, ['repo', 'clone', 'https://github.com/octocat/hello.git', path.join('/work', 'hello')]]);
 });
 
 test('GitHub settings IPC rejects unexpected actions and repairs the preload', async () => {
@@ -105,4 +107,86 @@ test('GitHub settings IPC rejects unexpected actions and repairs the preload', a
   assert.equal(patchModelPreload(modelPreload), modelPreload);
   const previous = modelPreload.replace("\n  github:(action,value)=>ipcRenderer.invoke('notch-models:github',action,value),", '');
   assert.equal(patchModelPreload(previous), modelPreload);
+});
+
+test('effective environment token is preserved for status and organization repository pages', async () => {
+  const calls = [];
+  const auth = createGitHubAuth({ platform: 'linux', env: { GH_TOKEN: 'fake-preferred', GITHUB_TOKEN: 'fake-other', GH_HOST: 'elsewhere.example' }, exists: async () => true,
+    run: async (file, args, options) => {
+      calls.push({ file, args, env: options.env });
+      if (file === 'which') return { stdout: '/usr/bin/gh', stderr: '' };
+      if (args[0] === 'auth') return { stdout: JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'effective-user' }] } }), stderr: '' };
+      const rows = args.at(-1).endsWith('page=1') ? Array.from({ length: 100 }, (_, i) => ({ full_name: `team/project-${i}`, private: true })) : [{ full_name: 'collaborator/shared', private: true }];
+      return { stdout: JSON.stringify(rows), stderr: '' };
+    },
+  });
+  const status = await auth.status();
+  assert.equal(status.account, 'effective-user');
+  assert.match(status.message, /using GH_TOKEN/);
+  const first = await auth.repos();
+  assert.equal(first.repos.length, 100); assert.equal(first.hasMore, true);
+  const second = await auth.repos(2);
+  assert.equal(second.repos.length, 101); assert.equal(second.hasMore, false);
+  assert.ok(calls.filter(call => call.args[0] === 'api').every(call => call.args.at(-1).includes('organization_member')));
+  assert.ok(calls.every(call => call.env.GH_TOKEN === 'fake-preferred' && call.env.GH_HOST === 'github.com'));
+  await assert.rejects(auth.login(), /Remove GH_TOKEN/);
+});
+
+test('an invalid active account never falls back to an inactive account', async () => {
+  let checks = 0;
+  const auth = createGitHubAuth({ platform: 'linux', env: {}, exists: async () => true,
+    run: async file => {
+      if (file === 'which') return { stdout: '/usr/bin/gh', stderr: '' };
+      checks += 1;
+      return { stdout: JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'error', login: 'invalid' }, { active: false, state: 'success', login: 'old' }] } }), stderr: '' };
+    },
+  });
+  assert.equal((await auth.status()).account, null);
+  assert.equal((await auth.status()).account, null);
+  assert.equal(checks, 1, 'polling reuses the recent authentication check');
+  await assert.rejects(auth.repos(), /repair authentication/);
+});
+
+test('environment tokens work without an installed GitHub CLI', async () => {
+  const requests = [];
+  const auth = createGitHubAuth({ platform: 'linux', env: { GH_TOKEN: 'fake-preferred', GITHUB_TOKEN: 'fake-other' }, exists: async () => false,
+    run: async () => { throw Error('not installed'); },
+    fetchApi: async (url, options) => { requests.push({ url, options }); return Response.json(url.endsWith('/user') ? { login: 'token-user' } : [{ full_name: 'organization/private', private: true }]); },
+  });
+  assert.equal((await auth.status()).account, 'token-user');
+  assert.equal((await auth.repos()).repos[0].nameWithOwner, 'organization/private');
+  assert.ok(requests.every(row => row.options.headers.Authorization === 'Bearer fake-preferred'));
+});
+
+test('cancelling login ends the pending operation without a false sign-in error', async () => {
+  let child;
+  const auth = createGitHubAuth({ platform: 'linux', env: {}, exists: async () => true,
+    run: async file => ({ stdout: file === 'which' ? '/usr/bin/gh' : JSON.stringify({ hosts: {} }), stderr: '' }),
+    spawnProcess: () => { child = new EventEmitter(); child.stdout = new EventEmitter(); child.stderr = new EventEmitter(); child.kill = () => child.emit('close', 1); return child; },
+  });
+  const pending = auth.login();
+  while (!child) await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await auth.cancel()).phase, 'ready');
+  const result = await pending;
+  assert.match(result.message, /cancelled/);
+  assert.equal(result.account, null);
+});
+
+test('cancelling before executable discovery completes cannot open a browser later', async () => {
+  let release, announce, lookups = 0, spawned = false;
+  const started = new Promise(resolve => { announce = resolve; });
+  const auth = createGitHubAuth({ platform: 'linux', env: {}, exists: async () => true,
+    run: async file => {
+      if (file === 'which') {
+        if (++lookups === 1) { announce(); await new Promise(resolve => { release = resolve; }); }
+        return { stdout: '/usr/bin/gh', stderr: '' };
+      }
+      return { stdout: JSON.stringify({ hosts: {} }), stderr: '' };
+    },
+    spawnProcess: () => { spawned = true; throw Error('must not start'); },
+  });
+  const login = auth.login(); await started;
+  await auth.cancel(); release();
+  assert.equal((await login).phase, 'ready');
+  assert.equal(spawned, false);
 });

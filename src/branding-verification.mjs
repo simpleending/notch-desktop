@@ -21,9 +21,9 @@ export async function verifyRendererBranding(application) {
         if(!text.includes('function ProfileStickerExperience({children}){return children;}'))throw new Error('The original profile decoration remains active.');
         for(const module of ['notch-setup.mjs','workbench-skin.mjs','model-menu.mjs']) {
           const escaped=module.replaceAll('.','\\.');
-          const imported=text.match(new RegExp(`import \\{(\\w+)\\} from ["']\\./${escaped}["']`))?.[1];
+          const imported=text.match(new RegExp(`import \\{([^}]+)\\} from ["']\\./${escaped}["']`))?.[1]?.split(',').map(name=>name.trim());
           const dependency=await fs.readFile(path.join(path.dirname(file),module),'utf8');
-          if(!imported || !dependency.includes(`export function ${imported}(`))throw new Error(`The renderer import does not match ${module}'s export.`);
+          if(!imported?.length || imported.some(name=>!/^\w+$/.test(name) || !new RegExp(`export\\s+(?:async\\s+)?function ${name}\\(`).test(dependency)))throw new Error(`The renderer import does not match ${module}'s export.`);
         }
         if(text.includes('children:applicationIconOptions.map('))throw new Error('The original mascot is still selectable.');
       }

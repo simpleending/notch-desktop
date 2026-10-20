@@ -54,7 +54,7 @@ test('a healthy endpoint overrides a cached duplicate while failed-endpoint mode
 
 test('refresh commits maps atomically and an Ollama outage does not block cloud models',async()=>{
   const f=await fixture(),cloud={key:'openrouter/fixture',provider:'openrouter',enabled:true,defaultContextWindow:32768,maxInputTokens:131072,maxOutputTokens:4096,availableContextWindows:[32768]};
-  f.host.modelManager={status:async()=>({}),context:(_key,_choices,fallback)=>fallback,requestedContext:()=>undefined,mlxModels:async()=>[],cloudCatalog:async()=>[cloud],key:async()=> 'fixture-key'};
+  f.host.modelManager={status:async()=>({}),context:(_key,_choices,fallback)=>fallback,requestedContext:()=>undefined,mlxModels:async()=>[],cloudCatalog:async()=>[cloud],key:async()=> 'fixture-key',fallbacks:()=>[]};
   try{
     await f.host.listModels(true);const snapshot=f.host.getCachedModels();let release,mark;const started=new Promise(resolve=>{mark=resolve;});f.setShow(()=>{mark();return new Promise(resolve=>{release=resolve;});});
     const refreshing=f.host.listModels(true);await started;assert.equal(f.host.getCachedModels(),snapshot);
