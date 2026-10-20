@@ -33,7 +33,8 @@ try{
   await page.waitForTimeout(300);
   const text=(await Promise.all(page.frames().map(frame=>frame.locator('body').innerText().catch(()=>'')))).join('\n');
   screens[label]=text;
-  assert.doesNotMatch(text,/sign[ -]?in|log[ -]?in|cloud_auth_required|personal access token|notch Cloud|templates.*configured in the service/i,label);
+  const github=await page.evaluate(()=>document.querySelector('.notch-github-settings')?.innerText||'');
+  assert.doesNotMatch(github?text.replace(github,''):text,/sign[ -]?in|log[ -]?in|cloud_auth_required|personal access token|notch Cloud|templates.*configured in the service/i,label);
   return text;
  };
  await capture('home');

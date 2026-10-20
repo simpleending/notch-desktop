@@ -1,5 +1,6 @@
 import {createColibriPanel} from './colibri-panel.mjs';
 import { OPENROUTER_FALLBACK_LIMIT, normalizeOpenRouterFallbacks } from './model-policy.mjs';
+import { focusModelOption, rovingModelOption, focusModelTab, syncModelOptions } from './model-navigation.mjs';
 const logo = name => new URL(`./providers/${name}.svg`,import.meta.url).href;
 const formatContext = tokens => `${Math.round(tokens/1024)}K`;
 const formatSize = bytes => `${(bytes/2**30).toFixed(1)} GiB`;
@@ -32,6 +33,16 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const [extended,setExtended] = React.useState(()=>{try{return localStorage.getItem('notch.models.extendedContext')==='1';}catch{return false;}});
     const [fallbacksOpen,setFallbacksOpen] = React.useState(false), [pickingFallback,setPickingFallback] = React.useState(false);
     const [runner,setRunner] = React.useState(''), list = React.useRef(null), request = React.useRef(0), hubRequest=React.useRef(0), interactedOutside = React.useRef(false), id = React.useId();
+    const confirmation = React.useRef(null), returnFocus = React.useRef(null), searchInput = React.useRef(null);
+    React.useEffect(() => syncModelOptions(list.current));
+    React.useEffect(() => { if (list.current) list.current.scrollTop = 0; }, [search, tab, runner]);
+    React.useEffect(() => {
+      if (confirm) confirmation.current?.focus();
+      else if (returnFocus.current) {
+        if (tab === 'hub') { const target = returnFocus.current; if (target.isConnected && !target.disabled) target.focus(); else searchInput.current?.focus(); }
+        returnFocus.current = null;
+      }
+    }, [confirm, tab]);
     const changeOpen = value => { setInnerOpen(value); props.onOpenChange?.(value); if (!value) { setKey(''); setConfirm(null); setFallbacksOpen(false); setPickingFallback(false); request.current++; } };
     const act = async fn => { setBusy(true); setError(''); try { await fn(); } catch (error) { setError(error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/,'')); } finally { setBusy(false); } };
     const reload = async refresh => { const data = await api.state(refresh); setState(data); if(data.keyLoadError)setError(data.keyLoadError); return data; };
@@ -100,25 +111,20 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
       if(!selectable(row))return;
       props.onSelect(row.key); if(!props.manageOnly)changeOpen(false);
     };
-    const keyboard = event => {
-      if (!['ArrowDown','ArrowUp','Home','End'].includes(event.key)) return;
-      if (!list.current || list.current.hidden) return;
-      const rows = [...list.current.querySelectorAll('[role=option]:not(:disabled)')]; if(!rows.length)return;
-      event.preventDefault(); const index = rows.indexOf(document.activeElement);
-      const next = event.key==='Home'?0:event.key==='End'?rows.length-1:event.key==='ArrowDown'?(index+1)%rows.length:(index<=0?rows.length:index)-1;
-      rows[next].focus();
-    };
+    const keyboard = event => focusModelOption(event, list.current);
     const tabs = [['installed','Installed'],['hub','Hugging Face'],['cloud','OpenRouter'],['colibri','Colibri']];
     const switchTab = name => { setTab(name);setSearch('');setKey('');setConfirm(null);setError(''); setFallbacksOpen(false); setPickingFallback(false); };
     const cloudRows = pickingFallback ? fallbackCandidates(cloud, current?.key, chain) : cloud;
     const filtered = tab==='hub'?(hub?.query?.toLowerCase()===search.trim().toLowerCase()?hub.models:[]):(tab==='cloud'?cloudRows:all.filter(row=>row.provider!=='openrouter')).filter(row=>`${row.displayName || row.repo} ${row.key || ''}`.toLowerCase().includes(search.trim().toLowerCase()));
+    const disabledRow = row => busy || (tab === 'hub' ? hubLoading || job?.state === 'running' : (pickingFallback ? !row.enabled : !selectable(row)) || tab === 'cloud' && cloudLoading);
+    const firstOption = filtered.find(row => row.key === current?.key && !disabledRow(row)) || filtered.find(row => !disabledRow(row));
     return h(Popover,{open,onOpenChange:changeOpen},
       h(PopoverTrigger,{asChild:true},h('button',{id:props.triggerId,type:'button',disabled:props.disabled || !api,title:api?undefined:'Manage models in the main notch window','aria-label':props.ariaLabel || 'Model',className:`notch-model-trigger ${props.triggerClassName || ''}`},
         h('span',null,label),current?h('small',null,`${formatContext(current.defaultContextWindow)}${chain.length?` · ${chain.length} fallback${chain.length===1?'':'s'}`:''}`):null,h('span',{'aria-hidden':true},'⌄'))),
       h(PopoverContent,{side:props.side || 'top',align:props.align || 'end',collisionPadding:{top:56,right:16,bottom:16,left:16},forceDark:false,surface:'solid',className:'notch-model-picker','aria-label':'Choose a model',onInteractOutside:()=>{interactedOutside.current=true;},onCloseAutoFocus:event=>{if(!interactedOutside.current && props.onRestoreFocus){event.preventDefault();props.onRestoreFocus();}}},
         h('div',{className:'notch-model-tabs',role:'tablist','aria-label':'Model source'},...tabs.map(([name,title],index)=>h('button',{
           key:name,id:`${id}-${name}`,type:'button',role:'tab','aria-selected':tab===name,'aria-controls':`${id}-panel`,tabIndex:tab===name?0:-1,
-          onClick:()=>switchTab(name),onKeyDown:event=>{if(!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();const next=tabs[(index+(event.key==='ArrowRight'?1:tabs.length-1))%tabs.length][0];switchTab(next);document.getElementById(`${id}-${next}`)?.focus();}},
+          onClick:()=>switchTab(name),onKeyDown:focusModelTab},
           name==='hub'?h('img',{src:logo('huggingface'),alt:'',width:18,height:18}):name==='cloud'?h('img',{src:logo(resolvedTheme.endsWith('-dark')?'openrouter-dark':'openrouter-light'),alt:'',width:18,height:18}):null,title))),
         tab==='colibri'?h('section',{id:`${id}-panel`,role:'tabpanel','aria-labelledby':`${id}-${tab}`,className:'notch-model-panel'},h(ColibriPanel,{api,job,cached:colibri,onCatalog:setColibri,onStatus:value=>setState(previous=>({...previous,...value})),onInstalled:async show=>{await reload(true);props.onOpenChange?.(true);if(show)switchTab('installed');}})):h('section',{id:`${id}-panel`,role:'tabpanel','aria-labelledby':`${id}-${tab}`,className:'notch-model-panel'},
           h('p',{className:'notch-model-note'},tab==='installed'?'Runs on this computer. Memory fit is an estimate.':tab==='hub'?'Browse and search Hugging Face, newest first. Ollama uses Q4_K_M GGUF; Apple Silicon can use MLX conversions. Tool support is checked during installation.':'Browse OpenRouter chat and coding models, newest first. Connect a key to use coding tools. Provider usage may incur charges.'),
@@ -130,19 +136,19 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
           connected?h('div',{className:'notch-provider-status'},h('span',null,`${tab==='cloud'?'OpenRouter':'Hugging Face'} connected · ${state.persistentKeys?'encrypted on this device':'session only'}`),h('button',{type:'button',disabled:busy,onClick:()=>void act(async()=>{await api.disconnect(provider);await reload(false);})},'Disconnect')):null,
           tab==='hub' && !connected && !optional?h('button',{className:'notch-model-link',type:'button',onClick:()=>{setOptional(true);try{localStorage.removeItem('notch.models.hideHfToken');}catch{}}},'Add optional Hugging Face token'):null,
           tab==='hub' && state?.hardware?.mlxSupported?h('label',{className:'notch-model-context'},'Runtime',h('select',{'aria-label':'Local runtime',value:runner || hub?.runner || 'mlx',onChange:event=>{setRunner(event.target.value);setHub(null);setConfirm(null);},disabled:busy},h('option',{value:'mlx'},'MLX · Apple Silicon'),h('option',{value:'ollama'},'Ollama'))):null,
-          h('input',{className:'notch-model-search',type:'search','aria-label':pickingFallback?'Search fallback models':'Search models',maxLength:120,placeholder:tab==='hub'?'Search the Hub, e.g. Gemma or DeepSeek…':pickingFallback?'Search a fallback model…':'Search models…',value:search,onChange:event=>{setSearch(event.target.value);setConfirm(null);},onKeyDown:keyboard}),
-          tab==='hub' && confirm?h('div',{className:'notch-model-confirm',role:'group','aria-label':'Confirm model download'},
+          h('input',{ref:searchInput,className:'notch-model-search',type:'search','aria-label':pickingFallback?'Search fallback models':'Search models',maxLength:120,placeholder:tab==='hub'?'Search the Hub, e.g. Gemma or DeepSeek…':pickingFallback?'Search a fallback model…':'Search models…',value:search,onChange:event=>{setSearch(event.target.value);setConfirm(null);},onKeyDown:keyboard}),
+          tab==='hub' && confirm?h('div',{ref:confirmation,tabIndex:-1,className:'notch-model-confirm',role:'group','aria-label':'Confirm model download'},
             h('strong',null,confirm.repo),h('p',null,`${formatSize(confirm.bytes)} download · ${formatSize(confirm.required)} estimated memory. License: ${confirm.license || 'see model card'}.`),
             h('p',null,confirm.fits?`${hub.runner==='mlx'?'MLX':'Ollama'} downloads the model and required files, then checks loading and coding tools. Select it from Installed when ready.`:'This model exceeds available memory. Close other applications or choose a smaller model.'),
             h('button',{type:'button',disabled:busy || !confirm.fits,onClick:()=>void act(async()=>{const status=await api.install(confirm.repo,hub.runner);setState(previous=>({...previous,...status}));setConfirm(null);})},busy?'Preparing download…':'Download model'),h('button',{type:'button',disabled:busy,onClick:()=>setConfirm(null)},'Back to models')):null,
           job && tab==='hub'?h('div',{className:'notch-model-job',role:job.state==='failed'?'alert':'status'},
             h('div',null,h('strong',null,job.repo),h('p',null,job.message),job.state==='running'?h('progress',{'aria-label':'Model download progress',max:100,...(Number.isFinite(job.percent)?{value:job.percent}:{})}):null),
             job.state==='running'?h('button',{type:'button',disabled:busy,onClick:()=>void act(async()=>{const status=await api.cancel();setState(previous=>({...previous,...status}));})},'Cancel download'):job.state==='complete'?h('button',{type:'button',disabled:busy,onClick:()=>void act(async()=>{await reload(true);props.onOpenChange?.(true);switchTab('installed');})},'Show installed models'):null):null,
-          h('div',{ref:list,role:'listbox','aria-label':pickingFallback?'Fallback models':`${tabs.find(([name])=>name===tab)[1]} models`,'aria-busy':tab==='hub'?hubLoading:tab==='cloud'?cloudLoading:false,hidden:tab==='hub' && !!confirm,className:'notch-model-list',onKeyDown:keyboard},
-            ...filtered.map(row=>tab==='hub'?h('button',{type:'button',key:row.repo,role:'option','aria-label':`Download ${row.repo}`,title:row.fits?'Review download and runtime requirements':'Review memory requirements',className:'notch-hub-model','aria-selected':confirm?.repo===row.repo,disabled:busy || hubLoading || job?.state==='running',onClick:()=>setConfirm(row)},
+          h('div',{ref:list,role:'listbox','aria-label':pickingFallback?'Fallback models':`${tabs.find(([name])=>name===tab)[1]} models`,'aria-busy':tab==='hub'?hubLoading:tab==='cloud'?cloudLoading:false,hidden:tab==='hub' && !!confirm,className:'notch-model-list',onKeyDown:keyboard,onFocus:event=>rovingModelOption(event,list.current)},
+            ...filtered.map(row=>tab==='hub'?h('button',{type:'button',key:row.repo,role:'option',tabIndex:row===firstOption?0:-1,'aria-label':`Download ${row.repo}`,title:row.fits?'Review download and runtime requirements':'Review memory requirements',className:'notch-hub-model','aria-selected':confirm?.repo===row.repo,disabled:disabledRow(row),onClick:event=>{returnFocus.current=event.currentTarget;setConfirm(row);}},
               h('span',{className:'notch-hub-model-info'},h('strong',null,row.repo),h('small',null,`${formatSize(row.bytes)} download · ${formatSize(row.required)} estimated memory${row.fits?'':' · exceeds available memory'}`)),
               h('svg',{'aria-hidden':true,width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round',className:'notch-model-download-icon'},h('path',{d:'M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4'}))):
-              h('button',{type:'button',key:row.key,title:row.key,role:'option','aria-selected':!pickingFallback && row.key===current?.key,disabled:(pickingFallback?!row.enabled:!selectable(row)) || busy || (tab==='cloud'&&cloudLoading),onClick:()=>select(row)},
+              h('button',{type:'button',key:row.key,title:row.key,role:'option',tabIndex:row===firstOption?0:-1,'aria-selected':!pickingFallback && row.key===current?.key,disabled:disabledRow(row),onClick:()=>select(row)},
                 h('strong',null,row.displayName),h('small',null,tab==='cloud'?`${formatContext(row.defaultContextWindow)} context · ${Number.isFinite(row.pricing?.input)&&Number.isFinite(row.pricing?.output)?`$${row.pricing.input.toFixed(2)} in / $${row.pricing.output.toFixed(2)} out per 1M tokens`:'see provider pricing'}${row.enabled?'':` · ${row.description}`}`:`${formatSize(row.bytes)} weights · ${formatContext(row.defaultContextWindow)} context · ${row.enabled?'local':row.description}`))),
             !filtered.length?h('p',{className:'notch-model-note'},busy || hubLoading || cloudLoading || !state?'Loading models…':tab==='hub'?'No compatible weights on this page. Try another search or load more.':pickingFallback?'No other tool-capable OpenRouter models match.':'No matching models.'):null),
           tab==='hub' && !confirm && hub?.query?.toLowerCase()===search.trim().toLowerCase() && Number.isSafeInteger(hub.nextPage)?h('button',{type:'button',className:'notch-model-link',disabled:hubLoading || busy,onClick:()=>void loadHub(hub.nextPage)},hubLoading?'Loading…':'Load more models'):null,

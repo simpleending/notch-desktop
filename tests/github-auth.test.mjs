@@ -4,6 +4,19 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { createGitHubAuth, parseDeviceCode, parseGitHubAccount, redactGitHubOutput, safeDeviceUrl, REPO_NAME } from '../src/github-auth.mjs';
 import { registerModelIpc, patchModelPreload, modelPreload } from '../src/model-ipc.mjs';
+import { githubRepository } from '../src/github-repository.mjs';
+
+test('pasted GitHub repository URLs normalize without accepting other hosts or traversal', () => {
+  for (const value of [' owner/repo ', 'https://github.com/owner/repo.git', 'https://github.com/owner/repo/?tab=readme', 'git@github.com:owner/repo.git']) assert.equal(githubRepository(value), 'owner/repo');
+  for (const value of ['http://github.com/owner/repo', 'https://github.com.evil.example/owner/repo', 'https://secret@github.com/owner/repo', 'https://github.com:444/owner/repo', 'owner/..', 'owner/repo/tree/main', null]) assert.equal(githubRepository(value), null);
+});
+
+test('failed GitHub CLI discovery and process startup leave sign-in retryable', async () => {
+  const missing = createGitHubAuth({ platform: 'linux', env: {}, exists: async () => false, run: async () => { throw Error('not found'); } });
+  for (let i = 0; i < 2; i++) { await assert.rejects(missing.login(), /Install GitHub CLI/); assert.equal((await missing.status()).phase, 'ready'); }
+  const broken = createGitHubAuth({ platform: 'linux', env: {}, exists: async () => true, run: async () => ({ stdout: '/usr/bin/gh' }), spawnProcess() { throw Error('cannot start'); } });
+  for (let i = 0; i < 2; i++) { await assert.rejects(broken.login(), /cannot start/); assert.equal((await broken.status()).phase, 'ready'); }
+});
 
 test('device codes and account names stay separate from tokens', () => {
   assert.equal(parseDeviceCode('! First copy your one-time code: ABCD-EFGH'), 'ABCD-EFGH');

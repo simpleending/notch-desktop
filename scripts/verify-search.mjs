@@ -96,7 +96,7 @@ try {
   assert.equal(nativeGrep.content.split('\n').filter(line => line.includes('NATIVE_MARKER')).length, 221);
   assert.ok(nativeGrep.content.includes('x'.repeat(600) + 'NATIVE_MARKER\r'));
   assert.doesNotMatch(nativeGlob.content, /ignored\.ts/); assert.match(nativeGlob.content, /Found 222 file/);
-  assert.ok((await page.locator('body').innerText()).includes('PACKAGE_SEARCH_VERIFIED'));
+  await page.getByText('PACKAGE_SEARCH_VERIFIED', { exact: true }).waitFor();
   checks.nativeThroughComposer = { grep: nativeGrep.elapsedMs, glob: nativeGlob.elapsedMs, matchedLines: 221 };
   const continuation = page.locator('[contenteditable=true][role=textbox]').first();
   await continuation.fill('CHECK_COMPATIBILITY: find the literal two spaces between foo and bar.'); await continuation.press('Enter');

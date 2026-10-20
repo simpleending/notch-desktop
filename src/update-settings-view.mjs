@@ -2,10 +2,11 @@ export function createUpdateSettings(React) {
   const h=React.createElement;
   return function UpdateSettings(){
     const [state,setState]=React.useState(null),[busy,setBusy]=React.useState(false),[error,setError]=React.useState('');
-    React.useEffect(()=>{let alive=true;const refresh=()=>window.notchModels?.updates().then(value=>{if(alive)setState(value);}).catch(()=>{if(alive)setError('Update settings are unavailable.');});void refresh();const timer=setInterval(refresh,1500);return()=>{alive=false;clearInterval(timer);};},[]);
-    const act=async(action,value)=>{setBusy(true);setError('');try{setState(await window.notchModels.updates(action,value));}catch{setError('The update action could not finish. Try again or visit GitHub releases.');}finally{setBusy(false);}};
+    const [pollError,setPollError]=React.useState(''),request=React.useRef(0),acting=React.useRef(false);
+    React.useEffect(()=>{let alive=true;const refresh=async()=>{if(acting.current)return;const revision=++request.current;try{const value=await window.notchModels.updates();if(alive&&revision===request.current){setState(value);setPollError('');}}catch{if(alive&&revision===request.current)setPollError('Update settings are unavailable.');}};void refresh();const timer=setInterval(refresh,1500);return()=>{alive=false;request.current++;clearInterval(timer);};},[]);
+    const act=async(action,value)=>{const revision=++request.current;acting.current=true;setBusy(true);setError('');setPollError('');try{const next=await window.notchModels.updates(action,value);if(revision===request.current)setState(next);}catch{if(revision===request.current)setError('The update action could not finish. Try again or visit GitHub releases.');}finally{if(revision===request.current){acting.current=false;setBusy(false);}}};
     return h('section',{className:'notch-web-settings notch-update-settings','aria-labelledby':'notch-updates-title'},
-      h('h3',{id:'notch-updates-title'},'Updates'),
+      h('h3',{id:'notch-updates-title',tabIndex:-1},'Updates'),
       h('p',{className:'notch-appearance-copy'},'Check GitHub releases when notch opens. Updates download in the background and install after you quit normally. During Windows shutdown, installation waits for a later normal quit.'),
       state?h(React.Fragment,null,
         h('p',null,`Installed version: ${state.currentVersion}`),
@@ -18,6 +19,6 @@ export function createUpdateSettings(React) {
           state.phase==='ready'?h('button',{type:'button',disabled:busy||!state.canInstall,onClick:()=>void act('quit')},'Quit and install'):null)):
         h('p',{role:'status'},'Loading update settings…'),
       h('a',{href:'https://github.com/simpleending/notch-desktop/releases/latest',target:'_blank',rel:'noopener noreferrer'},'View releases on GitHub'),
-      error?h('p',{role:'alert'},error):null);
+      error||pollError?h('p',{role:'alert'},error||pollError):null);
   };
 }

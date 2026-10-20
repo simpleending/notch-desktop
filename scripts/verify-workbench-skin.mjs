@@ -181,7 +181,9 @@ try {
   await app.evaluate(({dialog}, root) => {dialog.showOpenDialog = async () => ({canceled:false,filePaths:[root]});}, workspacePath);
   checks.filePicker = 'controlled fixture selection; OS dialog not tested';
   await page.getByText('Click to add a readable and editable folder', {exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('[role=dialog] input[placeholder="Defaults to the primary folder name"]')?.value==='project');
   await page.getByRole('dialog').getByRole('textbox').fill('notch reskin check');
+  assert.equal(await page.getByRole('dialog').getByRole('textbox').inputValue(),'notch reskin check');
   await page.getByRole('button', {name:'Create',exact:true}).click();
   await page.getByRole('dialog').waitFor({state:'hidden'});
   await page.getByRole('heading', {name:'notch reskin check',exact:true}).waitFor();

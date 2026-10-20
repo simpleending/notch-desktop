@@ -1,0 +1,133 @@
+import { _electron } from 'electron-qa';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import os from 'node:os';
+import { processSnapshot, stopOwnedProcesses } from './process-tree.mjs';
+
+const executable = path.resolve(process.argv[2]), reportFile = path.resolve(process.argv[3] || 'analysis/navigation-verification.json');
+const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-navigation-'));
+const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api.?key|ELECTRON_RUN_AS_NODE/i.test(key)));
+const checks = [], errors = []; let app, page;
+try {
+  app = await _electron.launch({ executablePath: executable, args: ['--lang=en-US', `--user-data-dir=${profile}`], env, timeout: 45000 });
+  app.on('window', window => window.on('pageerror', error => errors.push(error.message)));
+  // Keep production rendering and IPC; replace only network/download responses with deterministic fixtures.
+  await app.evaluate(({ ipcMain }) => {
+    const fixture = globalThis.notchNavigationFixture = { web: { enabled: true, searchProvider: 'duckduckgo', browser: 'auto' }, calls: [] };
+    const handle = (name, callback) => { ipcMain.removeHandler(`notch-models:${name}`); ipcMain.handle(`notch-models:${name}`, (_event, ...args) => callback(...args)); };
+    handle('hub', (_runner, options) => ({ query: options.query, runner: 'ollama', models: Array.from({ length: 30 }, (_, i) => ({ repo: `fixture/Model-${String(i).padStart(2, '0')}`, fits: i !== 0, bytes: 2 ** 28, required: 2 ** 30 })).filter(row => row.repo.toLowerCase().includes(options.query.toLowerCase())) }));
+    handle('colibri', () => ({ installed: true, version: 'fixture', models: Array.from({ length: 20 }, (_, i) => ({ id: `colibri-${i}`, name: `Colibri model ${i}`, fits: i !== 0, fitLabel: i === 0 ? 'Not enough RAM' : 'Meets RAM precheck', reason: 'Fixture memory estimate', download_gb: 1, ram_min_gb: 2, ram_good_gb: 4 })) }));
+    handle('web', patch => { fixture.web = { ...fixture.web, ...patch }; return fixture.web; });
+    handle('voice', () => ({ ready: false, selection: { stt: { provider: 'local' }, tts: { provider: 'local' } }, stt: { name: 'Local dictation' }, tts: { name: 'System voice' } }));
+    handle('voiceModels', (action, input) => {
+      fixture.calls.push({ action, input });
+      if (action === 'catalog') return Array.from({ length: 16 }, (_, i) => ({ id: `speech-${i}`, name: `Speech model ${i}`, provider: 'local', installed: true }));
+      if (action === 'details') return { id: input.id, name: `Selected ${input.id}`, provider: 'local', installed: true, supported: true };
+      return {};
+    });
+  });
+  let setup; const deadline = Date.now() + 30000;
+  while (!setup && Date.now() < deadline) { setup = app.windows().find(window => window.url().includes('first-launch-onboarding-overlay')); if (!setup) await new Promise(resolve => setTimeout(resolve, 100)); }
+  assert(setup); await setup.getByRole('button', { name: /^Continue/ }).click();
+  const closed = setup.waitForEvent('close'); await setup.getByRole('button', { name: /^Open notch/ }).click(); await closed;
+  page = await app.firstWindow(); await page.locator('.notch-welcome').waitFor();
+  await page.getByRole('button', { name: 'Model', exact: true }).click();
+  const picker = page.locator('.notch-model-picker');
+  await picker.getByRole('tab', { name: 'Installed', exact: true }).focus();
+  await page.keyboard.press('End'); assert.equal(await picker.getByRole('tab', { name: 'Colibri', exact: true }).getAttribute('aria-selected'), 'true');
+  await page.keyboard.press('Home'); assert.equal(await picker.getByRole('tab', { name: 'Installed', exact: true }).getAttribute('aria-selected'), 'true');
+  await page.keyboard.press('ArrowLeft'); assert.equal(await picker.getByRole('tab', { name: 'Colibri', exact: true }).getAttribute('aria-selected'), 'true');
+  checks.push('all four model tabs support wrapping, Home and End');
+  const colibri = picker.getByRole('listbox', { name: 'Colibri coding models' });
+  await colibri.getByRole('option').first().click();
+  const confirmation = picker.getByRole('group', { name: 'Confirm Colibri model download' });
+  await confirmation.waitFor(); assert.equal(await confirmation.evaluate(node => node === document.activeElement), true);
+  assert.equal(await confirmation.getByRole('button', { name: 'Download and validate' }).isDisabled(), true);
+  await page.screenshot({ path: reportFile.replace(/\.json$/, '-colibri.png') });
+  await confirmation.getByRole('button', { name: 'Back to models' }).click();
+  assert.equal(await colibri.getByRole('option').first().evaluate(node => node === document.activeElement), true);
+  await page.keyboard.press('End'); await page.keyboard.press('Enter');
+  assert.equal(await confirmation.getByRole('button', { name: 'Download and validate' }).isEnabled(), true);
+  await confirmation.getByRole('button', { name: 'Back to models' }).click();
+  assert.equal(await colibri.getByRole('option').last().evaluate(node => node === document.activeElement), true);
+  checks.push('Colibri download focus, RAM block and Back restore');
+  await picker.getByRole('tab', { name: 'Hugging Face', exact: true }).click();
+  const list = picker.getByRole('listbox', { name: 'Hugging Face models' }), search = picker.getByRole('searchbox', { name: 'Search models' });
+  await list.getByRole('option').last().waitFor();
+  await search.fill('Model'); await page.waitForFunction(() => document.querySelector('[aria-label="Hugging Face models"]')?.getAttribute('aria-busy') === 'false');
+  await search.evaluate(node => node.setSelectionRange(2, 2));
+  await page.keyboard.press('Home'); assert.equal(await search.evaluate(node => node.selectionStart), 0);
+  await page.keyboard.press('End'); assert.equal(await search.evaluate(node => node.selectionStart), 5);
+  assert.equal(await search.evaluate(node => node === document.activeElement), true);
+  await page.keyboard.press('ArrowDown'); assert.equal(await list.getByRole('option').first().evaluate(node => node === document.activeElement), true);
+  await page.keyboard.press('PageDown'); assert.equal(await list.getByRole('option').nth(8).evaluate(node => node === document.activeElement), true);
+  await page.keyboard.press('End'); assert.equal(await list.getByRole('option').last().evaluate(node => node === document.activeElement), true);
+  assert.equal(await list.locator('[role=option][tabindex="0"]').count(), 1);
+  await page.keyboard.press('Tab'); assert.equal(await page.evaluate(() => document.activeElement.getAttribute('role') === 'option'), false);
+  await list.getByRole('option').last().focus(); await page.keyboard.press('Enter');
+  const hubConfirm = picker.getByRole('group', { name: 'Confirm model download', exact: true });
+  assert.equal(await hubConfirm.evaluate(node => node === document.activeElement), true);
+  await hubConfirm.getByRole('button', { name: 'Back to models' }).click();
+  assert.equal(await list.getByRole('option').last().evaluate(node => node === document.activeElement), true);
+  await search.fill('Model-2'); await list.getByRole('option', { name: 'Download fixture/Model-20' }).waitFor();
+  await page.waitForFunction(() => document.querySelector('[aria-label="Hugging Face models"]')?.getAttribute('aria-busy') === 'false');
+  assert.equal(await list.locator('[role=option][tabindex="0"]').count(), 1);
+  await page.screenshot({ path: reportFile.replace(/\.json$/, '-hub.png') });
+  await search.fill('Model-01'); await list.getByRole('option', { name: 'Download fixture/Model-01' }).waitFor();
+  await page.waitForFunction(() => document.querySelector('[aria-label="Hugging Face models"]')?.getAttribute('aria-busy') === 'false');
+  assert.equal(await list.evaluate(node => node.scrollTop), 0);
+  checks.push('model search caret, paging, roving Tab, confirmation focus and filtered scroll reset');
+  await page.keyboard.press('Escape'); await picker.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'Open user menu', exact: true }).first().click();
+  await page.getByRole('menuitem', { name: 'Settings', exact: true }).click();
+  const jumps = page.getByRole('navigation', { name: 'Appearance sections', exact: true });
+  for (const [name, id] of [['GitHub', 'github'], ['Updates', 'updates'], ['Web research', 'web'], ['Phone', 'phone'], ['Reading', 'reading']]) {
+    await jumps.getByRole('button', { name, exact: true }).click();
+    const target = page.locator(`#notch-${id}-title`);
+    assert.equal(await target.evaluate(node => node === document.activeElement), true);
+    assert.equal(await target.evaluate(node => { const rect = node.getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight; }), true);
+  }
+  checks.push('Appearance section shortcuts scroll and focus their headings');
+  await jumps.getByRole('button', { name: 'GitHub', exact: true }).click();
+  await page.screenshot({ path: reportFile.replace(/\.json$/, '-settings.png') });
+  await jumps.getByRole('button', { name: 'Web research', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Tavily API key', exact: true }).fill('unsaved-navigation-fixture');
+  await page.getByRole('combobox', { name: 'Research browser', exact: true }).selectOption('chrome');
+  await page.waitForFunction(() => !document.querySelector('[aria-label="Research browser"]').disabled);
+  assert.equal(await page.getByRole('textbox', { name: 'Tavily API key', exact: true }).inputValue(), 'unsaved-navigation-fixture');
+  await page.getByRole('textbox', { name: 'Tavily API key', exact: true }).fill('');
+  checks.push('unsaved key survives another web setting in the real renderer');
+  await app.evaluate(({ BrowserWindow }, url) => { const window = BrowserWindow.getAllWindows().find(window => window.webContents.getURL() === url); window.unmaximize(); window.setBounds({ x: 40, y: 40, width: 900, height: 600 }); }, page.url());
+  await page.waitForFunction(() => innerWidth === 900 && innerHeight === 600);
+  await page.getByRole('navigation', { name: 'Settings', exact: true }).getByRole('button', { name: 'Voice', exact: true }).click();
+  await page.getByRole('button', { name: 'Choose dictation model', exact: true }).click();
+  const speech = page.locator('.notch-voice-picker'), speechSearch = speech.getByRole('searchbox', { name: 'Search speech models' });
+  await speech.getByRole('option').last().waitFor();
+  await speech.getByRole('tab', { name: 'Installed', exact: true }).focus(); await page.keyboard.press('End');
+  assert.equal(await speech.getByRole('tab', { name: 'OpenRouter', exact: true }).getAttribute('aria-selected'), 'true');
+  await page.keyboard.press('Home'); assert.equal(await speech.getByRole('tab', { name: 'Installed', exact: true }).getAttribute('aria-selected'), 'true');
+  await speech.getByRole('option').last().waitFor(); await speechSearch.focus(); await page.keyboard.press('ArrowDown'); await page.keyboard.press('PageDown');
+  assert.equal(await speech.getByRole('option').nth(8).evaluate(node => node === document.activeElement), true);
+  assert.equal(await speech.locator('[role=option][tabindex="0"]').count(), 1);
+  await page.keyboard.press('End'); await speechSearch.fill('Speech model 1');
+  assert.equal(await speech.locator('[role=option][tabindex="0"]').count(), 1);
+  await speechSearch.fill(''); await page.keyboard.press('ArrowDown'); await page.keyboard.press('PageDown');
+  await page.keyboard.press('Enter'); await speech.getByRole('heading', { name: 'Selected speech-8', exact: true }).waitFor();
+  const dialog = page.getByRole('dialog');
+  const geometry = await dialog.evaluate(node => { const rect = node.getBoundingClientRect(); return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, height: innerHeight, width: innerWidth }; });
+  assert.ok(geometry.top >= 0 && geometry.bottom <= geometry.height && geometry.left >= 0 && geometry.right <= geometry.width, JSON.stringify(geometry));
+  await page.screenshot({ path: reportFile.replace(/\.json$/, '-speech-compact.png') });
+  await speech.getByRole('button', { name: 'Use model', exact: true }).click(); await speech.waitFor({ state: 'hidden' });
+  checks.push('speech picker keyboard tabs, paging, one Tab stop and model selection');
+  await page.getByRole('button', { name: 'Back to app', exact: true }).click(); await page.locator('.notch-welcome').waitFor();
+  assert.deepEqual(errors, []);
+  await page.screenshot({ path: reportFile.replace(/\.json$/, '.png') });
+  await fs.writeFile(reportFile, JSON.stringify({ passed: true, executable, profile, checks, errors }, null, 2));
+  console.log(JSON.stringify({ passed: true, checks }));
+} catch (error) {
+  await page?.screenshot({ path: reportFile.replace(/\.json$/, '-failure.png') }).catch(() => {});
+  await fs.writeFile(reportFile, JSON.stringify({ passed: false, executable, profile, checks, errors, error: error.stack }, null, 2)); throw error;
+} finally {
+  if (app) { const child = app.process(), before = await processSnapshot(); let timer; await Promise.race([app.close().catch(() => {}), new Promise(resolve => { timer = setTimeout(resolve, 5000); })]).finally(() => clearTimeout(timer)); if (child.exitCode === null) await stopOwnedProcesses(child.pid, before); }
+}

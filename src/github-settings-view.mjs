@@ -1,3 +1,5 @@
+import { githubRepository } from './github-repository.mjs';
+
 export function createGitHubSettings(React) {
   const h = React.createElement;
   return function GitHubSettings({ onOpenProject } = {}) {
@@ -5,6 +7,7 @@ export function createGitHubSettings(React) {
     const [busy, setBusy] = React.useState(null);
     const [error, setError] = React.useState('');
     const [repo, setRepo] = React.useState('');
+    const [pollError, setPollError] = React.useState('');
     const request = React.useRef(0);
     const bridge = window.notchModels?.github;
     React.useEffect(() => {
@@ -13,16 +16,20 @@ export function createGitHubSettings(React) {
       let timer;
       const refresh = async () => {
         const revision = request.current;
-        try { const value = await bridge('status'); if (alive && revision === request.current) setState(value); }
-        catch (failure) { if (alive && revision === request.current) setError(failure.message); }
+        try { const value = await bridge('status'); if (alive && revision === request.current) { setState(value); setPollError(''); } }
+        catch (failure) { if (alive && revision === request.current) setPollError(failure.message); }
         finally { if (alive) timer = setTimeout(refresh, state?.phase === 'waiting' || state?.phase === 'cloning' ? 1500 : 15000); }
       };
       void refresh();
       return () => { alive = false; clearTimeout(timer); };
     }, [bridge, state?.phase]);
     const act = async (action, value) => {
+      if (action === 'clone') {
+        value = githubRepository(value);
+        if (!value) { setError('Enter owner/repo or an HTTPS or SSH GitHub repository URL.'); return; }
+      }
       const revision = ++request.current;
-      setBusy(action); setError('');
+      setBusy(action); setError(''); setPollError('');
       if (action === 'login') setState(previous => ({ ...previous, phase: 'waiting', code: null, message: 'Starting GitHub sign-in…' }));
       try {
         if (action === 'open') await onOpenProject(value);
@@ -34,23 +41,24 @@ export function createGitHubSettings(React) {
     if (!bridge) return h('section', { className: 'notch-web-settings notch-github-settings' }, h('h3', null, 'GitHub'), h('p', null, 'Restart notch to sign in with GitHub.'));
     const waiting = state?.phase === 'waiting';
     return h('section', { className: 'notch-web-settings notch-github-settings', 'aria-labelledby': 'notch-github-title' },
-      h('h3', { id: 'notch-github-title' }, 'GitHub'),
+      h('h3', { id: 'notch-github-title', tabIndex: -1 }, 'GitHub'),
       h('p', null, 'Sign in through the browser with GitHub CLI, or use GH_TOKEN / GITHUB_TOKEN from your environment. Repository lists include organizations and collaborators. GitHub CLI uses system credential storage when available.'),
       h('p', { role: 'status' }, state?.message || 'Checking GitHub…'),
       waiting ? h('div', null, h('p', { className: 'notch-github-code', 'aria-live': 'polite' }, state.code || '……'), h('a', { href: state.url || 'https://github.com/login/device', target: '_blank', rel: 'noopener noreferrer' }, 'Open github.com/login/device')) : null,
       h('div', { className: 'notch-update-actions' },
-        !state?.installed ? h('button', { type: 'button', disabled: !!busy || waiting, onClick: () => act('install') }, 'Install GitHub CLI') : null,
+        !state?.installed ? h('button', { type: 'button', disabled: !state || !!busy || waiting, onClick: () => act('install') }, 'Install GitHub CLI') : null,
         state?.installed && !state.environmentToken ? h('button', { type: 'button', disabled: !!busy || waiting, onClick: () => act('login') }, state.account ? 'Sign in with another account' : 'Sign in with GitHub') : null,
         waiting ? h('button', { type: 'button', disabled: busy === 'cancel', onClick: () => act('cancel') }, 'Cancel sign-in') : null,
-        state?.account ? h('button', { type: 'button', disabled: !!busy || waiting, onClick: () => act('repos') }, 'Show repositories') : null),
+        state?.account ? h('button', { type: 'button', disabled: !!busy || waiting, onClick: () => act('repos') }, 'Show repositories') : null,
+        error || pollError || state?.environmentToken && !state.account ? h('button', { type: 'button', disabled: !!busy || waiting, onClick: () => act('status') }, 'Retry connection') : null),
       state?.account ? h('form', { onSubmit: event => { event.preventDefault(); void act('clone', repo.trim()); } },
-        h('label', null, 'Repository (owner/repo)', h('input', { value: repo, placeholder: 'organization/project', onChange: event => setRepo(event.target.value), required: true, pattern: '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' })),
+        h('label', null, 'Repository (owner/repo)', h('input', { value: repo, placeholder: 'owner/repo or GitHub URL', spellCheck: false, autoCapitalize: 'none', autoComplete: 'off', maxLength: 2048, onChange: event => setRepo(event.target.value), required: true })),
         h('button', { type: 'submit', disabled: !!busy || waiting || !repo.trim() }, 'Clone repository')) : null,
       Array.isArray(state?.repos) ? h('ul', { className: 'notch-github-repos' }, state.repos.length ? state.repos.map(row => h('li', { key: row.nameWithOwner },
         h('span', null, h('strong', null, row.nameWithOwner), row.isPrivate ? h('small', null, ' Private') : null, row.description ? h('small', null, ` ${row.description}`) : null),
         h('button', { type: 'button', disabled: !!busy, onClick: () => act('clone', row.nameWithOwner) }, 'Clone'))) : [h('li', { key: 'empty' }, 'No accessible repositories found.')]) : null,
       state?.hasMore ? h('button', { type: 'button', disabled: !!busy, onClick: () => act('repos', state.repoPage + 1) }, 'Load more repositories') : null,
       state?.clonedPath ? h('div', null, h('p', null, state.clonedPath), onOpenProject ? h('button', { type: 'button', disabled: !!busy, onClick: () => act('open', state.clonedPath) }, 'Open project') : null) : null,
-      error ? h('p', { role: 'alert' }, error) : null);
+      error || pollError ? h('p', { role: 'alert' }, error || pollError) : null);
   };
 }

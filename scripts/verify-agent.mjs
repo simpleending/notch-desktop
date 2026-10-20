@@ -47,7 +47,8 @@ async function completeTurn(resultCount) {
     const state=await debug();
     const results=state.events.filter(event=>event.type==='result');
     if(results.length>=resultCount) { assert.equal(results.at(-1).subtype,'success',JSON.stringify(results.at(-1))); return state; }
-    const allow=page.getByRole('button',{name:'Allow once',exact:true});
+    const once=page.getByRole('menuitem',{name:'Allow once',exact:true});
+    const allow=await once.isVisible()?once:page.getByRole('button',{name:/^Allow(?: once)?$/});
     if(await allow.count() && await allow.first().isVisible()) {
       const requests=(await debug()).approvals.filter(request=>!request.allowed);
       assert.ok(requests.length>0,'Visible approval must correspond to an actual tool callback.');
@@ -83,10 +84,10 @@ try {
   await page.getByRole('button',{name:'Model',exact:true}).click();
   await page.getByRole('option').filter({hasText:/Qwen3\.5/i}).first().click();
   await page.getByRole('button',{name:'Model',exact:true}).click();
-  await page.getByRole('combobox',{name:'Context limit'}).selectOption('8192');
-  await page.waitForFunction(()=>{const control=document.querySelector('select[aria-label="Context limit"]');return control?.value==='8192'&&!control.disabled;});
+  await page.getByRole('combobox',{name:'Context limit'}).selectOption('16384');
+  await page.waitForFunction(()=>{const control=document.querySelector('select[aria-label="Context limit"]');return control?.value==='16384'&&!control.disabled;});
   await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:'Model',exact:true}).getByText('8K',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Model',exact:true}).getByText('16K',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Access permissions',exact:true}).click();
   await page.getByRole('menuitem',{name:/^Ask for approval/}).click();
   const composer=page.getByRole('textbox',{name:'New Task',exact:true});
@@ -108,7 +109,7 @@ try {
   assert.ok(mounted,'The real inference model must be mounted.');
   assert.equal(mounted.context_length,checks.contextUsage.maxTokens,'The runtime allocation must match the reported context.');
   checks.allocatedContext=mounted.context_length;checks.gpuAllocation={bytes:mounted.size,bytesVram:mounted.size_vram};
-  assert.equal(checks.allocatedContext,8192,'The explicit picker choice must reach the runtime.');
+  assert.equal(checks.allocatedContext,16384,'The explicit picker choice must reach the runtime.');
   await page.screenshot({path:reportFile.replace(/\.json$/,'-completed.png')});
   await app.close();app=null;
   await launch();await page.waitForLoadState('domcontentloaded');
@@ -135,7 +136,7 @@ try {
   await page.getByRole('menuitem',{name:/^Ask for approval/}).click();
   await continuation.fill('Use the Write tool to create cancelled.txt containing CANCELLED_WRITE. Do not run commands.');
   await continuation.press('Enter');
-  await page.getByRole('button',{name:'Allow once',exact:true}).first().waitFor({timeout:240000});
+  await page.getByRole('button',{name:/^Allow(?: once)?$/}).first().waitFor({timeout:240000});
   await assert.rejects(fs.access(path.join(workspacePath,'cancelled.txt')));
   const cancellationApproval=(await debug()).approvals.at(-1);
   assert.ok((await debug()).approvals.length>approvalCount);
@@ -146,7 +147,7 @@ try {
   const interrupted=await debug();
   assert.equal(interrupted.events.filter(event=>event.type==='result').length,2);
   assert.equal(interrupted.events.filter(event=>event.type==='result').at(-1).subtype,'error_during_execution');
-  await page.getByRole('button',{name:'Allow once',exact:true}).first().waitFor({state:'hidden'});
+  await page.getByRole('button',{name:/^Allow(?: once)?$/}).first().waitFor({state:'hidden'});
   await assert.rejects(fs.access(path.join(workspacePath,'cancelled.txt')));checks.cancelledApprovalWithoutWriting=true;
   // Synthetic old turns exercise real compaction without making dozens of inference calls.
   await app.evaluate(async (_electron,id)=>{const query=globalThis.__notchQueries.get(id);if(!query)throw new Error('Missing compaction fixture session');await query.ready;

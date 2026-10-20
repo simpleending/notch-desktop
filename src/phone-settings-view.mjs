@@ -3,21 +3,25 @@ export function createPhoneSettings(React) {
   return function PhoneSettings() {
     const [state, setState] = React.useState(null), [busy, setBusy] = React.useState(false), [error, setError] = React.useState(''), [notice, setNotice] = React.useState('');
     const [urlDraft, setUrlDraft] = React.useState(null), [hostDraft, setHostDraft] = React.useState(null), [ngrokDraft, setNgrokDraft] = React.useState(''), [cloudDraft, setCloudDraft] = React.useState('');
+    const [pollError, setPollError] = React.useState(''), request = React.useRef(0), acting = React.useRef(false);
     React.useEffect(() => {
       let alive = true;
-      const refresh = () => window.notchModels?.phone?.('status').then(value => { if (alive) setState(value); }).catch(failure => { if (alive) setError(failure.message); });
+      const refresh = async () => { if (acting.current) return; const revision = ++request.current; try { const value = await window.notchModels.phone('status'); if (alive && revision === request.current) { setState(value); setPollError(''); } } catch (failure) { if (alive && revision === request.current) setPollError(failure.message); } };
       void refresh();
       const timer = setInterval(refresh, 1500);
-      return () => { alive = false; clearInterval(timer); };
+      return () => { alive = false; request.current++; clearInterval(timer); };
     }, []);
     const act = async (action, value, success = '') => {
-      setBusy(true); setError(''); setNotice('');
+      const revision = ++request.current; acting.current = true;
+      setBusy(true); setError(''); setPollError(''); setNotice('');
       try {
-        setState(await window.notchModels.phone(action, value));
-        if (action === 'update') { setUrlDraft(null); setHostDraft(null); setNgrokDraft(''); setCloudDraft(''); }
+        const next = await window.notchModels.phone(action, value);
+        if (revision !== request.current) return;
+        setState(next);
+        if (action === 'update') { if (Object.hasOwn(value, 'publicUrl')) setUrlDraft(null); if (Object.hasOwn(value, 'cloudflareHost')) setHostDraft(null); if (Object.hasOwn(value, 'ngrokToken')) setNgrokDraft(''); if (Object.hasOwn(value, 'cloudflareToken')) setCloudDraft(''); }
         setNotice(success);
-      } catch (failure) { setError(failure.message || 'Phone settings could not be saved.'); }
-      finally { setBusy(false); }
+      } catch (failure) { if (revision === request.current) setError(failure.message || 'Phone settings could not be saved.'); }
+      finally { if (revision === request.current) { acting.current = false; setBusy(false); } }
     };
     const copy = async () => {
       const address = state?.url;
@@ -34,7 +38,7 @@ export function createPhoneSettings(React) {
       cloudflare: 'Your Cloudflare tunnel token stays on this computer. Use the https hostname you configured, and point that tunnel at the port below.',
     };
     return h('section', { className: 'notch-web-settings notch-phone-settings', 'aria-labelledby': 'notch-phone-title' },
-      h('h3', { id: 'notch-phone-title' }, 'Phone'),
+      h('h3', { id: 'notch-phone-title', tabIndex: -1 }, 'Phone'),
       h('p', null, 'Use this computer from your phone. Add the page to your home screen from the browser. There is no app store and no notch account. The phone uses the folder open in notch. Model and access are chosen in the phone menu.'),
       h('label', { className: 'notch-setting-row' }, h('span', null, h('strong', null, 'Phone access'), h('small', null, 'Serves a private page from this computer while notch is open.')),
         h('input', { type: 'checkbox', 'aria-label': 'Phone access', checked: !!state?.enabled, disabled: busy || !state, onChange: event => void act('update', { enabled: event.target.checked }) })),
@@ -73,6 +77,6 @@ export function createPhoneSettings(React) {
       state?.tunnel?.message ? h('p', { role: 'status' }, state.tunnel.message) : null,
       h('div', null, h('strong', null, 'Paired phones'), state?.devices?.length ? h('ul', { className: 'notch-phone-devices' }, state.devices.map(device => h('li', { key: device.id }, h('span', null, device.name), h('button', { type: 'button', disabled: busy, onClick: () => void act('revoke', device.id, `${device.name} removed.`) }, 'Remove')))) : h('p', null, 'No phone is paired yet.')),
       notice ? h('p', { role: 'status' }, notice) : null,
-      error || state?.error ? h('p', { role: 'alert' }, error || state.error) : null);
+      error || pollError || state?.error ? h('p', { role: 'alert' }, error || pollError || state.error) : null);
   };
 }

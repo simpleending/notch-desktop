@@ -2,6 +2,7 @@ import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { gitProcessEnv } from '../vendor/notch-core/desktop-harness.js';
+import { githubRepository } from './github-repository.mjs';
 
 export const DEVICE_URL = 'https://github.com/login/device';
 export const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -182,13 +183,22 @@ export function createGitHubAuth({
       if (phase !== 'ready' || loginChild) throw new Error('GitHub setup is already running.');
       const generation = ++loginGeneration;
       phase = 'waiting'; code = null; message = 'Starting GitHub sign-in…';
-      let gh = await locateGitHubCli({ platform, env: childEnv(), run, exists });
-      if (generation !== loginGeneration) return status();
-      if (!gh) { await this.install(true); gh = await locateGitHubCli({ platform, env: childEnv(), run, exists }); }
-      if (generation !== loginGeneration) return status();
-      if (!gh) throw new Error('GitHub CLI is not installed.');
-      phase = 'waiting'; code = null; url = DEVICE_URL; message = 'Waiting for the one-time code…';
-      const child = spawnProcess(gh, ['auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--web', '--skip-ssh-key'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: gitHubChildEnv(env, true) });
+      let gh;
+      try {
+        gh = await locateGitHubCli({ platform, env: childEnv(), run, exists });
+        if (generation !== loginGeneration) return status();
+        if (!gh) { await this.install(true); gh = await locateGitHubCli({ platform, env: childEnv(), run, exists }); }
+        if (generation !== loginGeneration) return status();
+        if (!gh) throw new Error('GitHub CLI is not installed.');
+        phase = 'waiting'; code = null; url = DEVICE_URL; message = 'Waiting for the one-time code…';
+      } catch (error) {
+        if (generation !== loginGeneration) return status();
+        phase = 'ready'; code = null; message = '';
+        throw error;
+      }
+      let child;
+      try { child = spawnProcess(gh, ['auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--web', '--skip-ssh-key'], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env: gitHubChildEnv(env, true) }); }
+      catch (error) { phase = 'ready'; code = null; message = ''; throw error; }
       loginChild = child;
       let output = '', opened = false, setupWarning = '';
       const take = chunk => {
@@ -240,7 +250,8 @@ export function createGitHubAuth({
       return status();
     },
     async clone(repo) {
-      if (typeof repo !== 'string' || !REPO_NAME.test(repo) || repo.split('/').some(part => part === '.' || part === '..')) throw new Error('Choose a repository from the list or enter owner/repo.');
+      repo = githubRepository(repo);
+      if (!repo) throw new Error('Choose a repository from the list or enter owner/repo or an HTTPS or SSH GitHub repository URL.');
       if (phase !== 'ready') throw new Error('GitHub setup is already running.');
       const current = await status(true);
       if (!current.account) throw new Error(current.message);

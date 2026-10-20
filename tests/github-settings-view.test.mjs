@@ -45,6 +45,10 @@ test('repository pagination, account repair and clone handoff are accessible', a
     await view.all(view.render(props)).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
     await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(calls.at(-1), ['clone', 'organization/project']);
+    input.props.onChange({ target: { value: 'git@github.com:organization/project.git' } });
+    await view.all(view.render(props)).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(calls.at(-1), ['clone', 'organization/project']);
   } finally { view.close(); }
 });
 
@@ -53,7 +57,7 @@ test('opening a clone creates a workspace once and navigates to it', async () =>
   const service = { load: async () => {}, stateObs: { get: () => ({ workspaces }) }, create: async input => { const workspace = { ...input, workspaceId: 'fixture-workspace' }; workspaces.push(workspace); return workspace; } };
   const navigation = { push: route => routes.push(route) };
   await openClonedProject('C:\\projects\\clone', service, navigation);
-  await openClonedProject('C:\\projects\\clone', service, navigation);
+  await openClonedProject('c:/PROJECTS/clone/', service, navigation);
   assert.equal(workspaces.length, 1);
   assert.deepEqual(workspaces[0].rootPaths, ['C:\\projects\\clone']);
   assert.equal(workspaces[0].name, 'clone');

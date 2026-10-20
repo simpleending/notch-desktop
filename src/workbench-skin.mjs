@@ -6,8 +6,9 @@ import { createVoiceModels } from './voice-model-picker.mjs';
 const darkWordmark = new URL('./notch-wordmark-dark.svg', import.meta.url).href;
 const lightWordmark = new URL('./notch-wordmark-light.svg', import.meta.url).href;
 export async function openClonedProject(directory, localWorkspaceService, navigation) {
+  const normalized = value => { const path = value.replaceAll('\\', '/').replace(/\/+$/, ''); return /^[a-z]:\//i.test(path) || path.startsWith('//') ? path.toLowerCase() : path; };
   await localWorkspaceService.load();
-  const existing = localWorkspaceService.stateObs.get().workspaces.find(workspace => workspace.rootPaths.includes(directory));
+  const existing = localWorkspaceService.stateObs.get().workspaces.find(workspace => workspace.rootPaths.some(root => normalized(root) === normalized(directory)));
   const workspace = existing || await localWorkspaceService.create({ name: directory.replace(/[\\/]+$/, '').split(/[\\/]/).at(-1) || directory, rootPaths: [directory], productMode: 'coding' });
   navigation.push({ kind: 'new-chat', workspaceId: workspace.workspaceId });
 }
@@ -84,6 +85,9 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
     return h('section', { className: 'notch-appearance', 'aria-labelledby': 'notch-appearance-title' },
       h('h2', { id: 'notch-appearance-title' }, 'Appearance'),
       h('p', { className: 'notch-appearance-copy' }, 'Adjust phone access, task behavior, web research and reading preferences.'),
+      h('nav', { className: 'notch-settings-jumps notch-update-actions', 'aria-label': 'Appearance sections' },
+        ...[['github', 'GitHub'], ['updates', 'Updates'], ['web', 'Web research'], ['phone', 'Phone'], ['reading', 'Reading']].map(([id, label]) =>
+          h('button', { key: id, type: 'button', onClick: () => { const target = document.getElementById(`notch-${id}-title`); target?.scrollIntoView({ block: 'start' }); target?.focus({ preventScroll: true }); } }, label))),
       h('label', { className: 'notch-setting-row' }, h('span', null, h('strong',null,'Task workspace'), h('small',null,'Project folder is the default; writable tasks take turns. Isolated worktrees allow parallel OpenRouter tasks. Changes apply to new turns; unfinished isolated files stay saved.')),
         h('select', { 'aria-label':'Task workspace', value:workspace, disabled:savingWorkspace, onChange:event=>changeWorkspace(event.target.value) }, h('option',{value:'shared'},'Project folder'),h('option',{value:'isolated'},'Isolated worktrees'))),
       workspaceError ? h('p',{role:'alert'},workspaceError) : null,
@@ -91,7 +95,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
       h(GitHubSettings, { onOpenProject }),
       h(UpdateSettings),
       h(WebSettings),
-      h('fieldset', { className: 'notch-appearance-modes' }, h('legend', null, 'Appearance'),
+      h('fieldset', { className: 'notch-appearance-modes' }, h('legend', { id: 'notch-reading-title', tabIndex: -1 }, 'Appearance'),
         ...[['dark','Dark'],['light','Light'],['auto','System']].map(([value,label]) =>
           h('label', { key: value, className: 'notch-appearance-choice' },
             h('input', { type: 'radio', name: 'notch-appearance', value, checked: themeMode === value, onChange: () => setThemeMode(value) }),

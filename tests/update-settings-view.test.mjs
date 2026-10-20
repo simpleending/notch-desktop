@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {createUpdateSettings} from '../src/update-settings-view.mjs';
 test('update settings expose status, opt out, manual download and normal quit actions',async()=>{
  const calls=[];let state=[{supported:true,canInstall:true,automatic:true,currentVersion:'0.1.18',phase:'available',message:'New release available'},false,''],cursor=0;
- const React={useState(){const index=cursor++;return[state[index],value=>state[index]=value];},useEffect(){},createElement(type,props,...children){return{type,props:props||{},children};}};
+ const refs=[];let refCursor=0;
+ const React={useState(){const index=cursor++;return[state[index],value=>state[index]=value];},useRef(value){return refs[refCursor++]??= {current:value};},useEffect(){},createElement(type,props,...children){return{type,props:props||{},children};}};
  const previous=globalThis.window;globalThis.window={notchModels:{async updates(action,value){calls.push([action,value]);return{...state[0],phase:action==='download'?'ready':state[0].phase};}}};
- const Component=createUpdateSettings(React),render=()=>{cursor=0;return Component();},all=node=>[node,...node.children.flat(Infinity).filter(x=>x&&typeof x==='object').flatMap(all)];
+ const Component=createUpdateSettings(React),render=()=>{cursor=0;refCursor=0;return Component();},all=node=>[node,...node.children.flat(Infinity).filter(x=>x&&typeof x==='object').flatMap(all)];
  const button=(tree,name)=>all(tree).find(n=>n.type==='button'&&n.children.includes(name));
  try{
   let tree=render();assert.equal(all(tree).find(n=>n.type==='a').props.href,'https://github.com/simpleending/notch-desktop/releases/latest');

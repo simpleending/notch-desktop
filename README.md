@@ -29,7 +29,9 @@ Windows releases check GitHub for new stable versions after opening, download up
 
 ## GitHub and Git remotes
 
-Open **Settings → Appearance → GitHub** to install GitHub CLI and sign in through the browser. The sign-in is shared with the CLI. Repository discovery includes organizations and collaborators; use **Load more repositories** or enter `owner/repo` directly. After cloning, choose **Open project** to work in that folder.
+Open **Settings → Appearance → GitHub** to install GitHub CLI and sign in through the browser. The sign-in is shared with the CLI. Repository discovery includes organizations and collaborators; use **Load more repositories**, enter `owner/repo`, or paste a GitHub HTTPS or SSH repository URL. After cloning, choose **Open project** to work in that folder.
+
+Appearance has shortcuts to GitHub, updates, web research, phone access and reading preferences. Model lists support arrows, Page Up/Down and Home/End; the search field keeps its normal text-editing shortcuts. Downloads show their requirements before you confirm, and **Back to models** restores focus to your previous choice.
 
 `GH_TOKEN` takes precedence over `GITHUB_TOKEN`, and both override saved GitHub CLI credentials. Settings shows the effective account. Update or remove an environment token before browser sign-in; use **Sign in with another account** to change a saved account. GitHub CLI uses system credential storage when available and can fall back to its configuration file when secure storage is unavailable.
 
