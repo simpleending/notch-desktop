@@ -162,6 +162,9 @@ export function createGitHubAuth({
 
   return {
     status,
+    async pickLocal() {
+      return pickDirectory('local');
+    },
     async install(fromLogin = false) {
       if (phase !== 'ready' && !(fromLogin && phase === 'waiting')) throw new Error('GitHub setup is already running.');
       if (await locateGitHubCli({ platform, env: childEnv(), run, exists })) return status(true);

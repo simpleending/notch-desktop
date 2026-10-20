@@ -51,7 +51,7 @@ export function registerModelIpc(ipcMain, host) {
     status: () => manager.status(),
     queue: () => host.getQueueStatus(),
     github: (action, value) => {
-      if (!['status', 'install', 'login', 'cancel', 'repos', 'clone'].includes(action)) throw new Error('Choose a supported GitHub action.');
+      if (!['status', 'install', 'login', 'cancel', 'repos', 'clone', 'pickLocal'].includes(action)) throw new Error('Choose a supported GitHub action.');
       if (action === 'clone' && !githubRepository(value)) throw new Error('Choose a repository from the list or enter a GitHub repository URL.');
       if (action === 'repos' && value !== undefined && (!Number.isSafeInteger(value) || value < 1)) throw new Error('Choose a valid repository page.');
       if (!['clone', 'repos'].includes(action) && value !== undefined) throw new Error('Invalid GitHub request.');

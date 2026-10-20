@@ -1,6 +1,6 @@
 {
   "name": "@freesyntax/notch-desktop",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "private": true,
   "type": "module",
   "description": "notch by freesyntax.dev: local models first, optional provider API keys",

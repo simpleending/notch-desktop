@@ -6,6 +6,8 @@ The [Windows hardware helper](../vendor/notch-cli/native/windows-hardware/README
 
 Bundled components retain their own licenses. These include the [vendored CLI's Apache 2.0 license](../vendor/notch-cli/LICENSE), [fff's MIT license](../assets/notices/fff-LICENSE.txt), [Manrope's OFL license](../assets/fonts/Manrope-OFL.txt), and [provider mark notices](../assets/notices/provider-logos.md).
 
+The GitHub integration uses unmodified black and white Invertocat assets from the official [GitHub brand toolkit](https://brand.github.com/foundations/logo). The [GitHub mark notice](../assets/notices/github-marks.md) ships with the installer; the artwork and trademarks remain GitHub's property.
+
 The OpenRouter adapter is [@openrouter/ai-sdk-provider 3.1.0](https://github.com/OpenRouterTeam/ai-sdk-provider), licensed under Apache 2.0. Its package and license are retained in the application's `notch/node_modules/@openrouter/ai-sdk-provider` directory.
 
 The Windows update client bundles [electron-updater 6.8.9](https://github.com/electron-userland/electron-builder/tree/v26.15.3/packages/electron-updater) and its runtime dependencies. Their license texts are retained in `notch/vendor/notch-updater/THIRD_PARTY_NOTICES.txt` inside the application archive.

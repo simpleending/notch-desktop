@@ -116,3 +116,23 @@ html[data-notch-workbench=true] :is(button,input,select,[role=menu],[role=listbo
 .notch-voice-model-settings{display:grid;gap:12px;margin:18px 0}.notch-voice-model-settings h3{margin:0}.notch-voice-model-settings p{margin:0;color:var(--notch-muted)}.notch-voice-model-settings button,.notch-voice-picker button{font:inherit;color:var(--notch-ink);background:var(--notch-panel);border:1px solid var(--notch-line);border-radius:8px;padding:8px 12px;cursor:pointer}.notch-voice-preview,.notch-voice-picker label{display:grid;gap:6px}.notch-voice-picker{display:grid;gap:12px;min-width:0}.notch-voice-picker [role=tablist]{display:flex;gap:8px;flex-wrap:wrap}.notch-voice-picker [aria-selected=true]{border-color:var(--notch-accent);background:var(--notch-accent-fill)}.notch-voice-model-list{display:grid;gap:6px;max-height:34vh;overflow:auto}.notch-voice-model-list button{text-align:left;display:grid;gap:4px}.notch-voice-model-list small{color:var(--notch-muted)}.notch-voice-model-list [data-recommended=true]{border-color:var(--notch-accent)}.notch-voice-picker section{display:grid;gap:8px}.notch-voice-picker h4,.notch-voice-picker p{margin:0}.notch-voice-cloud-consent{display:flex!important;align-items:center}.notch-voice-picker button:disabled,.notch-voice-model-settings button:disabled{opacity:.5;cursor:default}.notch-voice-picker input,.notch-voice-picker select,.notch-voice-model-settings input{font:inherit;max-width:100%;padding:8px;border:1px solid var(--notch-line);border-radius:8px;color:var(--notch-ink);background:var(--notch-panel)}.notch-composer-speech-download{color:var(--notch-accent)!important}.notch-composer-speech-download[aria-busy=true]{opacity:.8}
 
 .notch-github-settings select{width:100%;border:1px solid var(--notch-line);border-radius:7px;background:var(--notch-panel);padding:8px;color:var(--notch-ink);font:inherit}.notch-github-settings select:focus-visible{outline:2px solid var(--notch-accent);outline-offset:2px}.notch-github-browser h4{font-size:13px;font-weight:600;margin:16px 0 8px}
+.notch-project-action{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+.notch-github-entry{display:inline-flex;align-items:center;gap:8px;background:none;border:0;color:var(--notch-secondary);font:13px/1.5 var(--font-sans);cursor:pointer;text-align:left}
+.notch-project-action .notch-github-entry{text-decoration:none;padding:3px 0}
+.notch-github-entry:hover{color:var(--notch-ink)}
+.notch-github-mark{display:block;flex-shrink:0;object-fit:contain}
+.notch-github-entry-sidebar{width:100%;height:28px;padding:0 8px;margin-top:2px;border-radius:8px;gap:8px}
+.notch-github-entry-sidebar:hover{background:var(--notch-elevated)}
+.notch-github-entry-sidebar .notch-github-mark{width:14px;height:14px;margin:0 1px}
+.notch-github-dialog{min-width:0;color:var(--notch-ink)}
+.notch-github-dialog p{font-size:12px;line-height:1.6;color:var(--notch-secondary)}
+.notch-local-projects-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.notch-local-projects h3{margin:0;font-size:13px;font-weight:600}
+.notch-local-projects button{border:1px solid var(--notch-line);border-radius:7px;background:none;padding:7px 10px;color:var(--notch-secondary);font:12px/1.5 var(--font-sans);cursor:pointer}
+.notch-local-projects button:hover:not(:disabled){background:var(--notch-elevated);color:var(--notch-ink)}
+.notch-local-projects button:disabled{opacity:.45;cursor:default}
+.notch-local-project-list{list-style:none;padding:3px;margin:10px 0 14px;max-height:132px;overflow:auto;border:1px solid var(--notch-line);border-radius:8px}
+.notch-local-project-list button{display:grid;gap:2px;width:100%;text-align:left;border:0;min-width:0}
+.notch-local-project-list strong{font-size:12px;font-weight:500}
+.notch-local-project-list small{font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--notch-muted)}
+.notch-repository-dialog [role=alert]{color:var(--color-error,var(--notch-ink))}

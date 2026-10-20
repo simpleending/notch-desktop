@@ -3,6 +3,7 @@ import { createPhoneSettings } from './phone-settings-view.mjs';
 import { createUpdateSettings } from './update-settings-view.mjs';
 import { createGitHubSettings } from './github-settings-view.mjs';
 import { createVoiceModels } from './voice-model-picker.mjs';
+import { createGitHubBrowser } from './github-browser.mjs';
 const darkWordmark = new URL('./notch-wordmark-dark.svg', import.meta.url).href;
 const lightWordmark = new URL('./notch-wordmark-light.svg', import.meta.url).href;
 export async function openClonedProject(directory, localWorkspaceService, navigation) {
@@ -18,6 +19,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
   const PhoneSettings = createPhoneSettings(React);
   const UpdateSettings = createUpdateSettings(React);
   const GitHubSettings = createGitHubSettings(React);
+  const { Entry: GitHubEntry, Browser: RepositoryBrowser } = createGitHubBrowser(React, useTheme);
   const { Settings: VoiceModels, Host: VoicePickerHost } = createVoiceModels(React, primitives);
   function Wordmark({ width = 100, className = '' } = {}) {
     const { resolvedTheme } = useTheme();
@@ -34,7 +36,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
       return () => { alive = false; clearInterval(timer); };
     }, []);
     return h(React.Fragment,null,h('span', { className: 'notch-window-brand' }, h('img', { src: resolvedTheme.endsWith('-dark') ? darkWordmark : lightWordmark, alt: 'notch', width: 82, height: 25 }),
-      queued.length ? h('span', { role: 'status', className: 'notch-queue-status', title: 'Stop a waiting task from its chat.' }, `${queued.length} waiting · ${queued[0].message}`) : null),h(VoicePickerHost));
+      queued.length ? h('span', { role: 'status', className: 'notch-queue-status', title: 'Stop a waiting task from its chat.' }, `${queued.length} waiting · ${queued[0].message}`) : null),h(VoicePickerHost),primitives.GitHubHost ? h(primitives.GitHubHost) : null);
   }
   function ThemeControls() {
     const { resolvedTheme, setThemeMode } = useTheme();
@@ -56,7 +58,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
   }
   function QuickStart({ onCreateWorkspace }) {
     return h('div', { className: 'notch-project-action' },
-      h('button', { type: 'button', onClick: onCreateWorkspace }, 'Open project'));
+      h('button', { type: 'button', onClick: onCreateWorkspace }, 'Open project'), h(GitHubEntry));
   }
   function PanelLauncher({ onOpenCode, onOpenBrowser, onOpenSideChat, onOpenReview, onOpenTerminal, reviewAvailable, codeDisabled, reviewDisabled }) {
     const actions = [['Files', onOpenCode, codeDisabled], ['Browser', onOpenBrowser, false],
@@ -124,5 +126,5 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
     return h('svg', { viewBox: '0 0 24 24', width: size, height: size, className: `notch-dot ${className}`, 'aria-hidden': true, fill: 'currentColor' },
       h('circle', { cx: 12, cy: 12, r: 4 }));
   }
-  return { Brand, ThemeControls, ModeSwitch, Welcome, QuickStart, PanelLauncher, Appearance, LocalProfile, Symbol, Dot, Wordmark, VoiceModels };
+  return { Brand, ThemeControls, ModeSwitch, Welcome, QuickStart, PanelLauncher, Appearance, LocalProfile, Symbol, Dot, Wordmark, VoiceModels, GitHubEntry, RepositoryBrowser };
 }

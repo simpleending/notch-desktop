@@ -136,7 +136,33 @@ export function patchSecondaryArtwork(source) {
     for(const span of spans.sort((a,b)=>b.start-a.start))body=body.slice(0,span.start)+'null'+body.slice(span.end);
     return body;
   });
-  return source;
+  return patchGitHubNavigation(source);
+}
+
+export function patchGitHubNavigation(source) {
+  if (source.includes('/* notch github navigation */')) return source;
+  const initialization = /}=createNotchWorkbench\(reactExports,useTheme,\{ContentDialog\}\)/i;
+  if (!initialization.test(source)) return source;
+  source = source.replace(initialization, match => match.replace('}=', ',GitHubEntry:notchGitHubEntry,RepositoryBrowser:notchRepositoryBrowser}=')
+    .replace('{ContentDialog}', '{ContentDialog,GitHubHost:notchGitHubBrowserHost}'));
+  if (source.includes('function WorkbenchSidebar(')) source = patchFunction(source, 'WorkbenchSidebar', body => replaceOnce(body,
+    ',S2.id)})})]}),jsxRuntimeExports.jsx("div",{className:"mt-3 min-h-0 flex-1 overflow-clip"',
+    ',S2.id)})}),jsxRuntimeExports.jsx(notchGitHubEntry,{variant:"sidebar",className:navLinkClass})]}),jsxRuntimeExports.jsx("div",{className:"mt-3 min-h-0 flex-1 overflow-clip"'));
+  return source + `\n/* notch github navigation */
+function notchGitHubBrowserHost(){
+  const {localWorkspaceService}=useServices(),navigation=useNavigation(),state=useObservableValue(localWorkspaceService.stateObs);
+  const [open,setOpen]=reactExports.useState(false),[error,setError]=reactExports.useState("");
+  reactExports.useEffect(()=>{
+    let live=true;
+    const show=()=>{setError("");setOpen(true);localWorkspaceService.load().catch(failure=>{if(live)setError(failure.message)})};
+    window.addEventListener("notch:open-github",show);
+    return()=>{live=false;window.removeEventListener("notch:open-github",show)};
+  },[localWorkspaceService]);
+  if(!open)return null;
+  const projects=state.workspaces.filter(project=>!project.archived&&!isRemoteWorkspace(project)&&project.rootPaths?.[0]).map(project=>({id:project.workspaceId,name:project.name,path:project.rootPaths[0]}));
+  const onOpenProject=async directory=>{await openClonedProject(directory,localWorkspaceService,navigation);setOpen(false)};
+  return reactExports.createElement(ContentDialog,{open,onClose:()=>setOpen(false),title:"GitHub repositories",description:"Clone from GitHub or open a project already on this device.",closeLabel:"Close repository browser",maxWidth:840,className:"notch-repository-dialog",children:reactExports.createElement(reactExports.Fragment,null,reactExports.createElement(notchRepositoryBrowser,{projects,onOpenProject}),error?reactExports.createElement("p",{role:"alert"},error):null)});
+}`;
 }
 
 export function patchVoiceOverlayArtwork(source) {
@@ -275,9 +301,10 @@ export async function verifyWorkbenchImports(assets, checkExports = true) {
 
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
   await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
+  await cp(path.join(root,'assets/github'),path.join(assets,'github'),{recursive:true});
   await cp(path.join(root, 'assets/fonts'), path.join(assets, 'fonts'), { recursive: true });
   await cp(path.join(root, 'assets/notices'), path.join(assets, 'notices'), { recursive: true });
   await cp(path.join(root, 'assets/notch-symbol.png'), path.join(assets, 'notch-symbol.png'));

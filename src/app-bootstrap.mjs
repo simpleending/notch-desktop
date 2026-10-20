@@ -36,8 +36,8 @@ app.whenReady().then(() => {
   globalThis.__notchHost.webResearch = createWebResearch(app.getPath('userData'), { safeStorage, signal: globalThis.__notchDiscovery.signal });
   globalThis.__notchHost.github = createGitHubAuth({
     openExternal: url => shell.openExternal(url),
-    pickDirectory: async () => {
-      const result = await dialog.showOpenDialog({ title: 'Choose a folder for the clone', properties: ['openDirectory', 'createDirectory'] });
+    pickDirectory: async purpose => {
+      const result = await dialog.showOpenDialog({ title: purpose === 'local' ? 'Open a local repository' : 'Choose a folder for the clone', properties: purpose === 'local' ? ['openDirectory'] : ['openDirectory', 'createDirectory'] });
       return result.canceled ? null : result.filePaths[0];
     },
   });
