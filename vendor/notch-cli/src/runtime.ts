@@ -86,7 +86,7 @@ import { estimateTokens } from './agent/compression.js';
 import { withRetry } from './agent/retry.js';
 import { saveSession, loadSession, loadLastSession, listSessions, exportSession, Rollout, generateSessionId, listRollouts, readRollout, rebuildMessagesFromRollout, hasActiveStream, readIndex } from './session/index.js';
 import { initProject } from './init.js';
-import { login, loadCredentials, clearCredentials } from './auth.js';
+
 import { unifiedDiff } from './tools/diff-preview.js';
 import { parsePatch } from './tools/apply-patch.js';
 import { JsonEmitter } from './ui/json-events.js';
@@ -352,7 +352,6 @@ function printHelp() {
     /models unload      \u2014 Release the active local model's memory
     /model <ref>        \u2014 Switch model: /model openrouter/anthropic/claude-sonnet-4.6
     /setup-keys         \u2014 Store provider API keys locally
-    /sync-keys          \u2014 Pull provider keys you added on freesyntax.dev
     /providers          \u2014 List built-in providers and whether their keys are set
     /status             \u2014 Check active provider health
     /undo               \u2014 Undo last file changes
@@ -467,74 +466,13 @@ async function main() {
   }
 
   // Handle subcommands
-  if (promptArgs[0] === 'login') {
-    const spinner = ora('Opening browser...').start();
-    try {
-      spinner.stop();
-      const creds = await login();
-      console.log(chalk.green(`\n  ✓ Signed in as ${creds.email}`));
-      console.log(chalk.gray(`  API key stored in ${(await import('./auth.js')).getCredentialsPath()}`));
-
-      // Opportunistically pull provider keys the user added on freesyntax.dev
-      // so the CLI can hit OpenAI / Anthropic / OpenRouter / etc. without
-      // a second manual setup. Failure is non-fatal.
-      try {
-        const { syncByokKeys } = await import('./auth.js');
-        const synced = await syncByokKeys(creds.token);
-        const providerCount = Object.keys(synced.keys).length;
-        if (providerCount > 0) {
-          console.log(chalk.gray(
-            `  Synced ${providerCount} provider key(s) from freesyntax.dev → ${(await import('./auth.js')).getByokSyncPath()}`,
-          ));
-        } else {
-          console.log(chalk.gray(
-            `  No provider keys on your profile yet — add them at freesyntax.dev/settings/keys then run ${chalk.white('notch sync-keys')}.`,
-          ));
-        }
-      } catch (syncErr) {
-        // Surface the failure but don't abort the login. Most common
-        // cause: the user signed in while offline or the website is
-        // temporarily unreachable.
-        console.log(chalk.yellow(
-          `  (provider key sync skipped: ${(syncErr as Error).message.slice(0, 120)})`,
-        ));
-      }
-      console.log('');
-    } catch (err) {
-      spinner.stop();
-      console.error(chalk.red(`\n  Login failed: ${(err as Error).message}\n`));
-      process.exit(1);
-    }
+  if (promptArgs[0] === 'login' || promptArgs[0] === 'whoami') {
+    const { runGitHubCli } = await import('./commands/github.js');
+    process.exitCode = await runGitHubCli([promptArgs[0] === 'login' ? 'login' : 'status']);
     return;
   }
-
-  // `notch sync-keys` — standalone command for pulling provider keys after
-  // the user adds or rotates credentials on freesyntax.dev. Doesn't
-  // re-run the browser login.
   if (promptArgs[0] === 'sync-keys') {
-    const creds = await loadCredentials();
-    if (!creds) {
-      console.log(chalk.gray('\n  Not signed in. Run: notch login\n'));
-      return;
-    }
-    const spinner = ora('Pulling provider keys from freesyntax.dev...').start();
-    try {
-      const { syncByokKeys, getByokSyncPath } = await import('./auth.js');
-      const synced = await syncByokKeys(creds.token);
-      spinner.stop();
-      const providers = Object.keys(synced.keys);
-      if (providers.length === 0) {
-        console.log(chalk.gray(`\n  No provider keys on your profile yet.`));
-        console.log(chalk.gray(`  Add them at ${chalk.white('https://freesyntax.dev/settings/keys')} then rerun.\n`));
-      } else {
-        console.log(chalk.green(`\n  ✓ Synced ${providers.length} provider key(s): ${providers.join(', ')}`));
-        console.log(chalk.gray(`  Cached at ${getByokSyncPath()}\n`));
-      }
-    } catch (err) {
-      spinner.stop();
-      console.error(chalk.red(`\n  Key sync failed: ${(err as Error).message}\n`));
-      process.exit(1);
-    }
+    console.log('Provider keys are stored locally. Run notch setup or notch keys to configure them directly.');
     return;
   }
 
@@ -566,26 +504,7 @@ async function main() {
   }
 
   if (promptArgs[0] === 'logout') {
-    const creds = await loadCredentials();
-    if (!creds) {
-      console.log(chalk.gray('\n  Not signed in.\n'));
-    } else {
-      await clearCredentials();
-      console.log(chalk.green(`\n  ✓ Signed out (${creds.email})\n`));
-    }
-    return;
-  }
-
-  if (promptArgs[0] === 'whoami') {
-    const creds = await loadCredentials();
-    if (!creds) {
-      console.log(chalk.gray('\n  Not signed in. Run: notch login\n'));
-    } else {
-      const keyPreview = `${creds.token.slice(0, 12)}...`;
-      console.log(chalk.gray(`\n  Signed in as ${chalk.white(creds.email)}`));
-      console.log(chalk.gray(`  Key: ${keyPreview}`));
-      console.log(chalk.gray(`  Since: ${new Date(creds.createdAt).toLocaleDateString()}\n`));
-    }
+    console.log('There is no FreeSyntax account. For GitHub, run gh auth logout --hostname github.com. Provider keys are managed with notch keys.');
     return;
   }
 
@@ -723,23 +642,7 @@ async function main() {
     }
     if (err instanceof MissingApiKeyError) {
       printWordmark(VERSION);
-      console.log('  To get started, you need a Notch API key.');
-      console.log('');
-      console.log('  \x1b[1mOption 1:\x1b[0m Log in via browser (recommended)');
-      console.log('    \x1b[33m$ notch login\x1b[0m');
-      console.log('');
-      console.log('  \x1b[1mOption 2:\x1b[0m Set your API key directly');
-      console.log('    \x1b[33m$ export NOTCH_API_KEY=your-key-here\x1b[0m');
-      console.log('');
-      console.log('  \x1b[1mOption 3:\x1b[0m Pass it inline');
-      console.log('    \x1b[33m$ notch --api-key your-key-here\x1b[0m');
-      console.log('');
-      console.log('  \x1b[1mOr:\x1b[0m Use any provider key (OpenAI, Anthropic, OpenRouter, ...)');
-      console.log('    \x1b[33m$ notch --list-providers\x1b[0m');
-      console.log('    \x1b[33m$ notch --model openrouter/anthropic/claude-sonnet-4.6\x1b[0m');
-      console.log('');
-      console.log('  Get your Notch key at: \x1b[4mhttps://freesyntax.dev/settings\x1b[0m');
-      console.log('');
+      console.log('  Choose a local model with notch models, or connect your own provider with notch setup.');
       process.exit(0);
     }
     throw err;
@@ -758,6 +661,7 @@ async function main() {
         baseUrl: activeByok.baseUrl,
       }
     : MODEL_CATALOG[activeModelId as NotchModelId];
+  if (!info) throw new Error('Choose a local model with notch models or configure your own provider with notch setup.');
 
   // JSONL event stream (activated by --json; suppresses banner/spinners on stdout)
   const jsonMode = !!opts.json;
@@ -1607,7 +1511,7 @@ async function main() {
       config.models.chat.byokProvider = undefined;
       model = resolveModel(config.models.chat);
       const switchedInfo = MODEL_CATALOG[activeModelId as NotchModelId];
-      console.log(chalk.green(`  Switched to ${switchedInfo.label} (${switchedInfo.id})\n`));
+      console.log(chalk.green(`  Switched to ${switchedInfo?.label ?? activeModelId} (${switchedInfo?.id ?? activeModelId})\n`));
       rl.prompt();
       return;
     }
@@ -1659,30 +1563,8 @@ async function main() {
       return;
     }
 
-    // /sync-keys — pull provider keys from freesyntax.dev using stored creds.
     if (input === '/sync-keys') {
-      const { loadCredentials, syncByokKeys, getByokSyncPath } = await import('./auth.js');
-      const creds = await loadCredentials();
-      if (!creds) {
-        console.log(chalk.gray('  Not signed in. Run:  notch login\n'));
-        rl.prompt();
-        return;
-      }
-      const spinner = ora('Pulling provider keys from freesyntax.dev...').start();
-      try {
-        const synced = await syncByokKeys(creds.token);
-        spinner.stop();
-        const providers = Object.keys(synced.keys);
-        if (providers.length === 0) {
-          console.log(chalk.gray(`  No provider keys on your profile yet. Add them at https://freesyntax.dev/settings/keys.\n`));
-        } else {
-          console.log(chalk.green(`  ✓ Synced ${providers.length} key(s): ${providers.join(', ')}`));
-          console.log(chalk.gray(`    Cached at ${getByokSyncPath()}\n`));
-        }
-      } catch (err) {
-        spinner.stop();
-        console.log(chalk.red(`  Sync failed: ${(err as Error).message}\n`));
-      }
+      console.log('Provider keys stay on this device. Use /setup-keys to configure them directly.');
       rl.prompt();
       return;
     }
@@ -1705,14 +1587,14 @@ async function main() {
           statusSpinner.succeed(`${byokCur.label} (${activeModelId}) looks configured`);
         } else {
           const statusInfo = MODEL_CATALOG[activeModelId as NotchModelId];
-          statusSpinner.succeed(`${statusInfo.label} (${activeModelId}) is reachable`);
+          statusSpinner.succeed(`${statusInfo?.label ?? activeModelId} (${activeModelId}) is reachable`);
         }
       } else {
         statusSpinner.fail(check.error ?? 'API unreachable');
         if (byokCur && byokCur.apiKeyEnv) {
           console.log(chalk.gray(`  Tip: export ${byokCur.apiKeyEnv}=... (or pass --api-key) and verify ${byokCur.baseUrl} is reachable.\n`));
         } else {
-          console.log(chalk.gray('  Tip: Set NOTCH_API_KEY or use --api-key, and verify your Modal endpoint is running.\n'));
+          console.log(chalk.gray('  Tip: Set NOTCH_API_KEY or use --api-key, and verify your configured provider endpoint is running.\n'));
         }
       }
       rl.prompt();

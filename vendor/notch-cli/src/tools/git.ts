@@ -9,6 +9,7 @@
 
 import { execFile } from 'node:child_process';
 import { simpleGit, type SimpleGit } from 'simple-git';
+import { gitProcessEnv } from '../github/gh.js';
 import { z } from 'zod';
 import type { NotchTool, ToolResult, ToolContext } from './types.js';
 
@@ -48,7 +49,7 @@ export function isSecretPath(file: string): boolean {
 
 function gitExec(cwd: string, args: string[], signal?: AbortSignal): Promise<{ stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, timeout: 120_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal }, (error, stdout, stderr) => {
+    execFile('git', args, { cwd, timeout: 120_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal, env: gitProcessEnv() }, (error, stdout, stderr) => {
       if (error) {
         const failure = error as Error & { stderr?: string };
         failure.message = [stderr, failure.message].filter(Boolean).join('\n');
@@ -218,14 +219,14 @@ export const gitTool: NotchTool<typeof parameters> = {
           const blocked = forcePushError(args, currentBranch);
           if (blocked) return { content: blocked, isError: true, notExecuted: true };
 
-          await git.push(args);
+          await gitExec(ctx.cwd, ['push', ...args], ctx.abortSignal);
           return { content: `Pushed ${currentBranch} successfully` };
         }
 
         case 'pull': {
-          const pullResult = await git.pull(params.args?.split(' '));
+          const pullResult = await gitExec(ctx.cwd, ['pull', ...(params.args?.split(' ') ?? [])], ctx.abortSignal);
           return {
-            content: `Pulled: ${pullResult.summary.changes} changes, ${pullResult.summary.insertions} insertions, ${pullResult.summary.deletions} deletions`,
+            content: [pullResult.stdout, pullResult.stderr].filter(Boolean).join('\n').trim() || 'Pull completed.',
           };
         }
 

@@ -2,9 +2,15 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import test from 'node:test';
+import test, {after} from 'node:test';
+import {pathToFileURL} from 'node:url';
 import assert from 'node:assert/strict';
-import { gitTool, isSecretPath } from '../vendor/notch-cli/src/tools/git.ts';
+import { build } from 'esbuild';
+const bundledDirectory=fs.mkdtempSync(path.join(path.resolve('node_modules'),'.notch-git-test-'));
+const bundledFile=path.join(bundledDirectory,'git.mjs');
+await build({entryPoints:['vendor/notch-cli/src/tools/git.ts'],bundle:true,packages:'external',platform:'node',format:'esm',outfile:bundledFile});
+const {gitTool,isSecretPath,forcePushError}=await import(pathToFileURL(bundledFile).href);
+after(()=>fs.rmSync(bundledDirectory,{recursive:true,force:true}));
 
 function git(cwd, args) {
   execFileSync('git', args, { cwd, stdio: 'pipe' });
@@ -55,7 +61,6 @@ test('secret files stay out of a prompted commit and push', async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
-import { forcePushError } from '../vendor/notch-cli/src/tools/git.ts';
 
 function fixture(run) {
   return async () => {

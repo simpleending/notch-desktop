@@ -6,14 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 import chalk from 'chalk';
 import ora from '../ui/spinner.js';
-import { gitHubChildEnv, locateGitHubCli } from '../github/gh.js';
+import { gitHubChildEnv, gitProcessEnv, locateGitHubCli } from '../github/gh.js';
 import { registerCommand, type CommandContext } from './registry.js';
 
 const exec = promisify(execFile);
 
 export async function runPullRequest(args: string, ctx: CommandContext) {
   const signal = ctx.toolContext?.abortSignal;
-  const run = (file: string, argv: string[]) => exec(file, argv, { cwd: ctx.cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal, env: file === 'git' ? process.env : gitHubChildEnv() });
+  const run = (file: string, argv: string[]) => exec(file, argv, { cwd: ctx.cwd, encoding: 'utf8', timeout: 30_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal, env: file === 'git' ? gitProcessEnv() : gitHubChildEnv() });
   const git = async (argv: string[]) => (await run('git', argv)).stdout.trim();
   const optionalGit = (argv: string[]) => git(argv).catch(() => { signal?.throwIfAborted(); return ''; });
   try {

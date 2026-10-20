@@ -176,6 +176,7 @@ export function patchThemeBroadcast(source) {
 const gitHubAppearance = 'function AppearanceSettings(){const preferences=useWorkbenchPreferences(),{i18n}=useTranslation(),{localWorkspaceService}=useServices(),navigation=useNavigation();const onOpenProject=path=>openClonedProject(path,localWorkspaceService,navigation);return reactExports.createElement(NotchAppearance,{preferences,language:resolveInterfaceLanguage(i18n.resolvedLanguage??i18n.language),setLanguage:setInterfaceLanguage,onOpenProject});}';
 
 export function patchWorkbenchRenderer(source) {
+  source = source.replaceAll('workbenchClient.openExternalUrl("https://freesyntax.dev")', 'workbenchClient.openExternalUrl("https://github.com/simpleending/notch-desktop")');
   source = patchLocalOnlyRenderer(source);
   source = patchThemeBroadcast(source);
   // Keep extension management on its existing local installer, away from the retired account marketplace.
@@ -228,7 +229,7 @@ export function patchWorkbenchRenderer(source) {
         item(resolvedTheme.endsWith("-dark")?"Light appearance":"Dark appearance",()=>setThemeMode(resolvedTheme.endsWith("-dark")?"light":"dark")),
         jsxRuntimeExports.jsx(DropdownMenuSeparator,{}),
         item("Release notes",()=>workbenchClient.openExternalUrl("https://github.com/simpleending/notch-desktop/releases")),
-        item("About notch",()=>workbenchClient.openExternalUrl("https://freesyntax.dev"))
+        item("About notch",()=>workbenchClient.openExternalUrl("https://github.com/simpleending/notch-desktop"))
       ]})
     ]});
   }`);

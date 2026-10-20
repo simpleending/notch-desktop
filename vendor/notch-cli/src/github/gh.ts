@@ -52,6 +52,21 @@ export function gitHubChildEnv(env: NodeJS.ProcessEnv = process.env, browserLogi
   return next;
 }
 
+/** Pass explicit GitHub tokens to local Git without putting credentials in argv or config files. */
+export function gitProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const next = { ...env };
+  const token = env.GH_TOKEN || env.GITHUB_TOKEN;
+  if (!token) return next;
+  const count = Number(env.GIT_CONFIG_COUNT || '0');
+  if (!Number.isSafeInteger(count) || count < 0 || count > 10000) throw new Error('Invalid GIT_CONFIG_COUNT.');
+  next.GIT_CONFIG_COUNT = String(count + 2);
+  next[`GIT_CONFIG_KEY_${count}`] = 'http.https://github.com/.extraheader';
+  next[`GIT_CONFIG_VALUE_${count}`] = '';
+  next[`GIT_CONFIG_KEY_${count + 1}`] = 'http.https://github.com/.extraheader';
+  next[`GIT_CONFIG_VALUE_${count + 1}`] = `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`;
+  return next;
+}
+
 function executableName(platform: string) {
   return platform === 'win32' ? 'gh.exe' : 'gh';
 }

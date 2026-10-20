@@ -53,34 +53,16 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { wrapLanguageModel } from "ai";
 
 // vendor/notch-cli/src/auth.ts
-import http from "http";
-import { exec } from "child_process";
 import os from "os";
 import path from "path";
 import fs from "fs/promises";
 import { readFileSync } from "fs";
-var AUTH_TIMEOUT_MS = 5 * 60 * 1e3;
 function getConfigDir() {
   if (process.platform === "win32") {
     return path.join(process.env["APPDATA"] ?? os.homedir(), "notch");
   }
   const xdg = process.env["XDG_CONFIG_HOME"];
   return path.join(xdg ?? path.join(os.homedir(), ".config"), "notch");
-}
-function getCredentialsPath() {
-  return path.join(getConfigDir(), "credentials.json");
-}
-async function loadCredentials() {
-  try {
-    const raw = await fs.readFile(getCredentialsPath(), "utf-8");
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.token === "string" && typeof parsed.email === "string") {
-      return parsed;
-    }
-    return null;
-  } catch {
-    return null;
-  }
 }
 function getByokSyncPath() {
   return path.join(getConfigDir(), "byok-sync.json");
@@ -111,43 +93,6 @@ function loadSyncedByokKeysSync() {
   }
   return syncedKeysCache;
 }
-var HTML_BASE = (body) => `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Notch CLI</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@200;400&display=swap" rel="stylesheet">
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: 'IBM Plex Mono', monospace;
-      background: #000;
-      color: #cfcfcf;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
-    }
-    .card { text-align: center; }
-    .brand { color: #CE2127; font-size: 11px; letter-spacing: 0.3em; text-transform: uppercase; }
-    h1 { font-weight: 200; font-size: 22px; margin: 14px 0 10px; letter-spacing: 0.05em; }
-    p { font-size: 11px; color: #555; letter-spacing: 0.1em; line-height: 1.8; }
-  </style>
-</head>
-<body><div class="card">${body}</div></body>
-</html>`;
-var HTML_SUCCESS = HTML_BASE(`
-  <div class="brand">notch_</div>
-  <h1>CLI authorized</h1>
-  <p>You can close this tab and return to your terminal.</p>
-`);
-var HTML_ERROR = HTML_BASE(`
-  <div class="brand">notch_</div>
-  <h1>Authorization failed</h1>
-  <p style="color:#CE2127">Run <code>notch login</code> again to retry.</p>
-`);
 
 // vendor/notch-cli/src/providers/ollama-transport.ts
 import { randomUUID } from "crypto";
@@ -354,7 +299,7 @@ var BUILTIN_BYOK_PROVIDERS = [
     // users discover via openrouter.ai/models.
     compatibility: "strict",
     headers: {
-      "HTTP-Referer": "https://freesyntax.dev",
+      "HTTP-Referer": "https://github.com/simpleending/FreeSyntax",
       "X-OpenRouter-Title": "Notch CLI"
     }
   },
@@ -846,102 +791,20 @@ function extractProviderAndModel(config) {
 }
 
 // vendor/notch-cli/src/providers/registry.ts
-var MissingApiKeyError = class extends Error {
-  /** Which flow caused this error (informs the onboarding message). */
-  flow;
-  /** Env var name the user can set to fix it. */
-  envVar;
-  /** Human-friendly provider label (e.g. "OpenRouter"). */
-  providerLabel;
-  constructor(opts) {
-    const flow = opts?.flow ?? "notch";
-    const envVar = opts?.envVar ?? "NOTCH_API_KEY";
-    const providerLabel = opts?.providerLabel ?? "Notch";
-    super(`${envVar} is not set (${providerLabel})`);
-    this.name = "MissingApiKeyError";
-    this.flow = flow;
-    this.envVar = envVar;
-    this.providerLabel = providerLabel;
+var MODEL_CATALOG = {};
+function assertDirectEndpoint(value) {
+  if (!value) return;
+  const host = new URL(value.includes("://") ? value : `http://${value}`).hostname.toLowerCase();
+  if (host === "freesyntax.dev" || host.endsWith(".freesyntax.dev") || host.startsWith("acemagnifique--notch-serve-") && host.endsWith(".modal.run")) {
+    throw new Error("This saved endpoint belongs to the retired hosted service. Choose a local model with notch models or configure your own provider with notch setup.");
   }
-};
-var MODEL_CATALOG = {
-  "notch-pyre": {
-    id: "notch-pyre",
-    label: "Pyre",
-    size: "9B",
-    gpu: "L40S",
-    contextWindow: 131072,
-    maxOutputTokens: 16384,
-    baseUrl: "https://acemagnifique--notch-serve-pyre-notchpyreserver-serve.modal.run/v1",
-    hardware: {
-      vramGb: 10,
-      ramGb: 16,
-      diskGb: 6,
-      recommendedGpu: "RTX 3090 / 4070 Ti+ \xB7 12GB+ VRAM",
-      tier: "light"
-    },
-    // null until we push Q4 merged weights to the public Hub. The CLI
-    // surfaces this as "hosted-only" in the /model picker so users know
-    // local download isn't wired yet — no fake error, no mock repo.
-    hfRepo: null
-  },
-  "notch-ignis": {
-    id: "notch-ignis",
-    label: "Ignis",
-    size: "27B",
-    gpu: "A100-80GB",
-    contextWindow: 131072,
-    maxOutputTokens: 16384,
-    baseUrl: "https://acemagnifique--notch-serve-ignis-notchignisserver-serve.modal.run/v1",
-    hardware: {
-      vramGb: 20,
-      ramGb: 32,
-      diskGb: 18,
-      recommendedGpu: "RTX 4090 / A6000+ \xB7 24GB+ VRAM",
-      tier: "standard"
-    },
-    hfRepo: null
-  },
-  "notch-solace": {
-    id: "notch-solace",
-    label: "Solace",
-    size: "31B",
-    gpu: "A100-80GB",
-    contextWindow: 131072,
-    maxOutputTokens: 16384,
-    baseUrl: "https://acemagnifique--notch-serve-solace-notchsolaceserver-serve.modal.run/v1",
-    hardware: {
-      vramGb: 24,
-      ramGb: 64,
-      diskGb: 22,
-      recommendedGpu: "RTX 4090 + offload / A100-40GB+",
-      tier: "heavy"
-    },
-    hfRepo: null
-  },
-  "notch-solace-lite": {
-    id: "notch-solace-lite",
-    label: "Solace Lite",
-    size: "E4B",
-    gpu: "L4",
-    contextWindow: 65536,
-    maxOutputTokens: 8192,
-    baseUrl: "https://acemagnifique--notch-serve-solace-lite-notchsolacelitese-0e4da6.modal.run/v1",
-    hardware: {
-      vramGb: 6,
-      ramGb: 8,
-      diskGb: 3,
-      recommendedGpu: "RTX 3060 / M2 Pro+ \xB7 8GB+ VRAM",
-      tier: "light"
-    },
-    hfRepo: null
-  }
-};
+}
 var MODEL_IDS = Object.keys(MODEL_CATALOG);
 function isValidModel(id) {
   return id in MODEL_CATALOG;
 }
 function resolveModel(config) {
+  assertDirectEndpoint(config.baseUrl ?? process.env.NOTCH_BASE_URL);
   if (config.byokProvider) {
     const resolved = resolveByokModel({
       provider: config.byokProvider,
@@ -960,9 +823,9 @@ function resolveModel(config) {
     return resolved.model;
   }
   if (typeof config.model === "string" && isByokRef(config.model)) {
-    const { provider: provider2, model } = parseByokRef(config.model);
+    const { provider, model } = parseByokRef(config.model);
     const resolved = resolveByokModel({
-      provider: provider2,
+      provider,
       model,
       apiKey: config.apiKey,
       baseUrl: config.baseUrl,
@@ -977,26 +840,9 @@ function resolveModel(config) {
     firePiAiShadowProbe(config, resolved.model);
     return resolved.model;
   }
-  const info = MODEL_CATALOG[config.model];
-  if (!info) {
-    throw new Error(
-      `Unknown model "${config.model}". Use provider/model, for example openrouter/anthropic/claude-sonnet-4.6.`
-    );
-  }
-  const baseUrl = config.baseUrl ?? process.env.NOTCH_BASE_URL ?? info.baseUrl;
-  const apiKey = config.apiKey ?? process.env.NOTCH_API_KEY;
-  if (!apiKey) {
-    throw new MissingApiKeyError({ flow: "notch", envVar: "NOTCH_API_KEY", providerLabel: "Notch" });
-  }
-  const proxyKey = process.env.MODAL_PROXY_KEY;
-  const proxySecret = process.env.MODAL_PROXY_SECRET;
-  const modalProxyHeaders = proxyKey && proxySecret ? { "Modal-Key": proxyKey, "Modal-Secret": proxySecret } : {};
-  const provider = createOpenAI2({
-    apiKey,
-    baseURL: baseUrl,
-    headers: { ...modalProxyHeaders, ...config.headers }
-  });
-  return provider.chat(config.model);
+  const baseUrl = config.baseUrl ?? process.env.NOTCH_BASE_URL;
+  if (!baseUrl) throw new Error("Hosted Notch models are retired. Run notch models for a local model or notch setup for your own provider.");
+  return createOpenAI2({ apiKey: config.apiKey ?? process.env.NOTCH_API_KEY ?? "not-needed", baseURL: baseUrl, headers: config.headers }).chat(config.model);
 }
 function firePiAiShadowProbe(config, resolvedModel) {
   if (piAiMode() === "off") return;
@@ -1773,13 +1619,13 @@ async function withSharedWorker(ctx, run) {
     return pending;
   });
 }
-var exec2 = promisify(execFile);
+var exec = promisify(execFile);
 var hash = (data) => createHash("sha256").update(data).digest("hex");
 var home = () => path4.join(process.env.USERPROFILE || process.env.HOME || os3.homedir(), ".notch", "worktrees");
 async function git(cwd, args, env = {}) {
   const inherited = { ...process.env };
   for (const key of Object.keys(inherited)) if (/^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS)$/i.test(key)) delete inherited[key];
-  const result = await exec2("git", ["-c", "core.hooksPath=" + path4.join(home(), "no-hooks"), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true", ...args], {
+  const result = await exec("git", ["-c", "core.hooksPath=" + path4.join(home(), "no-hooks"), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true", ...args], {
     cwd,
     env: { ...inherited, GIT_TERMINAL_PROMPT: "0", ...env },
     windowsHide: true,
@@ -2315,11 +2161,6 @@ async function loadConfig(overrides = {}, selection = {}) {
       if (ollamaCreds?.apiKey) {
         config.models.chat.apiKey = ollamaCreds.apiKey;
       }
-    }
-  } else if (!activeProviderId) {
-    const creds = await loadCredentials();
-    if (creds?.token) {
-      config.models.chat.apiKey = creds.token;
     }
   }
   if (process.env.NOTCH_BASE_URL) {
@@ -3301,8 +3142,93 @@ ${trimmed || "(no output)"}${suffix}${/\[timeout\]/.test(result.stderr) ? "\nIf 
 import path22 from "path";
 
 // vendor/notch-cli/src/tools/git.ts
-import { execFile as execFile2 } from "child_process";
+import { execFile as execFile3 } from "child_process";
 import { simpleGit } from "simple-git";
+
+// vendor/notch-cli/src/github/gh.ts
+import { execFile as execFile2, spawn as spawn2 } from "child_process";
+import fs11 from "fs/promises";
+import path12 from "path";
+var TOKEN_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
+function gitHubChildEnv(env = process.env, browserLogin = false) {
+  const next = { ...env };
+  if (browserLogin) for (const key of TOKEN_ENV) delete next[key];
+  next.GH_HOST = "github.com";
+  return next;
+}
+function gitProcessEnv(env = process.env) {
+  const next = { ...env };
+  const token = env.GH_TOKEN || env.GITHUB_TOKEN;
+  if (!token) return next;
+  const count = Number(env.GIT_CONFIG_COUNT || "0");
+  if (!Number.isSafeInteger(count) || count < 0 || count > 1e4) throw new Error("Invalid GIT_CONFIG_COUNT.");
+  next.GIT_CONFIG_COUNT = String(count + 2);
+  next[`GIT_CONFIG_KEY_${count}`] = "http.https://github.com/.extraheader";
+  next[`GIT_CONFIG_VALUE_${count}`] = "";
+  next[`GIT_CONFIG_KEY_${count + 1}`] = "http.https://github.com/.extraheader";
+  next[`GIT_CONFIG_VALUE_${count + 1}`] = `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`;
+  return next;
+}
+function executableName(platform) {
+  return platform === "win32" ? "gh.exe" : "gh";
+}
+function acceptGitHubExecutable(file2, platform = process.platform) {
+  return path12.basename(file2).toLowerCase() === executableName(platform);
+}
+function runFile(file2, args, env, timeout, signal) {
+  return new Promise((resolve, reject) => {
+    execFile2(file2, args, { windowsHide: true, timeout, maxBuffer: 4 * 1024 * 1024, env, signal }, (error, stdout, stderr) => {
+      const result = { stdout: String(stdout ?? ""), stderr: String(stderr ?? "") };
+      if (error) {
+        error.stdout = result.stdout;
+        error.stderr = result.stderr;
+        reject(error);
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+async function exists(file2) {
+  try {
+    await fs11.access(file2);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function locateGitHubCli(env = process.env) {
+  const platform = process.platform;
+  const candidates = [];
+  if (platform === "win32") {
+    for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA]) if (root) candidates.push(path12.join(root, "GitHub CLI", "gh.exe"));
+    const where = env.SystemRoot ? path12.join(env.SystemRoot, "System32", "where.exe") : "where.exe";
+    try {
+      candidates.unshift(...(await runFile(where, ["gh.exe"], env, 5e3)).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+    } catch {
+    }
+  } else {
+    try {
+      candidates.unshift(...(await runFile("which", ["gh"], env, 5e3)).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
+    } catch {
+    }
+  }
+  for (const file2 of candidates) if (acceptGitHubExecutable(file2, platform) && await exists(file2)) return file2;
+  return null;
+}
+async function readGitHubCliToken(env = process.env, signal) {
+  if (env.GH_TOKEN || env.GITHUB_TOKEN) return env.GH_TOKEN || env.GITHUB_TOKEN || null;
+  const executable = await locateGitHubCli(gitHubChildEnv(env));
+  if (!executable) return null;
+  try {
+    const token = (await runFile(executable, ["auth", "token", "--hostname", "github.com"], gitHubChildEnv(env), 15e3, signal)).stdout.trim();
+    if (/^[\w.-]+$/.test(token) && token.length >= 8 && token.length <= 300) return token;
+  } catch {
+  }
+  return null;
+}
+
+// vendor/notch-cli/src/tools/git.ts
 import { z as z6 } from "zod";
 var PROTECTED = /* @__PURE__ */ new Set(["main", "master", "production", "release"]);
 function forcePushError(args, currentBranch) {
@@ -3344,7 +3270,7 @@ function isSecretPath(file2) {
 }
 function gitExec(cwd, args, signal) {
   return new Promise((resolve, reject) => {
-    execFile2("git", args, { cwd, timeout: 12e4, maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal }, (error, stdout, stderr) => {
+    execFile3("git", args, { cwd, timeout: 12e4, maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal, env: gitProcessEnv() }, (error, stdout, stderr) => {
       if (error) {
         const failure = error;
         failure.message = [stderr, failure.message].filter(Boolean).join("\n");
@@ -3503,13 +3429,13 @@ Proceed?`
           const args = params.args?.split(" ") ?? [];
           const blocked = forcePushError(args, currentBranch);
           if (blocked) return { content: blocked, isError: true, notExecuted: true };
-          await git2.push(args);
+          await gitExec(ctx.cwd, ["push", ...args], ctx.abortSignal);
           return { content: `Pushed ${currentBranch} successfully` };
         }
         case "pull": {
-          const pullResult = await git2.pull(params.args?.split(" "));
+          const pullResult = await gitExec(ctx.cwd, ["pull", ...params.args?.split(" ") ?? []], ctx.abortSignal);
           return {
-            content: `Pulled: ${pullResult.summary.changes} changes, ${pullResult.summary.insertions} insertions, ${pullResult.summary.deletions} deletions`
+            content: [pullResult.stdout, pullResult.stderr].filter(Boolean).join("\n").trim() || "Pull completed."
           };
         }
         case "stash": {
@@ -3540,15 +3466,15 @@ Proceed?`
 };
 
 // vendor/notch-cli/src/tools/grep.ts
-import { execFile as execFile3 } from "child_process";
+import { execFile as execFile4 } from "child_process";
 import { once } from "events";
-import fs11 from "fs/promises";
-import path12 from "path";
+import fs12 from "fs/promises";
+import path13 from "path";
 import { promisify as promisify2 } from "util";
 import ignore from "ignore";
 import { minimatch as minimatch2 } from "minimatch";
 import { z as z7 } from "zod";
-var execFileAsync = promisify2(execFile3);
+var execFileAsync = promisify2(execFile4);
 var parameters7 = z7.object({
   pattern: z7.string().describe("Regex pattern to search for"),
   path: z7.string().optional().describe("File or directory to search (defaults to project root)"),
@@ -3561,7 +3487,7 @@ var grepTool = {
   description: "Search file contents by regex pattern. Returns matching lines with file paths and line numbers. Supports glob filtering and context lines.",
   parameters: parameters7,
   async execute(params, ctx) {
-    const searchPath = params.path ? path12.isAbsolute(params.path) ? params.path : path12.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchPath = params.path ? path13.isAbsolute(params.path) ? params.path : path13.resolve(ctx.cwd, params.path) : ctx.cwd;
     let child;
     try {
       ctx.abortSignal?.throwIfAborted();
@@ -3613,30 +3539,30 @@ var grepTool = {
         const rules = ignore();
         for (const name of [".gitignore", ".ignore"]) {
           try {
-            rules.add(await fs11.readFile(path12.join(dir, name), "utf8"));
+            rules.add(await fs12.readFile(path13.join(dir, name), "utf8"));
           } catch (error) {
             if (error.code !== "ENOENT") throw error;
           }
         }
         const filters = [...inherited, { base: dir, rules }];
-        const entries = await fs11.readdir(dir, { withFileTypes: true });
+        const entries = await fs12.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
           ctx.abortSignal?.throwIfAborted();
           if (results.length >= (params.max_results ?? 50)) return;
           if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-          const full = path12.join(dir, entry.name);
-          if (filters.some(({ base, rules: rules2 }) => rules2.ignores(path12.relative(base, full).replaceAll("\\", "/") + (entry.isDirectory() ? "/" : "")))) continue;
+          const full = path13.join(dir, entry.name);
+          if (filters.some(({ base, rules: rules2 }) => rules2.ignores(path13.relative(base, full).replaceAll("\\", "/") + (entry.isDirectory() ? "/" : "")))) continue;
           if (entry.isDirectory()) {
             await searchDir(full, filters);
           } else if (entry.isFile()) {
-            if (params.glob && !minimatch2(path12.relative(searchPath, full).replaceAll("\\", "/"), params.glob, { matchBase: !params.glob.includes("/") })) continue;
+            if (params.glob && !minimatch2(path13.relative(searchPath, full).replaceAll("\\", "/"), params.glob, { matchBase: !params.glob.includes("/") })) continue;
             try {
-              const content = await fs11.readFile(full, "utf-8");
+              const content = await fs12.readFile(full, "utf-8");
               ctx.abortSignal?.throwIfAborted();
               const lines = content.split("\n");
               for (let i = 0; i < lines.length; i++) {
                 if (regex.test(lines[i])) {
-                  const rel = path12.relative(ctx.cwd, full);
+                  const rel = path13.relative(ctx.cwd, full);
                   results.push(`${rel}:${i + 1}:${lines[i]}`);
                   if (results.length >= (params.max_results ?? 50)) return;
                 }
@@ -3647,12 +3573,12 @@ var grepTool = {
           }
         }
       }
-      const stat = await fs11.stat(searchPath);
+      const stat = await fs12.stat(searchPath);
       if (stat.isFile()) {
-        const content = await fs11.readFile(searchPath, "utf-8");
+        const content = await fs12.readFile(searchPath, "utf-8");
         ctx.abortSignal?.throwIfAborted();
         const lines = content.split("\n");
-        const rel = path12.relative(ctx.cwd, searchPath);
+        const rel = path13.relative(ctx.cwd, searchPath);
         for (let i = 0; i < lines.length; i++) {
           if (regex.test(lines[i])) {
             results.push(`${rel}:${i + 1}:${lines[i]}`);
@@ -3671,7 +3597,7 @@ var grepTool = {
 
 // vendor/notch-cli/src/tools/glob.ts
 import { glob as globFn } from "glob";
-import path13 from "path";
+import path14 from "path";
 import { z as z8 } from "zod";
 var parameters8 = z8.object({
   pattern: z8.string().describe('Glob pattern, e.g. "**/*.ts" or "src/**/*.tsx"'),
@@ -3682,7 +3608,7 @@ var globTool = {
   description: "Find files matching a glob pattern. Returns relative paths sorted by modification time. Ignores node_modules and .git by default.",
   parameters: parameters8,
   async execute(params, ctx) {
-    const searchDir = params.path ? path13.isAbsolute(params.path) ? params.path : path13.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchDir = params.path ? path14.isAbsolute(params.path) ? params.path : path14.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
       ctx.abortSignal?.throwIfAborted();
       if (ctx.workspaceSearch) {
@@ -3696,9 +3622,9 @@ var globTool = {
         dot: false
       });
       if (matches.length === 0) {
-        return { content: `No files matching "${params.pattern}" in ${path13.relative(ctx.cwd, searchDir) || "."}` };
+        return { content: `No files matching "${params.pattern}" in ${path14.relative(ctx.cwd, searchDir) || "."}` };
       }
-      const relative = matches.map((m) => path13.relative(ctx.cwd, path13.resolve(searchDir, m)));
+      const relative = matches.map((m) => path14.relative(ctx.cwd, path14.resolve(searchDir, m)));
       return {
         content: `Found ${relative.length} file(s):
 ${relative.join("\n")}`
@@ -3713,23 +3639,23 @@ ${relative.join("\n")}`
 import { z as z10 } from "zod";
 
 // vendor/notch-cli/src/web/settings.ts
-import fs12 from "fs/promises";
-import path14 from "path";
+import fs13 from "fs/promises";
+import path15 from "path";
 import { randomUUID as randomUUID4 } from "crypto";
 import { createRequire } from "module";
-import { spawn as spawn2 } from "child_process";
+import { spawn as spawn3 } from "child_process";
 import { z as z9 } from "zod";
 var webSettingsSchema = z9.object({
   enabled: z9.boolean().default(true),
   searchProvider: z9.enum(["duckduckgo", "tavily"]).default("duckduckgo"),
   browser: z9.enum(["auto", "msedge", "chrome", "chromium"]).default("auto")
 });
-var file = () => path14.join(getConfigDir(), "web-research.json");
+var file = () => path15.join(getConfigDir(), "web-research.json");
 var validSearchKey = (key) => /^[\x21-\x7e]{12,4096}$/.test(key);
 async function loadWebSettings() {
   let stored = {};
   try {
-    stored = JSON.parse(await fs12.readFile(file(), "utf8"));
+    stored = JSON.parse(await fs13.readFile(file(), "utf8"));
   } catch (error) {
     if (error.code !== "ENOENT") throw new Error("Cannot read web settings. Check web-research.json in your notch configuration folder.");
   }
@@ -3740,7 +3666,7 @@ async function loadWebSettings() {
 async function installResearchBrowser(onOutput = () => {
 }, signal) {
   const require2 = createRequire(import.meta.url);
-  const cli = path14.join(path14.dirname(require2.resolve("playwright-core/package.json")), "cli.js");
+  const cli = path15.join(path15.dirname(require2.resolve("playwright-core/package.json")), "cli.js");
   const interrupted = new AbortController();
   const activeSignal = AbortSignal.any([...signal ? [signal] : [], interrupted.signal, AbortSignal.timeout(15 * 6e4)]);
   const interrupt = () => interrupted.abort();
@@ -3749,7 +3675,7 @@ async function installResearchBrowser(onOutput = () => {
   process.once("SIGTERM", interrupt);
   try {
     await new Promise((resolve, reject) => {
-      const child = spawn2(process.execPath, [cli, "install", "chromium", "--only-shell"], {
+      const child = spawn3(process.execPath, [cli, "install", "chromium", "--only-shell"], {
         windowsHide: true,
         detached: process.platform !== "win32",
         env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
@@ -3760,7 +3686,7 @@ async function installResearchBrowser(onOutput = () => {
         if (stopping || !child.pid || child.exitCode !== null) return;
         stopping = true;
         if (process.platform === "win32") {
-          const killer = spawn2("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+          const killer = spawn3("taskkill.exe", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
           killer.on("error", () => child.kill());
         } else {
           try {
@@ -4211,78 +4137,6 @@ var browserInteractTool = {
 
 // vendor/notch-cli/src/tools/github.ts
 import { z as z13 } from "zod";
-
-// vendor/notch-cli/src/github/gh.ts
-import { execFile as execFile4, spawn as spawn3 } from "child_process";
-import fs13 from "fs/promises";
-import path15 from "path";
-var TOKEN_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
-function gitHubChildEnv(env = process.env, browserLogin = false) {
-  const next = { ...env };
-  if (browserLogin) for (const key of TOKEN_ENV) delete next[key];
-  next.GH_HOST = "github.com";
-  return next;
-}
-function executableName(platform) {
-  return platform === "win32" ? "gh.exe" : "gh";
-}
-function acceptGitHubExecutable(file2, platform = process.platform) {
-  return path15.basename(file2).toLowerCase() === executableName(platform);
-}
-function runFile(file2, args, env, timeout, signal) {
-  return new Promise((resolve, reject) => {
-    execFile4(file2, args, { windowsHide: true, timeout, maxBuffer: 4 * 1024 * 1024, env, signal }, (error, stdout, stderr) => {
-      const result = { stdout: String(stdout ?? ""), stderr: String(stderr ?? "") };
-      if (error) {
-        error.stdout = result.stdout;
-        error.stderr = result.stderr;
-        reject(error);
-        return;
-      }
-      resolve(result);
-    });
-  });
-}
-async function exists(file2) {
-  try {
-    await fs13.access(file2);
-    return true;
-  } catch {
-    return false;
-  }
-}
-async function locateGitHubCli(env = process.env) {
-  const platform = process.platform;
-  const candidates = [];
-  if (platform === "win32") {
-    for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA]) if (root) candidates.push(path15.join(root, "GitHub CLI", "gh.exe"));
-    const where = env.SystemRoot ? path15.join(env.SystemRoot, "System32", "where.exe") : "where.exe";
-    try {
-      candidates.unshift(...(await runFile(where, ["gh.exe"], env, 5e3)).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
-    } catch {
-    }
-  } else {
-    try {
-      candidates.unshift(...(await runFile("which", ["gh"], env, 5e3)).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
-    } catch {
-    }
-  }
-  for (const file2 of candidates) if (acceptGitHubExecutable(file2, platform) && await exists(file2)) return file2;
-  return null;
-}
-async function readGitHubCliToken(env = process.env, signal) {
-  if (env.GH_TOKEN || env.GITHUB_TOKEN) return env.GH_TOKEN || env.GITHUB_TOKEN || null;
-  const executable = await locateGitHubCli(gitHubChildEnv(env));
-  if (!executable) return null;
-  try {
-    const token = (await runFile(executable, ["auth", "token", "--hostname", "github.com"], gitHubChildEnv(env), 15e3, signal)).stdout.trim();
-    if (/^[\w.-]+$/.test(token) && token.length >= 8 && token.length <= 300) return token;
-  } catch {
-  }
-  return null;
-}
-
-// vendor/notch-cli/src/tools/github.ts
 var GITHUB_API = "https://api.github.com";
 async function getToken(signal) {
   return readGitHubCliToken(process.env, signal);
@@ -5070,10 +4924,10 @@ function buildContext(args) {
   for (const [name, tool3] of Object.entries(realTools)) {
     if (EXCLUDED_TOOLS.has(name)) continue;
     const jsName = toJsIdentifier(name);
-    const exec3 = tool3.execute;
+    const exec2 = tool3.execute;
     wrappedTools[jsName] = async (params) => {
       try {
-        const result = await exec3(params ?? {});
+        const result = await exec2(params ?? {});
         if (!result) return "";
         if (typeof result === "string") return result;
         return result.content ?? "";
@@ -5442,153 +5296,8 @@ error: no running cell with that id (it may have already completed)`,
   }
 };
 
-// vendor/notch-cli/src/tools/skill-manage.ts
-import { z as z18 } from "zod";
-var API_BASE_ENV = "NOTCH_API_URL";
-var DEFAULT_API_BASE = "https://freesyntax.dev";
-var AGENT_ID_ENV = "NOTCH_AGENT_ID";
-var ParamsSchema = z18.object({
-  action: z18.enum(["create", "edit", "patch", "delete", "toggle", "list"]),
-  /**
-   * Target agent id. If omitted, falls back to the `NOTCH_AGENT_ID` env var.
-   * In Notch Cloud the task-runner sets this env var when the task was
-   * created from an agent. For standalone CLI use, pass it explicitly.
-   */
-  agent_id: z18.string().uuid().optional(),
-  /** Required for action=create | edit (optional for edit, keeps existing). */
-  name: z18.string().min(1).max(40).optional(),
-  label: z18.string().min(1).max(80).optional(),
-  category: z18.string().max(40).optional(),
-  /** Body of the SKILL.md. Required for create/edit; ignored otherwise. */
-  content: z18.string().min(1).max(16 * 1024).optional(),
-  /** For patch: appended to the existing body with a `---` separator. */
-  appendContent: z18.string().min(1).max(16 * 1024).optional(),
-  /** For edit/create/toggle. */
-  enabled: z18.boolean().optional(),
-  /** For edit/patch/delete/toggle: which existing skill to operate on. */
-  skill_id: z18.string().uuid().optional()
-});
-var DESCRIPTION = `Manage durable agent skills; writes are scanned for prompt overrides, secrets, and exfiltration. Actions: create requires name,label,content (category optional); edit replaces content using skill_id,content; patch appends appendContent using skill_id; delete requires skill_id; toggle requires skill_id,enabled; list enumerates skills. Write terse SKILL.md triggers and procedures.`;
-var skillManageTool = {
-  name: "skill_manage",
-  description: DESCRIPTION,
-  parameters: ParamsSchema,
-  execute: async (params, ctx) => {
-    const creds = await loadCredentials();
-    if (!creds) {
-      return {
-        isError: true,
-        content: "Not authenticated. Run `notch login` first so skills can be persisted to your workspace."
-      };
-    }
-    const agentId = params.agent_id ?? process.env[AGENT_ID_ENV];
-    if (!agentId) {
-      return {
-        isError: true,
-        content: `No agent id available. Pass agent_id explicitly, or ensure the task-runner set ${AGENT_ID_ENV}. For standalone CLI use there is no agent to attach skills to \u2014 use a ~/.notch/skills/ local file instead.`
-      };
-    }
-    const base = process.env[API_BASE_ENV] ?? DEFAULT_API_BASE;
-    const url = `${base.replace(/\/+$/, "")}/api/agents/${agentId}/skills/manage`;
-    const body = buildRequestBody(params);
-    if (!body) {
-      return {
-        isError: true,
-        content: `Action "${params.action}" is missing required fields. Check the parameter docs.`
-      };
-    }
-    try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${creds.token}`,
-          "Content-Type": "application/json",
-          "User-Agent": "notch-cli/skill_manage"
-        },
-        body: JSON.stringify(body)
-      });
-      const text2 = await res.text();
-      let parsed = {};
-      try {
-        parsed = JSON.parse(text2);
-      } catch {
-      }
-      if (!res.ok) {
-        const summary = parsed["summary"] ?? String(parsed["error"] ?? res.statusText);
-        ctx.log?.(`[skill_manage] ${params.action} \u2192 HTTP ${res.status}: ${summary}`);
-        const findings = Array.isArray(parsed["findings"]) ? parsed["findings"] : [];
-        return {
-          isError: true,
-          content: JSON.stringify({
-            ok: false,
-            status: res.status,
-            action: params.action,
-            summary,
-            findings
-          }, null, 2)
-        };
-      }
-      ctx.log?.(`[skill_manage] ${params.action} ok`);
-      return {
-        content: typeof text2 === "string" && text2.length > 0 ? text2 : JSON.stringify({ ok: true })
-      };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return {
-        isError: true,
-        content: `Network error calling skill_manage: ${message}`
-      };
-    }
-  }
-};
-function buildRequestBody(p) {
-  switch (p.action) {
-    case "create": {
-      if (!p.name || !p.label || !p.content) return null;
-      return {
-        action: "create",
-        name: p.name,
-        label: p.label,
-        category: p.category ?? null,
-        content: p.content,
-        enabled: p.enabled ?? true
-      };
-    }
-    case "edit": {
-      if (!p.skill_id || !p.content) return null;
-      return {
-        action: "edit",
-        skillId: p.skill_id,
-        name: p.name,
-        label: p.label,
-        category: p.category ?? null,
-        content: p.content,
-        enabled: p.enabled
-      };
-    }
-    case "patch": {
-      if (!p.skill_id || !p.appendContent) return null;
-      return {
-        action: "patch",
-        skillId: p.skill_id,
-        appendContent: p.appendContent
-      };
-    }
-    case "delete": {
-      if (!p.skill_id) return null;
-      return { action: "delete", skillId: p.skill_id };
-    }
-    case "toggle": {
-      if (!p.skill_id || typeof p.enabled !== "boolean") return null;
-      return { action: "toggle", skillId: p.skill_id, enabled: p.enabled };
-    }
-    case "list":
-      return { action: "list" };
-  }
-}
-
 // vendor/notch-cli/src/tools/events.ts
-import { z as z19 } from "zod";
+import { z as z18 } from "zod";
 
 // vendor/notch-cli/src/events/router.ts
 var SEVERITY_RANK = {
@@ -5720,12 +5429,12 @@ function getGlobalRouter() {
 }
 
 // vendor/notch-cli/src/tools/events.ts
-var parameters15 = z19.object({
-  mode: z19.enum(["list", "drain"]).describe("`list` peeks at pending events. `drain` acknowledges + returns them."),
-  sources: z19.array(z19.string()).optional().describe('Only include events from these sources (e.g. ["git", "ci"]).'),
-  types: z19.array(z19.string()).optional().describe('Only include events of these types (e.g. ["new-commit"]).'),
-  min_severity: z19.enum(["info", "success", "warn", "error"]).optional().describe("Only include events at or above this severity."),
-  limit: z19.number().int().min(1).max(50).optional().default(20).describe("Max number of events to return (1-50, default 20).")
+var parameters15 = z18.object({
+  mode: z18.enum(["list", "drain"]).describe("`list` peeks at pending events. `drain` acknowledges + returns them."),
+  sources: z18.array(z18.string()).optional().describe('Only include events from these sources (e.g. ["git", "ci"]).'),
+  types: z18.array(z18.string()).optional().describe('Only include events of these types (e.g. ["new-commit"]).'),
+  min_severity: z18.enum(["info", "success", "warn", "error"]).optional().describe("Only include events at or above this severity."),
+  limit: z18.number().int().min(1).max(50).optional().default(20).describe("Max number of events to return (1-50, default 20).")
 });
 function formatEvent(ev) {
   const when = new Date(ev.ts).toISOString();
@@ -5759,7 +5468,7 @@ ${body}` };
 };
 
 // vendor/notch-cli/src/mcp/client.ts
-import { z as z20 } from "zod";
+import { z as z19 } from "zod";
 
 // vendor/notch-cli/src/mcp/stdio-transport.ts
 import { spawn as spawn4 } from "child_process";
@@ -5916,7 +5625,7 @@ import fs17 from "fs/promises";
 import { fileURLToPath } from "url";
 import path20 from "path";
 import { generateText } from "ai";
-import { z as z21 } from "zod";
+import { z as z20 } from "zod";
 
 // vendor/notch-cli/src/safety/guardian-policy.ts
 var GUARDIAN_POLICY_EMBEDDED = `# Notch Guardian Risk Policy
@@ -6098,12 +5807,12 @@ the human without blocking it.
 `;
 
 // vendor/notch-cli/src/safety/guardian.ts
-var AssessmentSchema = z21.object({
-  category: z21.string().min(1).max(120),
-  severity: z21.enum(["low", "medium", "high", "critical"]),
-  justification: z21.string().min(1).max(600),
-  recommended_action: z21.enum(["auto-allow", "prompt", "deny"]),
-  specific_concerns: z21.array(z21.string().max(240)).max(12).default([])
+var AssessmentSchema = z20.object({
+  category: z20.string().min(1).max(120),
+  severity: z20.enum(["low", "medium", "high", "critical"]),
+  justification: z20.string().min(1).max(600),
+  recommended_action: z20.enum(["auto-allow", "prompt", "deny"]),
+  specific_concerns: z20.array(z20.string().max(240)).max(12).default([])
 });
 var cachedPolicy = null;
 async function loadPolicy() {
@@ -6252,7 +5961,7 @@ function normalizeAction(a) {
 }
 
 // vendor/notch-cli/src/coordinator/tools.ts
-import { z as z23 } from "zod";
+import { z as z22 } from "zod";
 
 // vendor/notch-cli/src/agent/subagent.ts
 import { isStepCount } from "ai";
@@ -6378,13 +6087,13 @@ function listBuiltinAgents() {
 
 // vendor/notch-cli/src/agent/tool-feedback.ts
 import { tool } from "ai";
-import { z as z22 } from "zod";
+import { z as z21 } from "zod";
 function toolValidationFeedback(tools) {
   if (Object.keys(tools).length === 0) return { tools, repair: void 0 };
   const name = "notch_tool_error";
   const withFeedback = { ...tools, [name]: tool({
     description: "Report an invalid tool request without executing it. Use the error to correct the next request.",
-    inputSchema: z22.object({ toolName: z22.string(), arguments: z22.string(), error: z22.string() }),
+    inputSchema: z21.object({ toolName: z21.string(), arguments: z21.string(), error: z21.string() }),
     execute: async (params) => ({ content: `Tool ${params.toolName} was NOT executed. ${params.error}
 Correct the arguments and call the intended tool again.`, isError: true })
   }) };
@@ -6973,17 +6682,17 @@ function resolveAgent(description) {
 }
 
 // vendor/notch-cli/src/coordinator/tools.ts
-var spawnParameters = z23.object({
-  subagent_type: z23.enum(["explore", "plan", "general", "builtin"]).describe(
+var spawnParameters = z22.object({
+  subagent_type: z22.enum(["explore", "plan", "general", "builtin"]).describe(
     "Worker profile: explore (read-only recon), plan (planning without edits), general (full tool access), builtin (named TOML-defined agent \u2014 provide builtin_name)."
   ),
-  prompt: z23.string().describe(
+  prompt: z22.string().describe(
     "Self-contained spec for the worker. Include purpose, file paths, acceptance criteria, and what to report back. Workers cannot see this conversation."
   ),
-  description: z23.string().describe(
+  description: z22.string().describe(
     "Short human-readable label for this worker, shown in status updates and in <task-notification> summaries."
   ),
-  builtin_name: z23.string().optional().describe('Required when subagent_type is "builtin" \u2014 the name of the TOML-defined built-in agent to run.')
+  builtin_name: z22.string().optional().describe('Required when subagent_type is "builtin" \u2014 the name of the TOML-defined built-in agent to run.')
 });
 var agentSpawnTool = {
   name: "agent_spawn",
@@ -7064,9 +6773,9 @@ ${prompt}`);
     };
   }
 };
-var sendMessageParameters = z23.object({
-  to: z23.string().describe("The agent_id returned by agent_spawn."),
-  message: z23.string().describe("Follow-up instructions for the worker.")
+var sendMessageParameters = z22.object({
+  to: z22.string().describe("The agent_id returned by agent_spawn."),
+  message: z22.string().describe("Follow-up instructions for the worker.")
 });
 var agentSendMessageTool = {
   name: "agent_send_message",
@@ -7103,8 +6812,8 @@ var agentSendMessageTool = {
     };
   }
 };
-var stopParameters = z23.object({
-  id: z23.string().describe("The agent_id of the worker to stop.")
+var stopParameters = z22.object({
+  id: z22.string().describe("The agent_id of the worker to stop.")
 });
 var agentStopTool = {
   name: "agent_stop",
@@ -7227,11 +6936,11 @@ async function guardedFileAccess(name, params, ctx, execute2) {
 }
 
 // vendor/notch-cli/src/tools/task-changes.ts
-import { z as z24 } from "zod";
+import { z as z23 } from "zod";
 var taskChangesTool = {
   name: "task_changes",
   description: "Inspect this private task\u2019s pending file changes. read_source reads the latest original project file; then edit the private task file to reconcile those contents before finishing. Merely reading newer source never authorizes a stale overwrite. Changes are applied automatically when the task completes.",
-  parameters: z24.object({ action: z24.enum(["status", "read_source"]), path: z24.string().optional() }),
+  parameters: z23.object({ action: z23.enum(["status", "read_source"]), path: z23.string().optional() }),
   execute: async (args, ctx) => {
     if (!ctx.taskWorkspace) return { content: "No private task workspace is active.", isError: true };
     if (args.action === "read_source") {
@@ -7262,7 +6971,6 @@ var BUILTIN_TOOLS = [
   taskTool,
   codeModeExecTool,
   codeModeWaitTool,
-  skillManageTool,
   eventsTool,
   taskChangesTool
 ];
@@ -9326,6 +9034,7 @@ export {
   estimateTextTokens,
   estimateTokens,
   fullCompact,
+  gitProcessEnv,
   inspectHubModel,
   installColibri,
   installResearchBrowser,

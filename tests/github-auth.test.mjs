@@ -14,6 +14,20 @@ test('device codes and account names stay separate from tokens', () => {
   assert.equal(JSON.stringify({ account: parseGitHubAccount('Logged in as octocat') }).includes('gho_'), false);
 });
 
+test('environment-token sign-in and clone use GitHub and local Git without a website account or gh',async()=>{
+  const calls=[];
+  const auth=createGitHubAuth({env:{GH_TOKEN:'fixture-device-token'},exists:async()=>false,pickDirectory:async()=>path.resolve('device-projects'),fetchApi:async url=>{
+    assert.equal(url,'https://api.github.com/user');return Response.json({login:'device-user'});
+  },run:async(file,args,options)=>{calls.push({file,args,env:options?.env});return {stdout:'',stderr:''};}});
+  assert.equal((await auth.status()).account,'device-user');
+  const result=await auth.clone('organization/project');
+  const clone=calls.find(call=>call.file==='git');
+  assert.deepEqual(clone.args,['clone','https://github.com/organization/project.git',path.resolve('device-projects','project')]);
+  assert.equal(clone.env.GIT_CONFIG_KEY_1,'http.https://github.com/.extraheader');
+  assert.equal(clone.env.GIT_CONFIG_VALUE_1,'Authorization: Basic '+Buffer.from('x-access-token:fixture-device-token').toString('base64'));
+  assert.equal(result.clonedPath,path.resolve('device-projects','project'));
+});
+
 test('Windows install uses the official WinGet package id', async () => {
   const calls = [];
   let installed = false;
@@ -39,12 +53,14 @@ test('browser sign-in opens only the GitHub device page and hides the token', as
   const gh = path.join('C:\\Program Files', 'GitHub CLI', 'gh.exe');
   let opened = '';
   let seen = '';
+  let gitConfigured = false;
   let auth;
   auth = createGitHubAuth({
     platform: 'win32',
     env: { ProgramFiles: 'C:\\Program Files', SystemRoot: 'C:\\Windows', LOCALAPPDATA: 'C:\\Users\\me\\AppData\\Local' },
     exists: async file => file === gh,
     run: async (_file, args) => {
+      if (args[0] === 'auth' && args[1] === 'setup-git') { assert.deepEqual(args,['auth','setup-git','--hostname','github.com']); gitConfigured=true; }
       if (args[0] === 'auth' && args[1] === 'status') return { stdout: JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'octocat' }] } }), stderr: '' };
       return { stdout: '', stderr: '' };
     },
@@ -68,6 +84,7 @@ test('browser sign-in opens only the GitHub device page and hides the token', as
   assert.equal(JSON.stringify(status).includes('gho_secretvalue'), false);
   assert.equal(JSON.stringify(status).includes('gho_fromenv'), false);
   assert.equal(status.environmentToken, false);
+  assert.equal(gitConfigured,true);
 });
 
 test('clone accepts only listed owner/name repositories', async () => {

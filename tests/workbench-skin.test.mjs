@@ -141,9 +141,10 @@ test('reskin removes inherited art while preserving composer actions and native 
 test('upgrading an already skinned renderer installs the clone handoff and its import', () => {
   const fresh = patchWorkbenchRenderer(fixture);
   const old = patchFunction(fresh.replace(',openClonedProject', ''), 'AppearanceSettings', 'function AppearanceSettings(){const preferences=useWorkbenchPreferences(),{i18n}=useTranslation();return reactExports.createElement(NotchAppearance,{preferences,language:resolveInterfaceLanguage(i18n.resolvedLanguage??i18n.language),setLanguage:setInterfaceLanguage});}');
-  const updated = patchWorkbenchRenderer(old);
+  const updated = patchWorkbenchRenderer(old+'\nworkbenchClient.openExternalUrl("https://freesyntax.dev");');
   assert.match(updated, /onOpenProject=path=>openClonedProject/);
   assert.match(updated, /import \{[^}]*openClonedProject[^}]*\} from "\.\/workbench-skin.mjs"/);
+  assert.doesNotMatch(updated,/https:\/\/freesyntax\.dev/);
   assert.equal(patchWorkbenchRenderer(updated), updated);
 });
 

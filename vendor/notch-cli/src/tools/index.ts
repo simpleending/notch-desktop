@@ -25,7 +25,7 @@ import { lspTool } from './lsp.js';
 import { notebookTool } from './notebook.js';
 import { taskTool } from './task.js';
 import { codeModeExecTool, codeModeWaitTool } from './code-mode.js';
-import { skillManageTool } from './skill-manage.js';
+
 import { eventsTool } from './events.js';
 import type { NotchTool, ToolContext, PermissionLevel } from './types.js';
 import { MCPClient, parseMCPConfig, mcpToolsToNotch, type MCPServerConfig } from '../mcp/client.js';
@@ -72,7 +72,6 @@ const BUILTIN_TOOLS: NotchTool<any>[] = [
   taskTool,
   codeModeExecTool,
   codeModeWaitTool,
-  skillManageTool,
   eventsTool,
   taskChangesTool,
 ];

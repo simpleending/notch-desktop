@@ -6,9 +6,9 @@
 
 # Your code. Your models.
 
-notch by [freesyntax.dev](https://freesyntax.dev) is a free coding workspace for working with AI on your own terms. Run open models on your computer, or connect OpenRouter with your own API key.
+notch by FreeSyntax is a free coding workspace for working with AI on your own terms. Run open models on your computer, or connect OpenRouter with your own API key. No FreeSyntax account, website, or hosted backend is required. GitHub sign-in, repository cloning and Git operations run on your device and connect directly to GitHub or your configured remote.
 
-**[Download for Windows](https://github.com/simpleending/notch-desktop/releases/latest)** · [Website](https://freesyntax.dev) · [Get the CLI](https://www.npmjs.com/package/@freesyntax/notch-cli)
+**[Download for Windows](https://github.com/simpleending/notch-desktop/releases/latest)** · [Get the CLI](https://www.npmjs.com/package/@freesyntax/notch-cli)
 
 The Windows release supports x64 PCs running Windows 10 or 11. Check the release notes for current limitations. macOS and Linux downloads are not available yet.
 

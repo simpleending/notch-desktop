@@ -12,7 +12,7 @@ import path from 'node:path';
 import type { ModelConfig, ModelRoles } from './providers/types.js';
 import { isValidModel, findByokProvider, isByokRef, listByokProviders, parseByokRef } from './providers/registry.js';
 import type { ThemeId } from './ui/themes.js';
-import { loadCredentials, loadSyncedByokKeys } from './auth.js';
+import { loadSyncedByokKeys } from './auth.js';
 import { readOllamaCreds } from './providers/ollama-credentials.js';
 import { listModels, showModel } from './providers/ollama.js';
 import { ollamaRoot, ollamaChatUrl } from './providers/ollama-url.js';
@@ -252,10 +252,7 @@ export async function loadConfig(overrides: Partial<NotchConfig> = {}, selection
     if (inferred.apiShape) config.models.chat.byokApiShape = inferred.apiShape;
   }
 
-  // Stored credentials. Provider-routed calls resolve their own API key
-  // from provider env vars or synced provider keys in providers/byok.ts.
-  // A Notch login token is only valid for the legacy hosted Notch path and
-  // must never be sent to arbitrary model providers.
+  // Provider credentials stay on the device and resolve through the selected provider.
   const activeProviderId = config.models.chat.byokProvider
     ?? (typeof config.models.chat.model === 'string' && isByokRef(config.models.chat.model)
       ? parseByokRef(config.models.chat.model).provider
@@ -272,12 +269,6 @@ export async function loadConfig(overrides: Partial<NotchConfig> = {}, selection
       if (ollamaCreds?.apiKey) {
         config.models.chat.apiKey = ollamaCreds.apiKey;
       }
-    }
-  } else if (!activeProviderId) {
-    // Legacy Notch-hosted path only.
-    const creds = await loadCredentials();
-    if (creds?.token) {
-      config.models.chat.apiKey = creds.token;
     }
   }
 

@@ -225,7 +225,7 @@ export async function startModelDownload(id: NotchModelId): Promise<DownloadHand
   if (!info.hfRepo) {
     throw new Error(
       `${info.label} is not yet available for local download. ` +
-      'Use the hosted Notch API in the meantime — run `notch login` to get a key.',
+      'Choose an available local model with notch models, or connect your own provider with notch setup.',
     );
   }
   const existing = activeDownloads.get(id);

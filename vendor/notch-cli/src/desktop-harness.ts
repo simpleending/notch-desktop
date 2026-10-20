@@ -14,6 +14,7 @@ import { checkAccess, type AccessMode } from './permissions/access.js';
 import type { ToolContext } from './tools/types.js';
 
 export { CheckpointManager };
+export { gitProcessEnv } from './github/gh.js';
 export { acquireLease } from './concurrency/lease.js';
 export { detectLocalHardware, parseNvidiaMemory, linuxGpuMemory, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
 export { contextBudget, estimateTextTokens } from './agent/context-budget.js';

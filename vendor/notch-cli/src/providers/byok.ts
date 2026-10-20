@@ -145,7 +145,7 @@ export const BUILTIN_BYOK_PROVIDERS: ByokProvider[] = [
     // users discover via openrouter.ai/models.
     compatibility: 'strict',
     headers: {
-      'HTTP-Referer': 'https://freesyntax.dev',
+      'HTTP-Referer': 'https://github.com/simpleending/FreeSyntax',
       'X-OpenRouter-Title': 'Notch CLI',
     },
   },
@@ -498,7 +498,7 @@ export function resolveByokModel(spec: ByokSpec): {
   //   1. explicit spec.apiKey
   //   2. provider.apiKeyEnv env var (shell-exported wins — CI + local
   //      overrides must not be silently replaced by a stale sync)
-  //   3. synced BYOK stash from `notch login` / `notch sync-keys`
+  //   3. locally saved provider keys from notch setup
   //   4. provider.fallbackApiKey literal (for local servers)
   let apiKey: string | undefined = spec.apiKey;
   if (!apiKey && providerInfo.apiKeyEnv) {

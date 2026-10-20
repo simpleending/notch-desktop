@@ -80,7 +80,7 @@ for(const folder of ['out/main','out/renderer','out/preload'])await rebrandTree(
 await verifyWorkbenchImports(path.join(unpacked,'out/renderer/assets'));
 console.log(JSON.stringify({branding:await verifyRendererBranding(unpacked)}));
 const manifest=path.join(unpacked,'package.json'), metadata=JSON.parse(await fs.readFile(manifest,'utf8'));
-metadata.version=version;metadata.description='notch by freesyntax.dev';metadata.author='freesyntax.dev';await fs.writeFile(manifest,JSON.stringify(metadata,null,2));
+metadata.version=version;metadata.description='notch by freesyntax.dev';metadata.author='freesyntax.dev';metadata.homepage='https://github.com/simpleending/notch-desktop';await fs.writeFile(manifest,JSON.stringify(metadata,null,2));
 await createPackageWithOptions(unpacked,path.join(app,'resources/app.asar'),{unpack:'**/*.{node,dll,exe,so,dylib}',unpackDir:'**/{@ff-labs,ffi-rs,@yuuang}'});
 const extracted=path.join(staging,'build-app');
 if(!unpacked.startsWith(staging+path.sep) || !extracted.startsWith(staging+path.sep))throw new Error('Invalid packaging directory.');

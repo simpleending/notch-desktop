@@ -1,7 +1,7 @@
 /**
  * Notch CLI — Model Provider
  *
- * Connects to Notch model endpoints (served via vLLM on Modal) by default,
+ * Connects directly to the selected local runtime or user-configured provider,
  * with transparent passthrough to any OpenAI-compatible BYOK endpoint when
  * the model field looks like `<provider>:<model>` (or `config.byokProvider`
  * is set).
@@ -52,79 +52,15 @@ export class MissingApiKeyError extends Error {
 // Notch Model Catalog
 // ---------------------------------------------------------------------------
 
-export const MODEL_CATALOG: Record<NotchModelId, NotchModelInfo> = {
-  'notch-pyre': {
-    id: 'notch-pyre',
-    label: 'Pyre',
-    size: '9B',
-    gpu: 'L40S',
-    contextWindow: 131_072,
-    maxOutputTokens: 16_384,
-    baseUrl: 'https://acemagnifique--notch-serve-pyre-notchpyreserver-serve.modal.run/v1',
-    hardware: {
-      vramGb: 10,
-      ramGb: 16,
-      diskGb: 6,
-      recommendedGpu: 'RTX 3090 / 4070 Ti+ · 12GB+ VRAM',
-      tier: 'light',
-    },
-    // null until we push Q4 merged weights to the public Hub. The CLI
-    // surfaces this as "hosted-only" in the /model picker so users know
-    // local download isn't wired yet — no fake error, no mock repo.
-    hfRepo: null,
-  },
-  'notch-ignis': {
-    id: 'notch-ignis',
-    label: 'Ignis',
-    size: '27B',
-    gpu: 'A100-80GB',
-    contextWindow: 131_072,
-    maxOutputTokens: 16_384,
-    baseUrl: 'https://acemagnifique--notch-serve-ignis-notchignisserver-serve.modal.run/v1',
-    hardware: {
-      vramGb: 20,
-      ramGb: 32,
-      diskGb: 18,
-      recommendedGpu: 'RTX 4090 / A6000+ · 24GB+ VRAM',
-      tier: 'standard',
-    },
-    hfRepo: null,
-  },
-  'notch-solace': {
-    id: 'notch-solace',
-    label: 'Solace',
-    size: '31B',
-    gpu: 'A100-80GB',
-    contextWindow: 131_072,
-    maxOutputTokens: 16_384,
-    baseUrl: 'https://acemagnifique--notch-serve-solace-notchsolaceserver-serve.modal.run/v1',
-    hardware: {
-      vramGb: 24,
-      ramGb: 64,
-      diskGb: 22,
-      recommendedGpu: 'RTX 4090 + offload / A100-40GB+',
-      tier: 'heavy',
-    },
-    hfRepo: null,
-  },
-  'notch-solace-lite': {
-    id: 'notch-solace-lite',
-    label: 'Solace Lite',
-    size: 'E4B',
-    gpu: 'L4',
-    contextWindow: 65_536,
-    maxOutputTokens: 8_192,
-    baseUrl: 'https://acemagnifique--notch-serve-solace-lite-notchsolacelitese-0e4da6.modal.run/v1',
-    hardware: {
-      vramGb: 6,
-      ramGb: 8,
-      diskGb: 3,
-      recommendedGpu: 'RTX 3060 / M2 Pro+ · 8GB+ VRAM',
-      tier: 'light',
-    },
-    hfRepo: null,
-  },
-};
+export const MODEL_CATALOG: Partial<Record<NotchModelId, NotchModelInfo>> = {};
+
+function assertDirectEndpoint(value?: string): void {
+  if (!value) return;
+  const host = new URL(value.includes('://') ? value : `http://${value}`).hostname.toLowerCase();
+  if (host === 'freesyntax.dev' || host.endsWith('.freesyntax.dev') || (host.startsWith('acemagnifique--notch-serve-') && host.endsWith('.modal.run'))) {
+    throw new Error('This saved endpoint belongs to the retired hosted service. Choose a local model with notch models or configure your own provider with notch setup.');
+  }
+}
 
 /** All valid Notch model IDs (BYOK refs are NOT in this list). */
 export const MODEL_IDS = Object.keys(MODEL_CATALOG) as NotchModelId[];
@@ -137,7 +73,7 @@ export function isValidModel(id: string): id is NotchModelId {
 /**
  * Heuristic: does this model accept image content blocks?
  *
- * - `notch-*`: all four are image-text-to-text (Gemma 3/4 vision pipeline-tag).
+ * Local and custom models use their verified provider capability metadata.
  * - `openai:*` (gpt-4o family), `anthropic:*` (Claude 4+), `google:*`
  *   (Gemini 2/3+), `together:*` (Llama 4-class) accept images.
  * - `openrouter:*` routes to arbitrary models, so only known multimodal
@@ -151,7 +87,7 @@ export function modelSupportsImages(modelId: string): boolean {
   const lowerModelId = modelId.toLowerCase();
   // Notch catalog — all entries are vision-capable per the deploy notes.
   if (modelId in MODEL_CATALOG) return true;
-  if (lowerModelId.startsWith('notch-')) return true;
+
   // Provider-prefixed IDs (openai/gpt-4o, anthropic/claude-4.7, etc.)
   const ref = isByokRef(lowerModelId) ? parseByokRef(lowerModelId) : null;
   const prefix = ref?.provider ?? '';
@@ -192,14 +128,15 @@ function openRouterModelSupportsImages(upstreamModelId: string): boolean {
  * Routing:
  *   - `config.byokProvider` set     -> BYOK
  *   - `config.model` has a `:`      -> BYOK (parsed from ref)
- *   - `config.model` is a Notch id  -> Modal endpoint
+ *   - A bare model requires an explicit user-supplied endpoint.
  *
- * Resolution order for Notch base URL:
+ * Explicit custom endpoint resolution:
  *   1. Explicit config.baseUrl
  *   2. NOTCH_BASE_URL env var
- *   3. Model's default Modal endpoint from catalog
+ * No first-party hosted endpoint is selected implicitly.
  */
 export function resolveModel(config: ModelConfig): LanguageModel {
+  assertDirectEndpoint(config.baseUrl ?? process.env.NOTCH_BASE_URL);
   // BYOK path — explicit provider field wins.
   if (config.byokProvider) {
     const resolved = resolveByokModel({
@@ -239,55 +176,25 @@ export function resolveModel(config: ModelConfig): LanguageModel {
     return resolved.model;
   }
 
-  // Notch path.
-  const info = MODEL_CATALOG[config.model as NotchModelId];
-  if (!info) {
-    throw new Error(
-      `Unknown model "${config.model}". Use provider/model, ` +
-      'for example openrouter/anthropic/claude-sonnet-4.6.',
-    );
-  }
-
-  const baseUrl = config.baseUrl
-    ?? process.env.NOTCH_BASE_URL
-    ?? info.baseUrl;
-
-  const apiKey = config.apiKey ?? process.env.NOTCH_API_KEY;
-  if (!apiKey) {
-    throw new MissingApiKeyError({ flow: 'notch', envVar: 'NOTCH_API_KEY', providerLabel: 'Notch' });
-  }
-
-  // Modal proxy auth — every Notch endpoint is deployed with
-  // requires_proxy_auth=True. Without these headers Modal's edge 401s
-  // before the request reaches vLLM. Tokens come from env so they can
-  // be rotated without a CLI release.
-  const proxyKey = process.env.MODAL_PROXY_KEY;
-  const proxySecret = process.env.MODAL_PROXY_SECRET;
-  const modalProxyHeaders: Record<string, string> = (proxyKey && proxySecret)
-    ? { 'Modal-Key': proxyKey, 'Modal-Secret': proxySecret }
-    : {};
-
-  const provider = createOpenAI({
-    apiKey,
-    baseURL: baseUrl,
-    headers: { ...modalProxyHeaders, ...config.headers },
-  });
-
-  return provider.chat(config.model as string) as LanguageModel;
+  const baseUrl = config.baseUrl ?? process.env.NOTCH_BASE_URL;
+  if (!baseUrl) throw new Error('Hosted Notch models are retired. Run notch models for a local model or notch setup for your own provider.');
+  return createOpenAI({ apiKey: config.apiKey ?? process.env.NOTCH_API_KEY ?? 'not-needed', baseURL: baseUrl, headers: config.headers }).chat(config.model as string) as LanguageModel;
 }
 
 /**
  * Validate that the configured backend (Notch or BYOK) is reachable.
  *
- * Notch: probes the `/health` endpoint exposed by our Modal serve apps.
+ * Configured local runtimes are probed directly; hosted providers use their own credentials.
  * BYOK:  just sanity-checks base URL + API key presence (most providers
  *        don't expose a consistent health endpoint, and hitting
  *        `/models` would burn rate limit on every `/status` call).
  */
 export async function validateConfig(config: ModelConfig): Promise<{ ok: boolean; error?: string }> {
+  try { assertDirectEndpoint(config.baseUrl ?? process.env.NOTCH_BASE_URL); }
+  catch (error) { return {ok:false,error:(error as Error).message}; }
   // BYOK branch.
   if (config.byokProvider) {
-    return validateByokConfig({
+    const checked = await validateByokConfig({
       provider: config.byokProvider,
       model: typeof config.model === 'string' && config.model.length > 0 ? config.model : undefined,
       apiKey: config.apiKey,
@@ -295,10 +202,13 @@ export async function validateConfig(config: ModelConfig): Promise<{ ok: boolean
       headers: { ...config.headers, ...config.byokHeaders },
       apiShape: config.byokApiShape,
     });
+    if (checked.ok && checked.contextWindow) { config.nativeContextWindow = checked.contextWindow; config.contextWindow = Math.min(config.contextWindow ?? (config.byokProvider === 'openrouter' ? 32768 : config.byokProvider === 'colibri' ? 16384 : 8192), checked.contextWindow); }
+    if (checked.ok && checked.maxOutputTokens) config.maxOutputTokens = checked.maxOutputTokens;
+    return checked;
   }
   if (typeof config.model === 'string' && isByokRef(config.model)) {
     const { provider, model } = parseByokRef(config.model);
-    return validateByokConfig({
+    const checked = await validateByokConfig({
       provider,
       model,
       apiKey: config.apiKey,
@@ -306,32 +216,12 @@ export async function validateConfig(config: ModelConfig): Promise<{ ok: boolean
       headers: { ...config.headers, ...config.byokHeaders },
       apiShape: config.byokApiShape,
     });
+    if (checked.ok && checked.contextWindow) { config.nativeContextWindow = checked.contextWindow; config.contextWindow = Math.min(config.contextWindow ?? (provider === 'openrouter' ? 32768 : provider === 'colibri' ? 16384 : 8192), checked.contextWindow); }
+    if (checked.ok && checked.maxOutputTokens) config.maxOutputTokens = checked.maxOutputTokens;
+    return checked;
   }
 
-  // Notch branch.
-  const info = MODEL_CATALOG[config.model as NotchModelId];
-  if (!info) {
-    return { ok: false, error: `Unknown model "${config.model}". Available: ${MODEL_IDS.join(', ')}` };
-  }
-
-  const baseUrl = config.baseUrl ?? process.env.NOTCH_BASE_URL ?? info.baseUrl;
-  const proxyKey = process.env.MODAL_PROXY_KEY;
-  const proxySecret = process.env.MODAL_PROXY_SECRET;
-  const proxyHeaders: HeadersInit = (proxyKey && proxySecret)
-    ? { 'Modal-Key': proxyKey, 'Modal-Secret': proxySecret }
-    : {};
-  try {
-    const res = await fetch(`${baseUrl.replace(/\/v1$/, '')}/health`, {
-      signal: AbortSignal.timeout(5000),
-      headers: proxyHeaders,
-    });
-    if (!res.ok) {
-      return { ok: false, error: `Notch ${info.label} returned ${res.status} at ${baseUrl}` };
-    }
-    return { ok: true };
-  } catch {
-    return { ok: false, error: `Cannot reach Notch ${info.label} at ${baseUrl}` };
-  }
+  return validateByokConfig({provider:'custom',model:config.model,baseUrl:config.baseUrl ?? process.env.NOTCH_BASE_URL,apiKey:config.apiKey ?? process.env.NOTCH_API_KEY,headers:config.headers});
 }
 
 // ---------------------------------------------------------------------------

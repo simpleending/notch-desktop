@@ -53,7 +53,7 @@ async function rebrandDirectory(directory) {
 }
 await rebrandDirectory(path.join(application, 'out'));
 const packageFile = path.join(application, 'package.json'), pkg = JSON.parse(await readFile(packageFile, 'utf8'));
-pkg.name = 'notch-desktop'; pkg.version = '0.1.0'; pkg.description = 'Notch local coding workbench'; pkg.main = './notch-bootstrap.mjs'; pkg.homepage = 'https://freesyntax.dev'; pkg.author = { name: 'Driftrail' };
+pkg.name = 'notch-desktop'; pkg.version = '0.1.0'; pkg.description = 'Notch local coding workbench'; pkg.main = './notch-bootstrap.mjs'; pkg.homepage = 'https://github.com/simpleending/notch-desktop'; pkg.author = { name: 'Driftrail' };
 await writeFile(packageFile, JSON.stringify(pkg, null, 2));
 await writeFile(path.join(application, 'notch-bootstrap.mjs'), "await import('./notch/src/app-bootstrap.mjs');\n");
 const product = { ...inspection.product, displayName: 'Notch', electronApplicationName: 'Notch', appId: 'com.freesyntax.notch.desktop', dataDirectoryName: 'com.freesyntax.notch.desktop', packageName: 'notch-desktop', protocolScheme: 'notch', windowsLauncherDirectory: 'Notch/Launcher', windowsLauncherFileName: 'Notch Launcher.exe', windowsLauncherMutexName: 'Local/NotchDesktopLauncher' };
