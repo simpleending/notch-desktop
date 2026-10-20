@@ -116,7 +116,7 @@ async function runOne(
   let output = '';
 
   try {
-    const stream = streamText({ model: languageModel, messages });
+    const stream = streamText({ model: languageModel, messages, onError() {} });
     for await (const chunk of stream.textStream) {
       if (!firstTokenAt) firstTokenAt = Date.now();
       output += chunk;

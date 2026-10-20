@@ -18,6 +18,7 @@ import { rebuildPluginCatalog, verifyPluginCatalog } from '../src/plugin-integri
 import { installLocalFeatures } from '../src/local-feature-bundles.mjs';
 import { patchLocalOnlyMain } from '../src/local-only-patch.mjs';
 import './build-updater.mjs';
+import { copyOriginRuntime } from './copy-origin-runtime.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url)), version=process.argv[2] || '0.1.0-preview.1';
 if(process.platform!=='win32' || process.arch!=='x64')throw new Error('Build this installer on Windows x64.');
@@ -71,6 +72,8 @@ const cliSource=path.join(root,'node_modules/@freesyntax/notch-cli'), cliTarget=
 if(!path.resolve(cliTarget).startsWith(path.resolve(staging)+path.sep))throw new Error('Invalid embedded CLI target.');
 await fs.rm(cliTarget,{recursive:true,force:true});
 await fs.cp(cliSource,cliTarget,{recursive:true});
+await fs.access(path.join(cliTarget,'dist/origin-credential.js'));
+await copyOriginRuntime(root, path.join(unpacked, 'notch/node_modules'));
 await fs.access(path.join(cliTarget,'dist/native/notch-hardware-win32-x64.exe'));
 await fs.access(path.join(cliTarget,'dist/native/THIRD-PARTY-NOTICES.txt'));
 assert.equal(JSON.parse(await fs.readFile(path.join(cliTarget,'package.json'),'utf8')).version,JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')).dependencies['@freesyntax/notch-cli'],'The packaged CLI must match the pinned tested version.');

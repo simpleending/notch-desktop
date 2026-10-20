@@ -1,3 +1,4 @@
+import { uiMessage } from "./ui-messages.mjs";
 import { createWebSettings } from './web-settings-view.mjs';
 import { createPhoneSettings } from './phone-settings-view.mjs';
 import { createUpdateSettings } from './update-settings-view.mjs';
@@ -92,7 +93,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
           h('button', { key: id, type: 'button', onClick: () => { const target = document.getElementById(`notch-${id}-title`); target?.scrollIntoView({ block: 'start' }); target?.focus({ preventScroll: true }); } }, label))),
       h('label', { className: 'notch-setting-row' }, h('span', null, h('strong',null,'Task workspace'), h('small',null,'Project folder is the default; writable tasks take turns. Isolated worktrees allow parallel OpenRouter tasks. Changes apply to new turns; unfinished isolated files stay saved.')),
         h('select', { 'aria-label':'Task workspace', value:workspace, disabled:savingWorkspace, onChange:event=>changeWorkspace(event.target.value) }, h('option',{value:'shared'},'Project folder'),h('option',{value:'isolated'},'Isolated worktrees'))),
-      workspaceError ? h('p',{role:'alert'},workspaceError) : null,
+      workspaceError ? h('p',{role:'alert'},uiMessage(workspaceError)) : null,
       h(PhoneSettings),
       h(GitHubSettings, { onOpenProject, localProjects }),
       h(UpdateSettings),

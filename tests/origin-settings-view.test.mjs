@@ -22,13 +22,13 @@ test('Origin clones with explicit protocol and remembered URLs open instead of c
   try {
     input().props.onChange({ target: { value: 'acme/new' } });
     view.render(props).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }); await new Promise(resolve => setImmediate(resolve));
-    assert.deepEqual(calls.at(-1), ['clone', 'git@origin.cursor.com:acme/new.git']);
+    assert.deepEqual(calls.at(-1), ['clone', 'https://origin.cursor.com/acme/new.git']);
     input().props.onChange({ target: { value: 'https://origin.cursor.com/git/acme/existing.git' } });
     assert.ok(view.render(props).find(node => node.type === 'button' && node.children.includes('Open Origin repository')));
     view.render(props).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }); await new Promise(resolve => setImmediate(resolve));
     assert.equal(calls.at(-1)[0], 'openRepo'); assert.deepEqual(opened, ['/local/existing']);
     assert.equal(view.render(props).some(node => node.children.includes('Load Origin repositories')), false);
-    assert.ok(view.render(props).some(node => node.type === 'p' && String(node.children[0]).includes('WSL credentials are separate')));
+    assert.equal(view.render(props).some(node => node.type === 'p' && String(node.children[0]).includes('WSL credentials are separate')), false);
   } finally { view.close(); }
 });
 
@@ -49,6 +49,18 @@ test('Origin namespace choice, paginated repository list, filtering and local Op
     await button('Load more Origin repositories').props.onClick(); assert.deepEqual(calls.at(-1), ['repos', { owner: 'acme', pageToken: 'opaque-page' }]);
     const filter = view.render(props).find(node => node.type === 'input' && node.props.type === 'search'); filter.props.onChange({ target: { value: 'local' } });
     assert.equal(view.render(props).filter(node => node.type === 'li').length, 1);
+  } finally { view.close(); }
+});
+
+test('native Windows Origin exposes browser sign-in, cancellation, sign-out and a repository browser', async () => {
+  const calls = [], view = harness({ signedIn: false, nativeCliSupported: true, localClones: {} }, async action => { calls.push(action); return action === 'login' ? { signingIn: true, loginUrl: 'https://cursor.com/loginDeepControl?uuid=synthetic' } : { signingIn: false, loginUrl: '' }; });
+  const props = { onOpenProject: async () => {} }, button = label => view.render(props).find(node => node.type === 'button' && node.children.includes(label));
+  try {
+    await button('Sign in to Cursor Origin').props.onClick();
+    assert.equal(view.render(props).find(node => node.type === 'a' && node.children.includes('Continue sign-in in your browser')).props.href, 'https://cursor.com/loginDeepControl?uuid=synthetic');
+    await button('Cancel sign-in').props.onClick(); assert.equal(calls.at(-1), 'cancel');
+    view.states[0] = { ...view.states[0], signedIn: true, email: 'qa@example.invalid' };
+    assert.ok(button('Load Origin repositories')); await button('Sign out of Origin').props.onClick(); assert.equal(calls.at(-1), 'logout');
   } finally { view.close(); }
 });
 

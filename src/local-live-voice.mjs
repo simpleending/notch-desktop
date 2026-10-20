@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { uiMessage } from './ui-messages.mjs';
 
 /** Local VAD → Whisper → the existing task/permission pipeline → local speech. */
 export function createLocalLiveVoice(voice, { voiceSessionId, chatSessionId, speechRate }, emit) {
@@ -11,7 +12,7 @@ export function createLocalLiveVoice(voice, { voiceSessionId, chatSessionId, spe
   const reset = () => { chunks = []; bytes = 0; voiced = 0; silence = 0; };
   const fail = error => {
     if (session.signal.aborted || response.signal.aborted || error.name === 'AbortError') return;
-    busy = false; reset(); state('listening', `Voice: ${error.message}`);
+    busy = false; reset(); state('listening', uiMessage(error));
   };
   async function speak(text, sourceTurnId) {
     if (session.signal.aborted || response.signal.aborted) return;
@@ -57,7 +58,7 @@ export function createLocalLiveVoice(voice, { voiceSessionId, chatSessionId, spe
     completeToolCall(request) {
       if (request.callId !== callId || session.signal.aborted) return false;
       let result; try { result = JSON.parse(request.output); } catch { return false; }
-      if (!result.accepted) { busy = false; state('listening', result.message || 'Request was not accepted.'); }
+      if (!result.accepted) { busy = false; state('listening', uiMessage(result.message || 'The request was not accepted.')); }
       return true;
     },
     sendContext(request) {

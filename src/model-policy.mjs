@@ -31,7 +31,7 @@ export function localContextProfile(bytes, hardware, metadata = {}, mounted = {}
   const automatic = choices.filter(context => context <= automaticCap && required(context) <= preferredBudget).at(-1);
   return { choices, contextWindow: automatic || (choices.includes(8192) ? 8192 : choices[0] || Math.min(4096, cap)),
     fits: choices.length > 0 && Array.isArray(metadata.capabilities) && metadata.capabilities.includes('tools'),
-    reason: !(Array.isArray(metadata.capabilities) && metadata.capabilities.includes('tools')) ? 'tool support not confirmed' : !nativeKnown ? 'native context limit not confirmed' : choices.length ? 'estimated memory fit' : 'exceeds current available memory',
+    reason: !(Array.isArray(metadata.capabilities) && metadata.capabilities.includes('tools')) ? 'tool support not confirmed' : !nativeKnown ? 'native context limit not confirmed' : choices.length ? 'estimated memory fit' : 'not enough memory available',
     kvBytesPerToken: known ? kvBytesPerToken : null, bytes, nativeContext: cap };
 }
 

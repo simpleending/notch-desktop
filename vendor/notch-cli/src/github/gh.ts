@@ -1,6 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { originGitEnv } from '../origin/git-env.js';
 
 export const DEVICE_URL = 'https://github.com/login/device';
 export const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -54,10 +55,10 @@ export function gitHubChildEnv(env: NodeJS.ProcessEnv = process.env, browserLogi
 
 /** Pass explicit GitHub tokens to local Git without putting credentials in argv or config files. */
 export function gitProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const next = { ...env };
+  const next = originGitEnv(env);
   const token = env.GH_TOKEN || env.GITHUB_TOKEN;
   if (!token) return next;
-  const count = Number(env.GIT_CONFIG_COUNT || '0');
+  const count = Number(next.GIT_CONFIG_COUNT || '0');
   if (!Number.isSafeInteger(count) || count < 0 || count > 10000) throw new Error('Invalid GIT_CONFIG_COUNT.');
   next.GIT_CONFIG_COUNT = String(count + 2);
   next[`GIT_CONFIG_KEY_${count}`] = 'http.https://github.com/.extraheader';

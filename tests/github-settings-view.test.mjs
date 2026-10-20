@@ -15,6 +15,20 @@ function harness(initial, bridge) {
   return { render, button, all, states, close() { globalThis.window = previous; } };
 }
 
+test('GitHub displays English errors while preserving repository names and descriptions', () => {
+  const initial = { installed: true, account: 'user', phase: 'ready', message: '', repos: [{ nameWithOwner: 'RAW_REPO/project', description: 'IDE_PULL_OK', isPrivate: true }] };
+  const view = harness(initial, async () => initial);
+  try {
+    view.states[2] = 'APP_PLUGIN_PERMISSION_DENIED';
+    const rendered = JSON.stringify(view.render());
+    assert.match(rendered, /Review its permissions/);
+    assert.doesNotMatch(rendered, /APP_PLUGIN_PERMISSION_DENIED/);
+    assert.match(rendered, /RAW_REPO\/project/);
+    assert.match(rendered, /IDE_PULL_OK/);
+    assert.equal(view.states[2], 'APP_PLUGIN_PERMISSION_DENIED');
+  } finally { view.close(); }
+});
+
 test('Cancel stays available during login and stale login results cannot replace cancellation', async () => {
   let finish;
   const view = harness({ installed: true, account: null, phase: 'ready' }, async action => action === 'login' ? new Promise(resolve => { finish = resolve; }) : { installed: true, account: null, phase: 'ready', message: 'Cancelled' });

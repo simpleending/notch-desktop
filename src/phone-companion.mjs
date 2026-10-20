@@ -6,6 +6,7 @@ import { spawn as nodeSpawn } from 'node:child_process';
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { renderPairingQr } from './phone-qr.mjs';
+import { uiMessage } from './ui-messages.mjs';
 
 const phoneWrapped = Symbol('notchPhoneApproval');
 const reaches = new Set(['lan', 'address', 'ngrok', 'cloudflare']);
@@ -754,7 +755,8 @@ export function createPhoneCompanion(directory, { host, safeStorage, interfaces 
     } catch (error) { if (!res.headersSent) send(res, error.status || 500, { error: error.status ? error.message : 'Phone access could not finish that request.' }); }
   }
   async function sendFile(res, file, type, cache) {
-    const body = await fs.readFile(file);
+    const original = await fs.readFile(file);
+    const body = file === path.join(pageRoot, 'page.js') ? Buffer.concat([Buffer.from(`${uiMessage.toString()}\n`), original]) : original;
     res.writeHead(200, securityHeaders({ 'Content-Type': type, 'Cache-Control': cache, 'Content-Length': body.length, ...(file.endsWith('sw.js') ? { 'Service-Worker-Allowed': '/' } : {}) }));
     res.end(body);
   }

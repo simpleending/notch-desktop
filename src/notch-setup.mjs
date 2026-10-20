@@ -1,3 +1,4 @@
+import { uiMessage } from "./ui-messages.mjs";
 const wordmarks = {
   dark: new URL('./notch-wordmark-dark.svg', import.meta.url).href,
   light: new URL('./notch-wordmark-light.svg', import.meta.url).href,
@@ -94,6 +95,6 @@ export function createNotchSetup(React) {
             h('div', { className: 'notch-setup-actions' }, step ? h('button', { type: 'button', disabled: busy, onClick: () => setStep(0) }, 'Back') : null,
               h('button', { type: 'button', className: 'notch-setup-primary', disabled: busy || !ready,
                 onClick: step ? finish : () => setStep(1) }, busy ? 'Opening…' : step ? 'Open notch →' : 'Continue →'))),
-          error ? h('p', { role: 'alert', className: 'notch-setup-error' }, error) : null)));
+          error ? h('p', { role: 'alert', className: 'notch-setup-error' }, uiMessage(error)) : null)));
   };
 }

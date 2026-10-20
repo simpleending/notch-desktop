@@ -35,9 +35,9 @@ import {
 } from "./chunk-S5MWOFHZ.js";
 
 // vendor/notch-cli/src/desktop-harness.ts
-import path26 from "path";
+import path27 from "path";
 import fs23 from "fs/promises";
-import os7 from "os";
+import os8 from "os";
 
 // vendor/notch-cli/src/config.ts
 import fs5 from "fs/promises";
@@ -2351,7 +2351,7 @@ var ExecutionGuard = class {
 
 // vendor/notch-cli/src/agent/loop.ts
 import { isStepCount as isStepCount2, asSchema, jsonSchema } from "ai";
-import { ToolLoopAgent } from "ai";
+import { streamText as streamText2 } from "ai";
 import { promises as fs21 } from "fs";
 import { execSync } from "child_process";
 
@@ -2858,6 +2858,7 @@ const {spawn}=require('node:child_process'),fs=require('node:fs');
 const p=JSON.parse(process.argv[1]),win=process.platform==='win32';
 if(p.runAsNode===undefined)delete process.env.ELECTRON_RUN_AS_NODE;else process.env.ELECTRON_RUN_AS_NODE=p.runAsNode;
 const child=spawn(win?(process.env.COMSPEC||'cmd.exe'):'/bin/sh',win?['/d','/s','/c','"'+p.command+'"']:['-lc',p.command],{cwd:p.cwd,windowsHide:true,windowsVerbatimArguments:win});
+child.once('spawn',()=>process.send?.('notch-shell-started'));
 child.stdin.end();
 child.stdout.on('data',data=>fs.appendFileSync(p.stdoutFile,data));
 child.stderr.on('data',data=>fs.appendFileSync(p.stderrFile,data));
@@ -2870,14 +2871,28 @@ child.on('close',code=>{process.exitCode=code??1;});
         env: { ...env, ...process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {} },
         windowsHide: true,
         detached: true,
-        stdio: "ignore"
+        stdio: ["ignore", "ignore", "ignore", "ipc"]
       });
       req.signal?.addEventListener("abort", abort, { once: true });
       if (req.signal?.aborted) abort();
       const early = await new Promise((resolve, reject) => {
-        child.once("error", reject);
-        child.once("exit", (code) => resolve(code));
-        child.once("spawn", () => setTimeout(() => resolve(void 0), 250));
+        let grace;
+        const deadline = setTimeout(() => {
+          stopTree(child);
+          finish(new Error("The command did not start in time. Try again."));
+        }, req.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+        const finish = (error, code) => {
+          clearTimeout(deadline);
+          clearTimeout(grace);
+          child.removeListener("message", ready);
+          error ? reject(error) : resolve(code);
+        };
+        const ready = (message) => {
+          if (message === "notch-shell-started") grace = setTimeout(() => finish(), 250);
+        };
+        child.once("error", (error) => finish(error));
+        child.once("exit", (code) => finish(void 0, code));
+        child.on("message", ready);
       });
       req.signal?.throwIfAborted();
       child.unref();
@@ -2885,6 +2900,7 @@ child.on('close',code=>{process.exitCode=code??1;});
       return { exitCode: 0, stdout: "", stderr: "", durationMs: Date.now() - started, diagnostics: { background: true, pid: child.pid, stdoutFile, stderrFile } };
     } finally {
       req.signal?.removeEventListener("abort", abort);
+      if (child?.connected) child.disconnect();
     }
   }
   run(req) {
@@ -3139,7 +3155,7 @@ ${trimmed || "(no output)"}${suffix}${/\[timeout\]/.test(result.stderr) ? "\nIf 
 };
 
 // vendor/notch-cli/src/tools/index.ts
-import path22 from "path";
+import path23 from "path";
 
 // vendor/notch-cli/src/tools/git.ts
 import { execFile as execFile3 } from "child_process";
@@ -3148,7 +3164,32 @@ import { simpleGit } from "simple-git";
 // vendor/notch-cli/src/github/gh.ts
 import { execFile as execFile2, spawn as spawn2 } from "child_process";
 import fs11 from "fs/promises";
+import path13 from "path";
+
+// vendor/notch-cli/src/origin/git-env.ts
+import { existsSync } from "fs";
+import os4 from "os";
 import path12 from "path";
+import { fileURLToPath } from "url";
+function originAuthPath(env = process.env) {
+  return path12.join(env.LOCALAPPDATA || path12.join(env.HOME || env.USERPROFILE || os4.homedir(), ".config"), "notch", "origin", "auth.json");
+}
+function originGitEnv(env = process.env, helper = fileURLToPath(new URL(existsSync(new URL("./origin-credential.js", import.meta.url)) ? "./origin-credential.js" : "../../node_modules/@freesyntax/notch-cli/dist/origin-credential.js", import.meta.url))) {
+  if (!env.CURSOR_API_KEY && !env.CURSOR_AUTH_TOKEN && !existsSync(originAuthPath(env))) return { ...env };
+  const count = Number(env.GIT_CONFIG_COUNT || "0");
+  if (!Number.isSafeInteger(count) || count < 0 || count > 1e4) throw Error("Invalid GIT_CONFIG_COUNT.");
+  const quote = (value) => "'" + value.replaceAll("\\", "/").replaceAll("'", `'"'"'`) + "'";
+  return {
+    ...env,
+    GIT_CONFIG_COUNT: String(count + 2),
+    [`GIT_CONFIG_KEY_${count}`]: "credential.https://origin.cursor.com.helper",
+    [`GIT_CONFIG_VALUE_${count}`]: "",
+    [`GIT_CONFIG_KEY_${count + 1}`]: "credential.https://origin.cursor.com.helper",
+    [`GIT_CONFIG_VALUE_${count + 1}`]: `!ELECTRON_RUN_AS_NODE=1 ${quote(process.execPath)} ${quote(helper)} credential`
+  };
+}
+
+// vendor/notch-cli/src/github/gh.ts
 var TOKEN_ENV = ["GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"];
 function gitHubChildEnv(env = process.env, browserLogin = false) {
   const next = { ...env };
@@ -3157,10 +3198,10 @@ function gitHubChildEnv(env = process.env, browserLogin = false) {
   return next;
 }
 function gitProcessEnv(env = process.env) {
-  const next = { ...env };
+  const next = originGitEnv(env);
   const token = env.GH_TOKEN || env.GITHUB_TOKEN;
   if (!token) return next;
-  const count = Number(env.GIT_CONFIG_COUNT || "0");
+  const count = Number(next.GIT_CONFIG_COUNT || "0");
   if (!Number.isSafeInteger(count) || count < 0 || count > 1e4) throw new Error("Invalid GIT_CONFIG_COUNT.");
   next.GIT_CONFIG_COUNT = String(count + 2);
   next[`GIT_CONFIG_KEY_${count}`] = "http.https://github.com/.extraheader";
@@ -3173,7 +3214,7 @@ function executableName(platform) {
   return platform === "win32" ? "gh.exe" : "gh";
 }
 function acceptGitHubExecutable(file2, platform = process.platform) {
-  return path12.basename(file2).toLowerCase() === executableName(platform);
+  return path13.basename(file2).toLowerCase() === executableName(platform);
 }
 function runFile(file2, args, env, timeout, signal) {
   return new Promise((resolve, reject) => {
@@ -3201,8 +3242,8 @@ async function locateGitHubCli(env = process.env) {
   const platform = process.platform;
   const candidates = [];
   if (platform === "win32") {
-    for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA]) if (root) candidates.push(path12.join(root, "GitHub CLI", "gh.exe"));
-    const where = env.SystemRoot ? path12.join(env.SystemRoot, "System32", "where.exe") : "where.exe";
+    for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA]) if (root) candidates.push(path13.join(root, "GitHub CLI", "gh.exe"));
+    const where = env.SystemRoot ? path13.join(env.SystemRoot, "System32", "where.exe") : "where.exe";
     try {
       candidates.unshift(...(await runFile(where, ["gh.exe"], env, 5e3)).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
     } catch {
@@ -3469,7 +3510,7 @@ Proceed?`
 import { execFile as execFile4 } from "child_process";
 import { once } from "events";
 import fs12 from "fs/promises";
-import path13 from "path";
+import path14 from "path";
 import { promisify as promisify2 } from "util";
 import ignore from "ignore";
 import { minimatch as minimatch2 } from "minimatch";
@@ -3487,7 +3528,7 @@ var grepTool = {
   description: "Search file contents by regex pattern. Returns matching lines with file paths and line numbers. Supports glob filtering and context lines.",
   parameters: parameters7,
   async execute(params, ctx) {
-    const searchPath = params.path ? path13.isAbsolute(params.path) ? params.path : path13.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchPath = params.path ? path14.isAbsolute(params.path) ? params.path : path14.resolve(ctx.cwd, params.path) : ctx.cwd;
     let child;
     try {
       ctx.abortSignal?.throwIfAborted();
@@ -3539,7 +3580,7 @@ var grepTool = {
         const rules = ignore();
         for (const name of [".gitignore", ".ignore"]) {
           try {
-            rules.add(await fs12.readFile(path13.join(dir, name), "utf8"));
+            rules.add(await fs12.readFile(path14.join(dir, name), "utf8"));
           } catch (error) {
             if (error.code !== "ENOENT") throw error;
           }
@@ -3550,19 +3591,19 @@ var grepTool = {
           ctx.abortSignal?.throwIfAborted();
           if (results.length >= (params.max_results ?? 50)) return;
           if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-          const full = path13.join(dir, entry.name);
-          if (filters.some(({ base, rules: rules2 }) => rules2.ignores(path13.relative(base, full).replaceAll("\\", "/") + (entry.isDirectory() ? "/" : "")))) continue;
+          const full = path14.join(dir, entry.name);
+          if (filters.some(({ base, rules: rules2 }) => rules2.ignores(path14.relative(base, full).replaceAll("\\", "/") + (entry.isDirectory() ? "/" : "")))) continue;
           if (entry.isDirectory()) {
             await searchDir(full, filters);
           } else if (entry.isFile()) {
-            if (params.glob && !minimatch2(path13.relative(searchPath, full).replaceAll("\\", "/"), params.glob, { matchBase: !params.glob.includes("/") })) continue;
+            if (params.glob && !minimatch2(path14.relative(searchPath, full).replaceAll("\\", "/"), params.glob, { matchBase: !params.glob.includes("/") })) continue;
             try {
               const content = await fs12.readFile(full, "utf-8");
               ctx.abortSignal?.throwIfAborted();
               const lines = content.split("\n");
               for (let i = 0; i < lines.length; i++) {
                 if (regex.test(lines[i])) {
-                  const rel = path13.relative(ctx.cwd, full);
+                  const rel = path14.relative(ctx.cwd, full);
                   results.push(`${rel}:${i + 1}:${lines[i]}`);
                   if (results.length >= (params.max_results ?? 50)) return;
                 }
@@ -3578,7 +3619,7 @@ var grepTool = {
         const content = await fs12.readFile(searchPath, "utf-8");
         ctx.abortSignal?.throwIfAborted();
         const lines = content.split("\n");
-        const rel = path13.relative(ctx.cwd, searchPath);
+        const rel = path14.relative(ctx.cwd, searchPath);
         for (let i = 0; i < lines.length; i++) {
           if (regex.test(lines[i])) {
             results.push(`${rel}:${i + 1}:${lines[i]}`);
@@ -3597,7 +3638,7 @@ var grepTool = {
 
 // vendor/notch-cli/src/tools/glob.ts
 import { glob as globFn } from "glob";
-import path14 from "path";
+import path15 from "path";
 import { z as z8 } from "zod";
 var parameters8 = z8.object({
   pattern: z8.string().describe('Glob pattern, e.g. "**/*.ts" or "src/**/*.tsx"'),
@@ -3608,7 +3649,7 @@ var globTool = {
   description: "Find files matching a glob pattern. Returns relative paths sorted by modification time. Ignores node_modules and .git by default.",
   parameters: parameters8,
   async execute(params, ctx) {
-    const searchDir = params.path ? path14.isAbsolute(params.path) ? params.path : path14.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchDir = params.path ? path15.isAbsolute(params.path) ? params.path : path15.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
       ctx.abortSignal?.throwIfAborted();
       if (ctx.workspaceSearch) {
@@ -3622,9 +3663,9 @@ var globTool = {
         dot: false
       });
       if (matches.length === 0) {
-        return { content: `No files matching "${params.pattern}" in ${path14.relative(ctx.cwd, searchDir) || "."}` };
+        return { content: `No files matching "${params.pattern}" in ${path15.relative(ctx.cwd, searchDir) || "."}` };
       }
-      const relative = matches.map((m) => path14.relative(ctx.cwd, path14.resolve(searchDir, m)));
+      const relative = matches.map((m) => path15.relative(ctx.cwd, path15.resolve(searchDir, m)));
       return {
         content: `Found ${relative.length} file(s):
 ${relative.join("\n")}`
@@ -3640,7 +3681,7 @@ import { z as z10 } from "zod";
 
 // vendor/notch-cli/src/web/settings.ts
 import fs13 from "fs/promises";
-import path15 from "path";
+import path16 from "path";
 import { randomUUID as randomUUID4 } from "crypto";
 import { createRequire } from "module";
 import { spawn as spawn3 } from "child_process";
@@ -3650,7 +3691,7 @@ var webSettingsSchema = z9.object({
   searchProvider: z9.enum(["duckduckgo", "tavily"]).default("duckduckgo"),
   browser: z9.enum(["auto", "msedge", "chrome", "chromium"]).default("auto")
 });
-var file = () => path15.join(getConfigDir(), "web-research.json");
+var file = () => path16.join(getConfigDir(), "web-research.json");
 var validSearchKey = (key) => /^[\x21-\x7e]{12,4096}$/.test(key);
 async function loadWebSettings() {
   let stored = {};
@@ -3666,7 +3707,7 @@ async function loadWebSettings() {
 async function installResearchBrowser(onOutput = () => {
 }, signal) {
   const require2 = createRequire(import.meta.url);
-  const cli = path15.join(path15.dirname(require2.resolve("playwright-core/package.json")), "cli.js");
+  const cli = path16.join(path16.dirname(require2.resolve("playwright-core/package.json")), "cli.js");
   const interrupted = new AbortController();
   const activeSignal = AbortSignal.any([...signal ? [signal] : [], interrupted.signal, AbortSignal.timeout(15 * 6e4)]);
   const interrupt = () => interrupted.abort();
@@ -4324,7 +4365,7 @@ import { execFile as execFile5 } from "child_process";
 import { createRequire as createRequire2 } from "module";
 import { promisify as promisify3 } from "util";
 import fs14 from "fs/promises";
-import path16 from "path";
+import path17 from "path";
 import { z as z14 } from "zod";
 var execFileAsync2 = promisify3(execFile5);
 var parameters12 = z14.object({
@@ -4335,7 +4376,7 @@ var parameters12 = z14.object({
   symbol: z14.string().optional().describe("Symbol name to search for (alternative to line/character)")
 });
 function detectLanguage(filePath) {
-  const ext = path16.extname(filePath).toLowerCase();
+  const ext = path17.extname(filePath).toLowerCase();
   switch (ext) {
     case ".ts":
     case ".tsx":
@@ -4367,11 +4408,11 @@ async function isAvailable(cmd, signal) {
 async function tsDiagnostics(filePath, cwd, signal) {
   let compiler;
   try {
-    compiler = createRequire2(path16.join(cwd, "package.json")).resolve("typescript/bin/tsc");
+    compiler = createRequire2(path17.join(cwd, "package.json")).resolve("typescript/bin/tsc");
   } catch {
     throw new Error("TypeScript is not installed in this project. Install its development dependencies before checking diagnostics.");
   }
-  const project = await fs14.stat(path16.join(cwd, "tsconfig.json")).then((s) => s.isFile(), (error) => {
+  const project = await fs14.stat(path17.join(cwd, "tsconfig.json")).then((s) => s.isFile(), (error) => {
     if (error.code === "ENOENT") return false;
     throw error;
   });
@@ -4506,7 +4547,7 @@ ${lines.join("\n")}`;
 }
 async function getHoverInfo(symbol, filePath, line, cwd, signal, ripgrep = "rg") {
   try {
-    const absPath = path16.isAbsolute(filePath) ? filePath : path16.resolve(cwd, filePath);
+    const absPath = path17.isAbsolute(filePath) ? filePath : path17.resolve(cwd, filePath);
     const content = await fs14.readFile(absPath, "utf-8");
     const lines = content.split("\n");
     const startLine = Math.max(0, line - 3);
@@ -4526,7 +4567,7 @@ ${def}`;
   }
 }
 async function getDiagnostics(filePath, cwd, signal) {
-  const absPath = path16.isAbsolute(filePath) ? filePath : path16.resolve(cwd, filePath);
+  const absPath = path17.isAbsolute(filePath) ? filePath : path17.resolve(cwd, filePath);
   const { lang } = detectLanguage(absPath);
   switch (lang) {
     case "typescript":
@@ -4606,7 +4647,7 @@ var lspTool = {
   parameters: parameters12,
   async execute(params, ctx) {
     const filePath = params.file;
-    const absPath = path16.isAbsolute(filePath) ? filePath : path16.resolve(ctx.cwd, filePath);
+    const absPath = path17.isAbsolute(filePath) ? filePath : path17.resolve(ctx.cwd, filePath);
     try {
       ctx.abortSignal?.throwIfAborted();
       switch (params.action) {
@@ -4672,7 +4713,7 @@ async function extractSymbol(filePath, line, character) {
 
 // vendor/notch-cli/src/tools/notebook.ts
 import fs15 from "fs/promises";
-import path17 from "path";
+import path18 from "path";
 import { z as z15 } from "zod";
 var parameters13 = z15.object({
   action: z15.enum(["read", "edit", "add", "remove"]).describe("Action: read (view cells), edit (modify cell source), add (insert new cell), remove (delete cell)"),
@@ -4684,7 +4725,7 @@ var parameters13 = z15.object({
 });
 function formatNotebook(nb, filePath) {
   const parts = [
-    `# ${path17.basename(filePath)}`,
+    `# ${path18.basename(filePath)}`,
     `# ${nb.cells.length} cells | nbformat ${nb.nbformat}.${nb.nbformat_minor}`,
     ""
   ];
@@ -4715,7 +4756,7 @@ var notebookTool = {
   description: "Read and edit Jupyter .ipynb notebook files. Actions: read (view all cells with outputs), edit (modify a cell), add (insert a new cell), remove (delete a cell).",
   parameters: parameters13,
   async execute(params, ctx) {
-    const filePath = path17.isAbsolute(params.path) ? params.path : path17.resolve(ctx.cwd, params.path);
+    const filePath = path18.isAbsolute(params.path) ? params.path : path18.resolve(ctx.cwd, params.path);
     try {
       switch (params.action) {
         case "read": {
@@ -4740,7 +4781,7 @@ var notebookTool = {
           );
           nb.cells[params.cell_index].source = lines;
           await fs15.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Cell [${params.cell_index}] updated in ${path17.basename(filePath)}.` };
+          return { content: `Cell [${params.cell_index}] updated in ${path18.basename(filePath)}.` };
         }
         case "add": {
           if (params.content === void 0) {
@@ -4761,7 +4802,7 @@ var notebookTool = {
           const insertIdx = params.insert_after !== void 0 ? params.insert_after + 1 : nb.cells.length;
           nb.cells.splice(insertIdx, 0, newCell);
           await fs15.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path17.basename(filePath)}.` };
+          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path18.basename(filePath)}.` };
         }
         case "remove": {
           if (params.cell_index === void 0) {
@@ -4774,7 +4815,7 @@ var notebookTool = {
           }
           const removed = nb.cells.splice(params.cell_index, 1)[0];
           await fs15.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path17.basename(filePath)}. ${nb.cells.length} cells remaining.` };
+          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path18.basename(filePath)}. ${nb.cells.length} cells remaining.` };
         }
         default:
           return { content: `Unknown action: ${params.action}`, isError: true };
@@ -5475,11 +5516,11 @@ import { spawn as spawn4 } from "child_process";
 
 // vendor/notch-cli/src/plugins/discovery.ts
 import fs16 from "fs/promises";
-import path18 from "path";
-import os4 from "os";
+import path19 from "path";
+import os5 from "os";
 async function discoverPlugins(projectRoot) {
-  const globalDir = path18.join(os4.homedir(), ".notch", "plugins");
-  const projectDir = path18.join(projectRoot, ".notch", "plugins");
+  const globalDir = path19.join(os5.homedir(), ".notch", "plugins");
+  const projectDir = path19.join(projectRoot, ".notch", "plugins");
   const plugins = /* @__PURE__ */ new Map();
   for (const plugin of await scanDirectory(globalDir)) {
     plugins.set(plugin.name, plugin);
@@ -5495,8 +5536,8 @@ async function scanDirectory(dir) {
     const entries = await fs16.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const pluginDir = path18.join(dir, entry.name);
-      const pkgPath = path18.join(pluginDir, "package.json");
+      const pluginDir = path19.join(dir, entry.name);
+      const pkgPath = path19.join(pluginDir, "package.json");
       try {
         const raw = await fs16.readFile(pkgPath, "utf-8");
         const pkg = JSON.parse(raw);
@@ -5518,7 +5559,7 @@ async function scanDirectory(dir) {
 }
 
 // vendor/notch-cli/src/plugins/loader.ts
-import path19 from "path";
+import path20 from "path";
 import { pathToFileURL } from "url";
 
 // vendor/notch-cli/src/commands/registry.ts
@@ -5529,7 +5570,7 @@ function registerCommand(name, handler) {
 
 // vendor/notch-cli/src/plugins/loader.ts
 async function loadPlugin(discovered, projectRoot, log) {
-  const entryPath = path19.resolve(discovered.path, discovered.manifest.main);
+  const entryPath = path20.resolve(discovered.path, discovered.manifest.main);
   const tools = [];
   const hooks = [];
   const ctx = {
@@ -5622,8 +5663,8 @@ var pluginManager = new PluginManager();
 
 // vendor/notch-cli/src/safety/guardian.ts
 import fs17 from "fs/promises";
-import { fileURLToPath } from "url";
-import path20 from "path";
+import { fileURLToPath as fileURLToPath2 } from "url";
+import path21 from "path";
 import { generateText } from "ai";
 import { z as z20 } from "zod";
 
@@ -5818,8 +5859,8 @@ var cachedPolicy = null;
 async function loadPolicy() {
   if (cachedPolicy) return cachedPolicy;
   try {
-    const here = fileURLToPath(import.meta.url);
-    const mdPath = path20.join(path20.dirname(here), "guardian-policy.md");
+    const here = fileURLToPath2(import.meta.url);
+    const mdPath = path21.join(path21.dirname(here), "guardian-policy.md");
     const raw = await fs17.readFile(mdPath, "utf-8");
     if (raw.length > 200) {
       cachedPolicy = raw;
@@ -5968,13 +6009,13 @@ import { isStepCount } from "ai";
 import { streamText } from "ai";
 
 // vendor/notch-cli/src/agent/builtins/index.ts
-import { readdirSync, readFileSync as readFileSync2, existsSync } from "fs";
+import { readdirSync, readFileSync as readFileSync2, existsSync as existsSync2 } from "fs";
 import { dirname, join } from "path";
-import { fileURLToPath as fileURLToPath2 } from "url";
+import { fileURLToPath as fileURLToPath3 } from "url";
 import { parse as parseToml } from "smol-toml";
 var cache = null;
 function resolveBuiltinsDir() {
-  const here = dirname(fileURLToPath2(import.meta.url));
+  const here = dirname(fileURLToPath3(import.meta.url));
   const candidates = [
     here,
     // src/agent/builtins (dev) or wherever co-located
@@ -5987,7 +6028,7 @@ function resolveBuiltinsDir() {
   ];
   for (const dir of candidates) {
     try {
-      if (existsSync(dir) && readdirSync(dir).some((f) => f.endsWith(".toml"))) {
+      if (existsSync2(dir) && readdirSync(dir).some((f) => f.endsWith(".toml"))) {
         return dir;
       }
     } catch {
@@ -6285,6 +6326,9 @@ ${describeToolSchemas(subagentCtx, { includeNames: Object.keys(tools) })}`;
       iterations++;
       config.onStatus?.(id, `Iteration ${iterations}/${maxIterations}...`);
       const result = streamText({
+        onError() {
+        },
+        // Failures propagate through the stream to the parent, without an SDK stderr dump.
         abortSignal: toolContext.abortSignal,
         model,
         instructions: systemPrompt,
@@ -6430,6 +6474,9 @@ ${describeToolSchemas(subagentCtx, { includeNames: Object.keys(tools) })}`;
       iterations++;
       config.onStatus?.(id, `Iteration ${iterations}/${maxIterations}...`);
       const result = streamText({
+        onError() {
+        },
+        // Failures propagate through the stream to the parent, without an SDK stderr dump.
         model,
         instructions: systemPrompt,
         messages,
@@ -6863,7 +6910,7 @@ var COORDINATOR_ALLOWED_TOOL_NAMES = /* @__PURE__ */ new Set([
 
 // vendor/notch-cli/src/concurrency/file-access.ts
 import fs18 from "fs/promises";
-import path21 from "path";
+import path22 from "path";
 import { createHash as createHash2 } from "crypto";
 import { createReadStream } from "fs";
 async function canonical2(file2) {
@@ -6872,9 +6919,9 @@ async function canonical2(file2) {
     resolved = await fs18.realpath(file2);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    const parent = path21.dirname(file2);
+    const parent = path22.dirname(file2);
     if (parent === file2) throw error;
-    resolved = path21.join(await canonical2(parent), path21.basename(file2));
+    resolved = path22.join(await canonical2(parent), path22.basename(file2));
   }
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
@@ -6899,10 +6946,10 @@ async function guardedFileAccess(name, params, ctx, execute2) {
     let targets = [];
     if (["read", "write", "edit", "notebook"].includes(name)) targets = [params.path];
     if (name === "apply_patch") targets = parsePatch(params.input).flatMap((action) => action.kind === "update" && action.moveTo ? [action.target, action.moveTo] : [action.target]);
-    const files2 = await Promise.all(targets.map((file2) => canonical2(path21.resolve(ctx.cwd, file2))));
+    const files2 = await Promise.all(targets.map((file2) => canonical2(path22.resolve(ctx.cwd, file2))));
     if (ctx.taskWorkspace) for (const file2 of files2) {
-      const relative = path21.relative(await canonical2(ctx.cwd), file2);
-      if (path21.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path21.sep) || relative.split(path21.sep).some((part) => part.toLowerCase() === ".git")) return { isError: true, content: "Use a path inside this task workspace. Use task_changes to inspect the original project." };
+      const relative = path22.relative(await canonical2(ctx.cwd), file2);
+      if (path22.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path22.sep) || relative.split(path22.sep).some((part) => part.toLowerCase() === ".git")) return { isError: true, content: "Use a path inside this task workspace. Use task_changes to inspect the original project." };
     }
     const before = await Promise.all(files2.map((file2) => fingerprint(file2, ctx.abortSignal)));
     const reading = name === "read" || name === "notebook" && params.action === "read";
@@ -7012,7 +7059,7 @@ ${JSON.stringify(params, null, 2).slice(0, 500)}`, notExecuted: true };
       }
       params = validated.data;
       if (ctx.remoteWorkspace && t.name === "shell") {
-        const problem = validateCommand(params.command, ctx.cwd, path22.posix);
+        const problem = validateCommand(params.command, ctx.cwd, path23.posix);
         if (problem) return { content: problem, isError: true };
       }
       if (ctx.checkPermission) {
@@ -7480,14 +7527,14 @@ async function autoCompressWithStats(messages, model, contextWindow, signal, his
 
 // vendor/notch-cli/src/context/project-instructions.ts
 import fs19 from "fs/promises";
-import path23 from "path";
-import os5 from "os";
+import path24 from "path";
+import os6 from "os";
 var INSTRUCTION_FILES = [".notch.md", "NOTCH.md", ".notch/instructions.md"];
 async function loadProjectInstructions(projectRoot) {
   const sources = [];
-  const homeDir = os5.homedir();
+  const homeDir = os6.homedir();
   for (const file2 of INSTRUCTION_FILES) {
-    const globalPath = path23.join(homeDir, file2);
+    const globalPath = path24.join(homeDir, file2);
     const content = await safeRead(globalPath);
     if (content) {
       sources.push({ path: globalPath, content, scope: "global" });
@@ -7495,7 +7542,7 @@ async function loadProjectInstructions(projectRoot) {
     }
   }
   for (const file2 of INSTRUCTION_FILES) {
-    const projectPath = path23.join(projectRoot, file2);
+    const projectPath = path24.join(projectRoot, file2);
     const content = await safeRead(projectPath);
     if (content) {
       sources.push({ path: projectPath, content, scope: "project" });
@@ -7526,13 +7573,13 @@ async function safeRead(filePath) {
 
 // vendor/notch-cli/src/memory/store.ts
 import fs20 from "fs/promises";
-import path24 from "path";
-import os6 from "os";
+import path25 from "path";
+import os7 from "os";
 import { generateText as generateText4 } from "ai";
-var MEMORY_DIR = path24.join(os6.homedir(), ".notch", "memory");
-var INDEX_FILE = path24.join(MEMORY_DIR, "MEMORY.md");
-var SUMMARY_FILE = path24.join(MEMORY_DIR, "SUMMARY.md");
-var SUMMARY_FILENAME = path24.basename(SUMMARY_FILE);
+var MEMORY_DIR = path25.join(os7.homedir(), ".notch", "memory");
+var INDEX_FILE = path25.join(MEMORY_DIR, "MEMORY.md");
+var SUMMARY_FILE = path25.join(MEMORY_DIR, "SUMMARY.md");
+var SUMMARY_FILENAME = path25.basename(SUMMARY_FILE);
 var DEFAULT_PROMPT_CHAR_BUDGET = Number(process.env.NOTCH_MEMORY_PROMPT_CHARS ?? 6e3);
 var MAX_SINGLE_MEMORY_CHARS = Number(process.env.NOTCH_MEMORY_ITEM_CHARS ?? 4e3);
 var MAX_COMPACTION_INPUT_CHARS = Number(process.env.NOTCH_MEMORY_COMPACT_INPUT_CHARS ?? 3e4);
@@ -7546,7 +7593,7 @@ async function loadMemories() {
   for (const file2 of files2) {
     if (!file2.endsWith(".md") || file2 === "MEMORY.md" || file2 === SUMMARY_FILENAME) continue;
     try {
-      const content = await fs20.readFile(path24.join(MEMORY_DIR, file2), "utf-8");
+      const content = await fs20.readFile(path25.join(MEMORY_DIR, file2), "utf-8");
       const memory = parseMemoryFile(content, file2);
       if (memory) memories.push(memory);
     } catch {
@@ -8195,8 +8242,13 @@ async function runAgentLoopInternal(messages, config) {
     const toolCalls = [];
     const toolResults = [];
     let streamUsage = null;
-    const agent = new ToolLoopAgent({
+    const result = streamText2({
+      // The stream consumer propagates failures; the SDK default also dumps raw requests to stderr.
+      onError() {
+      },
       model: config.model,
+      messages: history,
+      abortSignal: config.toolContext.abortSignal,
       instructions: `${config.systemPrompt}${templateFormatHint}`,
       tools,
       stopWhen: isStepCount2(1),
@@ -8204,7 +8256,6 @@ async function runAgentLoopInternal(messages, config) {
       maxRetries: 0,
       maxOutputTokens: budget.output
     });
-    const result = await agent.stream({ messages: history, abortSignal: config.toolContext.abortSignal });
     for await (const event of result.stream) {
       if (event.type === "error") {
         const error = event.error instanceof Error ? event.error : new Error(String(event.error));
@@ -8570,12 +8621,12 @@ ${memoryStr}`, {
 
 // vendor/notch-cli/src/agent/checkpoints.ts
 import fs22 from "fs/promises";
-import path25 from "path";
+import path26 from "path";
 import { randomUUID as randomUUID5 } from "crypto";
 var CheckpointManager = class _CheckpointManager {
   remote;
   get paths() {
-    return this.remote ? path25.posix : path25;
+    return this.remote ? path26.posix : path26;
   }
   checkpoints = [];
   nextId = 1;
@@ -8589,9 +8640,9 @@ var CheckpointManager = class _CheckpointManager {
   static async open(cwd, file2, remote) {
     const manager = new _CheckpointManager();
     manager.remote = remote;
-    const realCwd = remote ? path25.posix.normalize(cwd) : await fs22.realpath(cwd);
+    const realCwd = remote ? path26.posix.normalize(cwd) : await fs22.realpath(cwd);
     const stat = remote ? void 0 : await fs22.stat(realCwd, { bigint: true });
-    manager.storage = { cwd: realCwd, file: path25.resolve(file2), identity: remote ? remote.identity : `${stat.dev}:${stat.ino}` };
+    manager.storage = { cwd: realCwd, file: path26.resolve(file2), identity: remote ? remote.identity : `${stat.dev}:${stat.ino}` };
     let raw;
     try {
       raw = await fs22.readFile(file2, "utf8");
@@ -8655,8 +8706,8 @@ var CheckpointManager = class _CheckpointManager {
     if (!this.isWithin(file2)) throw new Error("Undo path is outside this workspace.");
     if (this.remote) return this.remote.safePath(file2);
     if (this.storage) {
-      const relative = path25.relative(path25.dirname(this.storage.file), file2);
-      if (path25.resolve(file2) === this.storage.file || this.isWithin(path25.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path25.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
+      const relative = path26.relative(path26.dirname(this.storage.file), file2);
+      if (path26.resolve(file2) === this.storage.file || this.isWithin(path26.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path26.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
     }
     let cursor = file2;
     while (true) {
@@ -8666,8 +8717,8 @@ var CheckpointManager = class _CheckpointManager {
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      if (cursor === this.storage?.cwd || path25.dirname(cursor) === cursor) break;
-      cursor = path25.dirname(cursor);
+      if (cursor === this.storage?.cwd || path26.dirname(cursor) === cursor) break;
+      cursor = path26.dirname(cursor);
     }
   }
   async read(file2) {
@@ -8690,14 +8741,14 @@ var CheckpointManager = class _CheckpointManager {
       identity: this.storage.identity,
       nextId: this.nextId,
       checkpoints: this.checkpoints,
-      pending: [...this.pendingFiles].map(([path27, before]) => ({ path: path27, before, after: this.pendingAfter.get(path27) })),
+      pending: [...this.pendingFiles].map(([path28, before]) => ({ path: path28, before, after: this.pendingAfter.get(path28) })),
       messageId: this.messageId,
       restoring: this.restoring
     });
     if (Buffer.byteLength(data) > 64 * 2 ** 20) throw new Error("Undo history exceeds 64 MiB; no further writes are allowed.");
     const file2 = this.storage.file;
     const save2 = this.saving.then(async () => {
-      await fs22.mkdir(path25.dirname(file2), { recursive: true });
+      await fs22.mkdir(path26.dirname(file2), { recursive: true });
       const temporary = `${file2}.${randomUUID5()}.tmp`;
       try {
         await fs22.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
@@ -8840,7 +8891,7 @@ var CheckpointManager = class _CheckpointManager {
           if (error.code !== "ENOENT") throw error;
         }
       } else {
-        await fs22.mkdir(path25.dirname(snap.path), { recursive: true });
+        await fs22.mkdir(path26.dirname(snap.path), { recursive: true });
         const temporary = `${snap.path}.${randomUUID5()}.undo-tmp`;
         const mode = current === null ? 384 : (await fs22.stat(snap.path)).mode & 511;
         try {
@@ -8886,8 +8937,8 @@ var CheckpointManager = class _CheckpointManager {
         }
       }
     }
-    return Array.from(fileMap.entries()).map(([path27, { before, after }]) => ({
-      path: path27,
+    return Array.from(fileMap.entries()).map(([path28, { before, after }]) => ({
+      path: path28,
       before,
       after
     }));
@@ -8912,7 +8963,7 @@ async function runDesktopTurn(turn) {
   if (!turn.remoteWorkspace && !(await fs23.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
   if (!["approve", "read-only", "full-access"].includes(turn.accessMode)) throw new Error("Invalid desktop access mode.");
   turn.signal.throwIfAborted();
-  const configRoot = turn.remoteWorkspace ? os7.homedir() : cwd;
+  const configRoot = turn.remoteWorkspace ? os8.homedir() : cwd;
   const config = await loadConfig({ projectRoot: configRoot });
   const selection = {
     ...turn.model && turn.model !== "auto" ? selectModel(config.models.chat, { model: turn.model }) : config.models.chat,
@@ -8988,10 +9039,10 @@ async function runDesktopTurn(turn) {
       if (event === "post-tool") await turn.checkpoints.recordAfter();
       if (event !== "pre-tool") return;
       const args = payload.args;
-      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path26.posix : path26).resolve(cwd, args.path));
+      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path27.posix : path27).resolve(cwd, args.path));
       if (payload.tool === "apply_patch" && typeof args.input === "string") for (const action of parsePatch(args.input)) {
-        await turn.checkpoints.recordBefore(path26.resolve(cwd, action.target));
-        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path26.resolve(cwd, action.moveTo));
+        await turn.checkpoints.recordBefore(path27.resolve(cwd, action.target));
+        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path27.resolve(cwd, action.moveTo));
       }
     }
   };

@@ -1,3 +1,4 @@
+import { uiMessage } from "./ui-messages.mjs";
 export function createPhoneSettings(React) {
   const h = React.createElement;
   return function PhoneSettings() {
@@ -32,14 +33,14 @@ export function createPhoneSettings(React) {
     const urlValue = urlDraft ?? state?.publicUrl ?? '';
     const hostValue = hostDraft ?? state?.cloudflareHost ?? '';
     const reachCopy = {
-      lan: 'Phones on this Wi-Fi open the address below. On Windows, allow notch on private networks if the system asks.',
-      address: 'Paste an address that already forwards to this computer. Tailscale, Caddy, and a tunnel you run yourself all fit. notch does not receive that provider account.',
+      lan: 'Open the address below on a phone connected to the same Wi-Fi network. On Windows, allow notch on private networks if the system asks.',
+      address: 'Paste an address you have set up to forward to this computer, such as a Tailscale address or a tunnel. Sign in to that service separately.',
       ngrok: 'Your ngrok authtoken stays on this computer. notch starts ngrok when it is installed. The address belongs to your ngrok account.',
-      cloudflare: 'Your Cloudflare tunnel token stays on this computer. Use the https hostname you configured, and point that tunnel at the port below.',
+      cloudflare: 'Your Cloudflare tunnel token stays on this computer. Use the HTTPS hostname you configured, and forward the tunnel to the port below.',
     };
     return h('section', { className: 'notch-web-settings notch-phone-settings', 'aria-labelledby': 'notch-phone-title' },
       h('h3', { id: 'notch-phone-title', tabIndex: -1 }, 'Phone'),
-      h('p', null, 'Use this computer from your phone. Add the page to your home screen from the browser. There is no app store and no notch account. The phone uses the folder open in notch. Model and access are chosen in the phone menu.'),
+      h('p', null, 'Use this computer from your phone. Add the page to your home screen from the browser. There is no app store and no notch account. Your phone works with the project open in notch. Choose its model and access level from the phone menu.'),
       h('label', { className: 'notch-setting-row' }, h('span', null, h('strong', null, 'Phone access'), h('small', null, 'Serves a private page from this computer while notch is open.')),
         h('input', { type: 'checkbox', 'aria-label': 'Phone access', checked: !!state?.enabled, disabled: busy || !state, onChange: event => void act('update', { enabled: event.target.checked }) })),
       state?.enabled ? h('div', { className: 'notch-phone-card' },
@@ -74,9 +75,9 @@ export function createPhoneSettings(React) {
           h('button', { type: 'submit', disabled: busy || !cloudDraft.trim() }, 'Save token'),
           h('button', { type: 'button', disabled: busy || !state?.hasCloudflareKey, onClick: () => void act('update', { cloudflareToken: null }, 'Saved tunnel token removed.') }, 'Remove token'))) : null,
       state?.enabled ? h('p', null, `Forward a tunnel to 127.0.0.1:${state.port}. ${state.persistentKey ? 'Saved tokens use system encryption.' : 'System encryption is unavailable, so tokens last only for this app session.'}`) : null,
-      state?.tunnel?.message ? h('p', { role: 'status' }, state.tunnel.message) : null,
+      state?.tunnel?.message ? h('p', { role: 'status' }, uiMessage(state.tunnel.message, 'Connection status details are unavailable. Refresh to check again.')) : null,
       h('div', null, h('strong', null, 'Paired phones'), state?.devices?.length ? h('ul', { className: 'notch-phone-devices' }, state.devices.map(device => h('li', { key: device.id }, h('span', null, device.name), h('button', { type: 'button', disabled: busy, onClick: () => void act('revoke', device.id, `${device.name} removed.`) }, 'Remove')))) : h('p', null, 'No phone is paired yet.')),
-      notice ? h('p', { role: 'status' }, notice) : null,
-      error || pollError || state?.error ? h('p', { role: 'alert' }, error || pollError || state.error) : null);
+      notice ? h('p', { role: 'status' }, uiMessage(notice)) : null,
+      error || pollError || state?.error ? h('p', { role: 'alert' }, uiMessage(error || pollError || state.error)) : null);
   };
 }

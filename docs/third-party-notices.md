@@ -24,6 +24,8 @@ Electron and Chromium notices ship with the Windows application. Native librarie
 
 The Origin repository icons in `assets/origin` are the unmodified light and dark SVG marks served by [Cursor's official Origin documentation](https://cursor.com/docs/origin). Origin and Cursor are their owners' trademarks. These marks identify the optional provider; notch is not affiliated with Cursor.
 
+Native Windows Origin browser authentication uses the unmodified `@cursor/sdk` 1.0.38 npm dependency. Copyright Anysphere Inc.; all rights reserved. Its `LICENSE.md` refers to [Cursor's Terms of Service](https://cursor.com/terms-of-service). The SDK and its dependency notices are retained in `notch/node_modules/@cursor/sdk` inside the application archive. No SDK agent or model execution is used.
+
 Experimental model setup downloads the unmodified [Colibri 2.0.0 release](https://github.com/JustVugg/colibri/releases/tag/v2.0.0), licensed under Apache-2.0, into the user's isolated notch runtime directory. Its included LICENSE and notices are retained. Engine binaries and model weights are separate downloads; model licenses apply separately.
 
 ## Optional local voice runtime

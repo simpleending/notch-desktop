@@ -8,13 +8,19 @@ import { gitProcessEnv } from '../vendor/notch-core/desktop-harness.js';
 
 const execute = promisify(execFile);
 const defaultRun = (file, args, options) => execute(file, args, { ...options, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
-export function createOriginGit({ directory, env = process.env, platform = process.platform, run = defaultRun, pickDirectory = async () => null } = {}) {
+export function createOriginGit({ directory, env = process.env, platform = process.platform, run = defaultRun, pickDirectory = async () => null, nativeAuth, onAuthChange = () => {} } = {}) {
   const clones = createLocalRepositories(directory, { run, env: () => env, platform, repository: originRepository, fileName: 'origin-clones.json' });
   let busy = false;
-  const state = async () => ({ localClones: await clones.snapshot(true), nativeCliSupported: platform !== 'win32' });
+  let session = null, loginUrl = '', loginError = '', authPromise;
+  const auth = () => nativeAuth ? Promise.resolve(nativeAuth) : (authPromise ||= import('@freesyntax/notch-cli/dist/origin-auth.js').then(module => module.createNativeOriginAuth({ env, platform, onLoginUrl: url => { loginUrl = url; } })));
+  const state = async () => {
+    const status = platform === 'win32' ? await (await auth()).status() : {};
+    if (platform === 'win32') await onAuthChange(status.signedIn);
+    return { localClones: await clones.snapshot(true), nativeCliSupported: true, ...status, signingIn: !!session, loginUrl, loginError: loginError || status.loginError || '' };
+  };
   const api = async endpoint => {
+    if (platform === 'win32') return (await auth()).api(endpoint);
     // Origin CLI owns token exchange/refresh. Never treat a Cursor API key as an Origin bearer token.
-    if (platform === 'win32') throw Error('Origin CLI repository listing requires macOS or Linux. On Windows, browse on Cursor and paste the clone URL; configure Windows Git credentials or SSH separately from WSL.');
     let executable = 'origin';
     if (env.HOME) {
       const installed = path.join(env.HOME, '.local', 'bin', 'origin');
@@ -27,6 +33,22 @@ export function createOriginGit({ directory, env = process.env, platform = proce
   };
   return {
     status: state,
+    async login() {
+      if (platform !== 'win32') throw Error('Run origin auth login in a terminal, then refresh repositories.');
+      if (session) return state();
+      const client = await auth();
+      const controller = new AbortController(); session = controller; loginUrl = ''; loginError = '';
+      void client.login(controller.signal).then(() => state()).catch(failure => {
+        if (!controller.signal.aborted) {
+          const setupErrors = ['The Origin login was saved, but Git configuration could not be read. Check your global Git config permissions and sign in again.', 'The Origin login was saved, but its Git helper could not be configured. Check your global Git config permissions and sign in again.'];
+          loginError = setupErrors.includes(failure?.message) ? failure.message : 'Cursor sign-in did not complete. Retry and confirm this account has Origin access.';
+        }
+      }).finally(() => { if (session === controller) { session = null; loginUrl = ''; } });
+      return state();
+    },
+    async cancel() { session?.abort(); session = null; loginUrl = ''; loginError = ''; return state(); },
+    async logout() { session?.abort(); session = null; loginUrl = ''; loginError = ''; await (await auth()).logout(); return state(); },
+    close() { session?.abort(); },
     async remember(paths) { await clones.remember(paths); return state(); },
     async openRepo(repo) {
       const localPath = (await clones.snapshot(true))[originRepository(repo)];

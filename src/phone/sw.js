@@ -1,4 +1,4 @@
-const cacheName = 'notch-phone-4';
+const cacheName = 'notch-phone-5';
 const files = ['/', '/phone.css', '/phone.js', '/manifest.webmanifest', '/assets/notch-wordmark-dark.svg', '/assets/notch-wordmark-light.svg', '/assets/notch-symbol.png', '/assets/Manrope.ttf'];
 
 self.addEventListener('install', event => {

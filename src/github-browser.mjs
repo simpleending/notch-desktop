@@ -1,3 +1,4 @@
+import { uiMessage } from "./ui-messages.mjs";
 import { createGitHubSettings } from './github-settings-view.mjs';
 import { createOriginSettings } from './origin-settings-view.mjs';
 
@@ -38,7 +39,7 @@ export function createGitHubBrowser(React, useTheme) {
             'aria-label': `Open ${project.name}`, title: project.path, onClick: () => open(project.path) },
           h('strong', null, project.name), h('small', null, project.path))))) :
           h('p', null, 'Already cloned a repository? Choose its folder to open it here.'),
-        error ? h('p', { role: 'alert' }, error) : null),
+        error ? h('p', { role: 'alert' }, uiMessage(error)) : null),
       h('div', { className: 'notch-repository-providers', role: 'group', 'aria-label': 'Repository service' },
         h('button', { type: 'button', 'aria-pressed': provider === 'github', onClick: () => setProvider('github') },
           h('img', { src: new URL(`./github/github-mark-${resolvedTheme?.endsWith('-dark') ? 'white' : 'black'}.svg`, import.meta.url).href, width: 16, height: 16, alt: '' }), 'GitHub'),

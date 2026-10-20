@@ -1,3 +1,4 @@
+import { uiMessage } from "./ui-messages.mjs";
 import { githubCloneUrl, githubRepository } from './github-repository.mjs';
 
 export function createGitHubSettings(React) {
@@ -69,7 +70,7 @@ export function createGitHubSettings(React) {
     return h('section', { className: 'notch-web-settings notch-github-settings', 'aria-labelledby': 'notch-github-title' },
       h('h3', { id: 'notch-github-title', tabIndex: -1 }, 'GitHub'),
       h('p', null, 'Sign in through the browser with GitHub CLI, or use GH_TOKEN / GITHUB_TOKEN from your environment. Repository lists include organizations and collaborators. GitHub CLI uses system credential storage when available.'),
-      h('p', { role: 'status' }, state?.message || 'Checking GitHub…'),
+      h('p', { role: 'status' }, uiMessage(state?.message || 'Checking GitHub…', 'GitHub status details are unavailable. Refresh to check again.')),
       waiting ? h('div', null, h('p', { className: 'notch-github-code', 'aria-live': 'polite' }, state.code || '……'), h('a', { href: state.url || 'https://github.com/login/device', target: '_blank', rel: 'noopener noreferrer' }, 'Open github.com/login/device')) : null,
       h('div', { className: 'notch-update-actions' },
         !state?.installed ? h('button', { type: 'button', disabled: !state || !!busy || waiting, onClick: () => act('install') }, 'Install GitHub CLI') : null,
@@ -100,6 +101,6 @@ export function createGitHubSettings(React) {
         }) : [h('li', { key: 'empty' }, rows.length ? 'No loaded repositories match these filters.' : 'No accessible repositories found.')])) : null,
       state?.hasMore ? h('button', { type: 'button', disabled: !!busy, onClick: () => act('repos', state.repoPage + 1) }, 'Load more repositories') : null,
       state?.clonedPath ? h('div', null, h('p', null, state.clonedPath), onOpenProject ? h('button', { type: 'button', disabled: !!busy, onClick: () => act('open', state.clonedPath) }, 'Open project') : null) : null,
-      error || pollError ? h('p', { role: 'alert' }, error || pollError) : null);
+      error || pollError ? h('p', { role: 'alert' }, uiMessage(error || pollError)) : null);
   };
 }

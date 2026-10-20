@@ -1,3 +1,4 @@
+import { uiMessage } from "./ui-messages.mjs";
 export function createWebSettings(React) {
   const h = React.createElement;
   return function WebSettings() {
@@ -30,7 +31,7 @@ export function createWebSettings(React) {
       h('p', null, 'Search for sources and read pages with a temporary browser. Queries and visited URLs go to external services. Browser actions follow your task access mode.'),
       h('label', { className: 'notch-setting-row' }, h('span', null, h('strong', null, 'Web access'), h('small', null, 'Applies to new tool calls.')),
         h('select', { 'aria-label': 'Web access', value: String(state?.enabled ?? true), disabled: busy || !state, onChange: e => update({ enabled: e.target.value === 'true' }) }, h('option', { value: 'true' }, 'Enabled'), h('option', { value: 'false' }, 'Disabled'))),
-      h('label', { className: 'notch-setting-row' }, h('span', null, h('strong', null, 'Search provider'), h('small', null, 'DuckDuckGo needs no key or browser install. Tavily is optional.')),
+      h('label', { className: 'notch-setting-row' }, h('span', null, h('strong', null, 'Search provider'), h('small', null, 'DuckDuckGo works without an API key or a browser download. Tavily is optional.')),
         h('select', { 'aria-label': 'Search provider', value: state?.searchProvider || 'duckduckgo', disabled: busy || !state, onChange: e => update({ searchProvider: e.target.value }) },
           h('option', { value: 'duckduckgo' }, 'DuckDuckGo · no key'), h('option', { value: 'tavily' }, 'Tavily · API key'))),
       h('form', { onSubmit: e => { e.preventDefault(); if (key.trim()) void update({ key: key.trim() }, 'Key saved. Select Tavily as your search provider to use it.'); } },
@@ -43,6 +44,6 @@ export function createWebSettings(React) {
         h('select', { 'aria-label': 'Research browser', value: state?.browser || 'auto', disabled: busy || !state, onChange: e => update({ browser: e.target.value }) },
           ...[['auto','Automatic'],['msedge','Microsoft Edge'],['chrome','Google Chrome'],['chromium','Chromium']].map(([value, label]) => h('option', { key: value, value }, label)))),
       h('button', { type: 'button', disabled: busy || !state, onClick: install }, 'Install Chromium'),
-      h('p', { role: 'status', 'aria-live': 'polite' }, message));
+      h('p', { role: 'status', 'aria-live': 'polite' }, uiMessage(message, 'No further details are available. Refresh these settings to try again.')));
   };
 }

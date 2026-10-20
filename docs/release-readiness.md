@@ -1,5 +1,13 @@
 # Windows release verification
 
+Version 0.1.35 pairs the IDE with CLI 0.7.34. Product errors use reviewed English at display boundaries; source files, conversation content, tool results, terminal output, compiler diagnostics and structured events retain their original content. Builds reject unformatted product errors and incomplete English catalogs. The CLI also rejects streaming calls without an explicit error observer, preventing the SDK from dumping raw provider requests before the readable error message.
+
+The combined Windows source checks pass 316 IDE tests, 747 CLI tests and both strict typechecks. A fresh CLI tarball installation passes 24 package checks and 16 command-navigation checks. These include real source writes and shell output with CRLF, Chinese text and raw status markers, human provider errors alongside unchanged JSON diagnostics, failed response-save exit codes, and delayed background-shell startup. Production dependency audits report no known advisories.
+
+The final application archive matches all 104 source modules, 23 core files and 155 files from the public CLI package. All 552 renderer modules pass the product-message gate. Seven checks against the packaged Electron runtime pass, including rendered Origin errors, real file writes and shell output, provider failure propagation, background-server readiness and inherited environment values, the native Git helper inside ASAR, and official SDK sign-in URL generation and cancellation.
+
+Native Windows Origin tests cover protected credentials, restart, cancellation, an Origin-only Git helper, already-open terminals, and local Git clone/pull/push fixtures. Actual sign-in to an Origin-enabled account and Cursor-hosted writes remain unverified. This is Windows evidence; it does not establish release readiness on macOS or Linux. The final update is verified programmatically; this release does not include a new manual GUI sweep.
+
 Version 0.1.22 shares CLI 0.7.25's cancellable code-intelligence commands and safer grep fallback. Explicit profiles retain window branding but cannot watch or rewrite shared Windows shortcuts; competing test profiles previously caused repeated native shortcut work. Filename-only fff indexes now use explicit file watchers and rescan after invalidation, so new files and ignore changes remain visible.
 
 The current performance audit uses real Windows processes and distinguishes model inference from application overhead. See [the bottleneck audit](performance-audit.md) for measurements, Rust recommendations, and verification limits.

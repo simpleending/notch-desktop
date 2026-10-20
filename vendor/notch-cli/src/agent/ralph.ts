@@ -237,6 +237,7 @@ Be focused. Only implement what this task requires. Do not scope-creep into othe
       iterations++;
 
       const result = streamText({
+        onError() {}, // The stream consumer reports the failure; avoid dumping raw provider requests.
         model,
         abortSignal: toolContext.abortSignal,
         instructions: systemPrompt,

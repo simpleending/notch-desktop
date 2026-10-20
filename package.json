@@ -1,6 +1,6 @@
 {
   "name": "@freesyntax/notch-desktop",
-  "version": "0.1.33",
+  "version": "0.1.35",
   "private": true,
   "type": "module",
   "description": "notch by freesyntax.dev: local models first, optional provider API keys",
@@ -39,9 +39,10 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.79",
     "@ai-sdk/openai": "^4.0.92",
+    "@cursor/sdk": "1.0.38",
     "@earendil-works/pi-ai": "^1.2.0",
     "@ff-labs/fff-node": "0.11.0",
-    "@freesyntax/notch-cli": "0.7.31",
+    "@freesyntax/notch-cli": "0.7.34",
     "@openrouter/ai-sdk-provider": "3.1.0",
     "ai": "^7.0.138",
     "ajv": "^8.20.0",

@@ -131,6 +131,8 @@ export function patchEnglishRenderer(source) {
         if (scope === 'shellResources') {
           const label = properties(properties(props.get('en')).get('common')).get('language');
           if (label?.value === '中文') catalogEdits.push({start:label.start,end:label.end,value:'"Chinese"'});
+          const navigation = properties(props.get('en')).get('nav');
+          if (navigation?.type === 'ObjectExpression' && !properties(navigation).has('chat')) catalogEdits.push({start:navigation.end-1,end:navigation.end-1,value:(navigation.properties.length?',':'')+'chat:"Chat"'});
         }
         if (['newChatResources','chatSessionResources'].includes(scope)) {
           let target = props.get('en');

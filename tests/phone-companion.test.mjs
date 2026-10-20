@@ -59,6 +59,8 @@ test('the phone page uses the desktop palette, wordmark and home-screen install'
     const page = await (await fetch(origin)).text();
     const css = await (await fetch(`${origin}/phone.css`)).text();
     const script = await (await fetch(`${origin}/phone.js`)).text();
+      assert.match(script, /^function uiMessage\(/);
+      assert.doesNotThrow(() => new Function(script));
     const manifest = await (await fetch(`${origin}/manifest.webmanifest`)).json();
     const wordmark = await (await fetch(`${origin}/assets/notch-wordmark-dark.svg`)).text();
     const hello = await (await fetch(`${origin}/api/hello`)).json();

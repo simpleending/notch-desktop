@@ -7,6 +7,7 @@ import { patchLocalOnlyRenderer } from './local-only-patch.mjs';
 import { patchEnglishRenderer } from './english-renderer-patch.mjs';
 import { patchWorkingStatus } from './working-status-patch.mjs';
 import { patchGitPublishDialog } from './git-publish-patch.mjs';
+import { patchUiMessages } from './ui-message-patch.mjs';
 
 const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
 const brandCardUrl = 'data:image/svg+xml;base64,' + readFileSync(new URL('../assets/notch-brand-card.svg',import.meta.url)).toString('base64');
@@ -18,6 +19,7 @@ export function patchSecondaryArtwork(source) {
   source = source.replace('backgroundImage:`url(${keyboardBackgroundSrc})`', 'backgroundImage:"linear-gradient(135deg,var(--notch-panel),var(--notch-accent-fill))"')
     .replaceAll('No task data yet :)', 'No tasks yet.')
     .replaceAll('No tasks yet :)', 'No tasks yet.')
+    .replaceAll('Voice input completed in a Task input will appear here.', 'Your dictated task messages appear here.')
     .replaceAll('No artifact data yet :)', 'No artifacts yet.')
     .replaceAll('No web reading data yet :)', 'No web activity yet.')
     .replaceAll('No Skills & MCP data yet :)', 'No skills or MCP activity yet.')
@@ -214,7 +216,7 @@ export function patchWorkbenchRenderer(source) {
       source = patchFunction(source, 'AppearanceSettings', gitHubAppearance);
       source = source.replace(/import\s*\{([^}]+)\}\s*from\s*(['"])\.\/workbench-skin\.mjs\2/, (match, names) => names.split(',').some(name => name.trim() === 'openClonedProject') ? match : match.replace('{', '{openClonedProject,'));
     }
-    return patchEnglishRenderer(patchSecondaryArtwork(source));
+    return patchUiMessages(patchEnglishRenderer(patchSecondaryArtwork(source)));
   }
   source = patchFunction(source, 'preloadDoodleAssets', 'function preloadDoodleAssets(){}');
   for (const name of ['AgentGreetingMark', 'AppleTreeDoodle', 'ImageDoodle', 'PartnerPlanGreetingMark', 'MobileAppDownloadPromo', 'NewChatCursorGrid', 'FeedbackFloatingButton', 'FeedbackDialog']) {
@@ -272,7 +274,7 @@ export function patchWorkbenchRenderer(source) {
   source = replaceOnce(source, 'const NotchSetup=createNotchSetup(reactExports);', 'const {Brand:NotchWindowBrand,ThemeControls:NotchThemeControls,ModeSwitch:NotchModeSwitch,Welcome:NotchWelcome,QuickStart:NotchQuickStart,PanelLauncher:NotchPanelLauncher,Appearance:NotchAppearance,LocalProfile:NotchLocalProfile,Symbol:NotchSymbol}=createNotchWorkbench(reactExports,useTheme);const NotchSetup=createNotchSetup(reactExports);');
   // Initialize after the bundle's house components, before React renders.
   source = source.replace('const NotchSetup=createNotchSetup(reactExports);','const NotchModelMenu=createModelMenu(reactExports,{Popover,PopoverTrigger,PopoverContent},useTheme);const NotchSetup=createNotchSetup(reactExports);');
-  return patchEnglishRenderer(patchSecondaryArtwork('/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench,openClonedProject} from "./workbench-skin.mjs";\n' + source));
+  return patchUiMessages(patchEnglishRenderer(patchSecondaryArtwork('/* notch workbench skin */\nimport {createModelMenu} from "./model-menu.mjs";\nimport {createNotchWorkbench,openClonedProject} from "./workbench-skin.mjs";\n' + source)));
 }
 
 export async function verifyWorkbenchImports(assets, checkExports = true) {
@@ -301,6 +303,7 @@ export async function verifyWorkbenchImports(assets, checkExports = true) {
 
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
+  await cp(path.join(root, 'src/ui-messages.mjs'), path.join(assets, 'ui-messages.mjs'));
   for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
   await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});

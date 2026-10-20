@@ -10,6 +10,32 @@ import { createOriginGit } from '../src/origin-git.mjs';
 import { registerModelIpc, patchModelPreload, modelPreload } from '../src/model-ipc.mjs';
 
 const run = promisify(execFile);
+test('native Windows sign-in completes, lists repositories and cancels without launching WSL', async () => {
+  let signedIn = false, finish, cancelled = false; const changes = [];
+  const nativeAuth = {
+    status: async () => ({ signedIn, email: signedIn ? 'qa@example.invalid' : null }),
+    login: signal => new Promise(resolve => { finish = () => { signedIn = true; resolve(); }; signal.addEventListener('abort', () => { cancelled = true; resolve(); }, { once: true }); }),
+    logout: async () => { signedIn = false; },
+    api: async endpoint => endpoint.startsWith('/namespaces?') ? { namespaces: [{ namespace: { slug: 'acme' } }] } : { repositories: [{ fullName: 'acme/repo', cloneUrl: 'https://origin.cursor.com/acme/repo.git' }] },
+  };
+  const origin = createOriginGit({ platform: 'win32', nativeAuth, onAuthChange: value => changes.push(value), run: async () => { throw Error('No external auth executable is needed.'); } });
+  assert.equal((await origin.status()).signedIn, false);
+  assert.equal((await origin.login()).signingIn, true);
+  finish(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await origin.status()).signedIn, true); assert.equal((await origin.status()).signingIn, false);
+  assert.deepEqual((await origin.namespaces()).namespaces, ['acme']); assert.equal((await origin.repos({ owner: 'acme' })).repos[0].name, 'acme/repo');
+  assert.equal((await origin.logout()).signedIn, false);
+  await origin.login(); assert.equal((await origin.cancel()).signingIn, false); assert.equal(cancelled, true); assert.ok(changes.includes(true));
+});
+test('native sign-in retains actionable Git setup errors while hiding all other login diagnostics', async () => {
+  const setup = 'The Origin login was saved, but its Git helper could not be configured. Check your global Git config permissions and sign in again.';
+  for (const message of [setup, 'server rejected secret-token']) {
+    const origin = createOriginGit({ platform: 'win32', nativeAuth: { status: async () => ({ signedIn: false }), login: async () => { throw Error(message); } } });
+    await origin.login(); await new Promise(resolve => setImmediate(resolve));
+    const state = await origin.status(); assert.equal(state.signingIn, false);
+    if (message === setup) assert.equal(state.loginError, setup); else assert.equal(state.loginError.includes('secret-token'), false);
+  }
+});
 test('Origin accepts official HTTPS and SSH clone URLs without accepting credential leaks, other hosts or local paths', () => {
   for (const url of ['acme/rocket', 'https://origin.cursor.com/acme/rocket.git', 'https://origin.cursor.com/git/acme/rocket.git', 'git@origin.cursor.com:acme/rocket.git', 'ssh://git@origin.cursor.com/acme/rocket.git']) assert.equal(originRepository(url), 'acme/rocket');
   assert.equal(originCloneUrl('https://origin.cursor.com/git/acme/rocket.git', 'ssh'), 'https://origin.cursor.com/git/acme/rocket.git');
@@ -33,12 +59,12 @@ test('Origin uses the documented local CLI API, paginates namespaces and preserv
   assert.equal(JSON.stringify(result).includes('synthetic-user-key'), false);
 });
 
-test('Origin missing login, unsupported native Windows CLI and invalid server pagination are actionable without leaking output', async () => {
+test('Origin missing login and invalid server pagination are actionable without leaking output', async () => {
   const failed = createOriginGit({ platform: 'linux', env: {}, run: async () => { throw Error('token=synthetic-secret'); } });
   await assert.rejects(failed.namespaces(), error => /origin auth login/.test(error.message) && !error.message.includes('synthetic-secret'));
-  const windows = createOriginGit({ platform: 'win32', run: async () => { throw Error('must not run'); } });
-  assert.equal((await windows.status()).nativeCliSupported, false);
-  await assert.rejects(windows.namespaces(), /Windows Git/);
+  const windows = createOriginGit({ platform: 'win32', nativeAuth: { status: async () => ({ signedIn: false }), api: async () => { throw Error('Sign in to Cursor Origin first.'); } }, run: async () => { throw Error('must not run WSL'); } });
+  assert.equal((await windows.status()).nativeCliSupported, true);
+  await assert.rejects(windows.namespaces(), /Sign in/);
   const invalid = createOriginGit({ platform: 'linux', env: {}, run: async () => ({ stdout: '{"namespaces":[],"nextPageToken":"repeat"}' }) });
   await assert.rejects(invalid.namespaces(), /pagination/);
 });
@@ -49,7 +75,7 @@ test('Origin IPC validates namespaces, clone hosts, local folders, senders and r
   const handler = handlers.get('notch-models:origin'), frame = { url: 'notch-app://renderer/index.html' }, event = { senderFrame: frame, sender: { mainFrame: frame } };
   handler(event, 'repos', { owner: 'acme', pageToken: 'opaque' });
   handler(event, 'clone', 'git@origin.cursor.com:acme/rocket.git');
-  for (const [action, value] of [['repos', { owner: '../escape' }], ['repos', { owner: 'acme', pageToken: {} }], ['clone', 'https://evil.invalid/acme/rocket'], ['remember', ['relative']], ['status', 'extra'], ['logout', undefined]]) assert.throws(() => handler(event, action, value));
+  for (const [action, value] of [['repos', { owner: '../escape' }], ['repos', { owner: 'acme', pageToken: {} }], ['clone', 'https://evil.invalid/acme/rocket'], ['remember', ['relative']], ['status', 'extra'], ['login', 'extra']]) assert.throws(() => handler(event, action, value));
   assert.throws(() => handler({ senderFrame: { url: 'https://evil.invalid' } }, 'status'), /primary/);
   const patched = patchModelPreload('const bridge={github:(action,value)=>ipcRenderer.invoke(\'notch-models:github\',action,value)};');
   assert.match(patched, /notch-models:origin/); assert.equal(patchModelPreload(patched), patched); assert.match(modelPreload, /notch-models:origin/);

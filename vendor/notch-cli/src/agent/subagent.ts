@@ -272,6 +272,7 @@ ${describeToolSchemas(subagentCtx, { includeNames: Object.keys(tools) })}`;
       config.onStatus?.(id, `Iteration ${iterations}/${maxIterations}...`);
 
       const result = streamText({
+        onError() {}, // Failures propagate through the stream to the parent, without an SDK stderr dump.
         abortSignal: toolContext.abortSignal,
         model,
         instructions: systemPrompt,
@@ -482,6 +483,7 @@ ${describeToolSchemas(subagentCtx, { includeNames: Object.keys(tools) })}`;
       config.onStatus?.(id, `Iteration ${iterations}/${maxIterations}...`);
 
       const result = streamText({
+        onError() {}, // Failures propagate through the stream to the parent, without an SDK stderr dump.
         model,
         instructions: systemPrompt,
         messages,

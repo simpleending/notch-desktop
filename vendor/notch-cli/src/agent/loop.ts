@@ -13,7 +13,7 @@ import { isStepCount, asSchema, jsonSchema } from 'ai';
  * Copyright 2026 Driftrail. Apache-2.0.
  */
 
-import { ToolLoopAgent, type ModelMessage, type LanguageModel, type ToolModelMessage } from 'ai';
+import { streamText, type ModelMessage, type LanguageModel, type ToolModelMessage } from 'ai';
 import { promises as fs } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { buildToolMap, type ToolContext } from '../tools/index.js';
@@ -228,8 +228,12 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
     const toolResults: Array<{ toolCallId: string; result: unknown }> = [];
     let streamUsage: { promptTokens?: number; completionTokens?: number } | null = null;
 
-    const agent = new ToolLoopAgent({
+    const result = streamText({
+      // The stream consumer propagates failures; the SDK default also dumps raw requests to stderr.
+      onError() {},
       model: config.model,
+      messages: history,
+      abortSignal: config.toolContext.abortSignal,
       instructions: `${config.systemPrompt}${templateFormatHint}`,
       tools,
       stopWhen: isStepCount(1),
@@ -237,7 +241,6 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       maxRetries: 0,
       maxOutputTokens: budget.output,
     });
-    const result = await agent.stream({ messages: history, abortSignal: config.toolContext.abortSignal });
 
     for await (const event of result.stream) {
       if (event.type === 'error') {

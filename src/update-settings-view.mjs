@@ -1,3 +1,4 @@
+import { uiMessage } from "./ui-messages.mjs";
 export function createUpdateSettings(React) {
   const h=React.createElement;
   return function UpdateSettings(){
@@ -12,13 +13,13 @@ export function createUpdateSettings(React) {
         h('p',null,`Installed version: ${state.currentVersion}`),
         h('label',{className:'notch-setting-row'},h('span',null,h('strong',null,'Automatic updates'),h('small',null,'Check and download new stable releases on startup.')),
           h('input',{type:'checkbox','aria-label':'Automatic updates',checked:state.automatic,disabled:busy||!state.canInstall,onChange:event=>void act('automatic',event.target.checked)})),
-        h('p',{role:'status'},state.message),
+        h('p',{role:'status'},uiMessage(state.message, 'Update status details are unavailable. Check for updates again.')),
         state.phase==='downloading'?h('progress',{value:state.progress||0,max:100,'aria-label':'Update download progress'}):null,
         h('div',{className:'notch-update-actions'},h('button',{type:'button',disabled:busy||!state.supported||['checking','downloading'].includes(state.phase),onClick:()=>void act('check')},'Check for updates'),
           state.phase==='available'?h('button',{type:'button',disabled:busy||!state.canInstall,onClick:()=>void act('download')},'Download update'):null,
           state.phase==='ready'?h('button',{type:'button',disabled:busy||!state.canInstall,onClick:()=>void act('quit')},'Quit and install'):null)):
         h('p',{role:'status'},'Loading update settings…'),
       h('a',{href:'https://github.com/simpleending/notch-desktop/releases/latest',target:'_blank',rel:'noopener noreferrer'},'View releases on GitHub'),
-      error||pollError?h('p',{role:'alert'},error||pollError):null);
+      error||pollError?h('p',{role:'alert'},uiMessage(error||pollError)):null);
   };
 }

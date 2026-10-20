@@ -53,11 +53,11 @@ export function registerModelIpc(ipcMain, host) {
     status: () => manager.status(),
     queue: () => host.getQueueStatus(),
     origin: (action, value) => {
-      if (!['status', 'namespaces', 'repos', 'remember', 'openRepo', 'clone'].includes(action)) throw Error('Choose a supported Origin action.');
+      if (!['status', 'login', 'cancel', 'logout', 'namespaces', 'repos', 'remember', 'openRepo', 'clone'].includes(action)) throw Error('Choose a supported Origin action.');
       if (['clone', 'openRepo'].includes(action) && !originRepository(value)) throw Error('Choose an Origin repository.');
       if (action === 'remember' && (!Array.isArray(value) || value.length > 1000 || value.some(directory => typeof directory !== 'string' || directory.length > 4096 || directory.includes('\0') || !path.isAbsolute(directory)))) throw Error('Choose valid local project folders.');
       if (action === 'repos' && (!value || typeof value.owner !== 'string' || !/^[A-Za-z0-9_.-]+$/.test(value.owner) || ['.', '..'].includes(value.owner) || value.owner.length > 256 || value.pageToken !== undefined && (typeof value.pageToken !== 'string' || value.pageToken.length > 4096))) throw Error('Choose a valid Origin namespace and page.');
-      if (['status', 'namespaces'].includes(action) && value !== undefined) throw Error('Invalid Origin request.');
+      if (['status', 'login', 'cancel', 'logout', 'namespaces'].includes(action) && value !== undefined) throw Error('Invalid Origin request.');
       return host.origin[action](value);
     },
     github: (action, value) => {

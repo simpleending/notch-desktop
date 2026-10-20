@@ -167,7 +167,7 @@ function pair() {
       el('form', { onsubmit: submitPair },
         el('label', null, 'Pairing code', el('input', { id: 'pair-code', name: 'code', autocomplete: 'one-time-code', autocapitalize: 'characters', spellcheck: 'false', maxlength: '11', 'aria-label': 'Pairing code', required: 'true', value: state.pairDraft, oninput: event => { state.pairDraft = event.target.value; } })),
         el('button', { class: 'primary', type: 'submit', disabled: state.pairing }, state.pairing ? 'Connecting' : 'Connect')),
-      el('p', { class: 'alert', id: 'banner', role: 'alert' }, state.error),
+      el('p', { class: 'alert', id: 'banner', role: 'alert' }, uiMessage(state.error)),
       el('p', { class: 'fine' }, 'After it connects, add notch to your Home Screen from the browser menu. notch by freesyntax.dev. There is no app store and no account.')));
 }
 
@@ -175,7 +175,7 @@ function updatePair() {
   const lead = document.getElementById('pair-lead');
   if (lead) lead.textContent = leadText();
   const banner = document.getElementById('banner');
-  if (banner) banner.textContent = state.error;
+  if (banner) banner.textContent = uiMessage(state.error);
   const input = document.getElementById('pair-code');
   if (input && document.activeElement !== input && input.value !== state.pairDraft) input.value = state.pairDraft;
   const button = input?.form?.querySelector('button');
@@ -242,7 +242,7 @@ function chat(snapshot) {
       snapshot.computer.text ? el('p', null, snapshot.computer.text) : el('p', { class: 'quiet' }, snapshot.computer.detail || 'Working with the open project.'),
       snapshot.stopComputer ? el('div', { class: 'actions' }, el('button', { type: 'button', onclick: () => act('/api/stop', { target: 'computer' }) }, 'Stop on the computer')) : null) : null,
     el('div', { class: 'thread', id: 'thread', 'aria-live': 'polite', 'data-key': `${snapshot.task || ''}\n${signature(messages, ['role', 'text']) || (snapshot.project ? 'empty-project' : 'empty')}` },
-      messages.length ? messages.map(message => el('article', { class: `bubble ${message.role}` }, message.text)) : el('p', { class: 'empty' }, emptyCopy(snapshot))),
+      messages.length ? messages.map(message => el('article', { class: `bubble ${message.role}` }, message.role === 'error' ? uiMessage(message.text) : message.text)) : el('p', { class: 'empty' }, emptyCopy(snapshot))),
     el('div', { class: 'stack', id: 'approvals', hidden: pending.length ? null : true, 'data-key': signature(pending, ['id', 'title', 'detail', 'source']) }, pending.map(item => el('section', { class: 'approval', 'aria-label': 'Needs your approval' },
       el('p', { class: 'eyebrow' }, item.source === 'computer' ? 'NEEDS YOU · ON THE COMPUTER' : 'NEEDS YOU'),
       el('h2', null, item.title),
@@ -251,7 +251,7 @@ function chat(snapshot) {
         el('button', { class: 'primary', type: 'button', onclick: () => act('/api/approval', { id: item.id, behavior: 'allow' }) }, 'Allow'),
         el('button', { type: 'button', onclick: () => act('/api/approval', { id: item.id, behavior: 'deny' }) }, 'Deny'),
         el('button', { class: 'ghost', type: 'button', onclick: () => act('/api/approval', { id: item.id, behavior: 'allow', remember: true }) }, 'Allow for this task'))))),
-    el('p', { class: 'alert', id: 'banner', role: 'alert' }, state.error),
+    el('p', { class: 'alert', id: 'banner', role: 'alert' }, uiMessage(state.error)),
     el('form', { class: 'composer', 'data-typing': state.draft.trim() && !state.recording ? 'true' : 'false', onsubmit: submitPrompt },
       el('button', { id: 'mic', class: 'float mic', type: 'button', 'aria-label': state.recording ? 'Stop dictation' : 'Dictate', 'aria-pressed': state.recording ? 'true' : 'false', disabled: snapshot.composer === 'computer' || state.sending, onclick: () => void dictate() }, icon('mic')),
       el('textarea', { id: 'composer', rows: '1', maxlength: '8000', placeholder: snapshot.composer === 'computer' ? 'On the computer' : 'Message', 'aria-label': 'Message', disabled: snapshot.composer === 'computer' || !snapshot.project || snapshot.stopPhone || state.sending, oninput: onComposerInput, onkeydown: onComposerKey }, state.draft),
@@ -307,7 +307,7 @@ function taskRow(task, phases) {
       el('input', { value: state.renameDraft, maxlength: '80', 'aria-label': 'Task name', oninput: event => { state.renameDraft = event.target.value; } }),
       el('button', { type: 'submit' }, 'Save'),
       el('button', { type: 'button', onclick: () => { state.renaming = ''; state.error = ''; paint(); } }, 'Cancel'),
-      state.error ? el('p', { class: 'note', id: 'rename-error' }, state.error) : null);
+      state.error ? el('p', { class: 'note', id: 'rename-error' }, uiMessage(state.error)) : null);
   }
   if (state.confirmArchive === task.id) {
     return el('div', { class: 'menu-row confirm' },
@@ -448,7 +448,7 @@ function updateChat(snapshot) {
   const messageKey = `${snapshot.task || ''}\n${signature(messages, ['role', 'text']) || (snapshot.project ? 'empty-project' : 'empty')}`;
   if (thread && thread.dataset.key !== messageKey) {
     thread.dataset.key = messageKey;
-    replaceChildren(thread, messages.length ? messages.map(message => el('article', { class: `bubble ${message.role}` }, message.text)) : [el('p', { class: 'empty' }, emptyCopy(snapshot))]);
+    replaceChildren(thread, messages.length ? messages.map(message => el('article', { class: `bubble ${message.role}` }, message.role === 'error' ? uiMessage(message.text) : message.text)) : [el('p', { class: 'empty' }, emptyCopy(snapshot))]);
     if (stick) thread.scrollTop = thread.scrollHeight;
   }
   const pending = snapshot.pending || [];
@@ -467,7 +467,7 @@ function updateChat(snapshot) {
         el('button', { class: 'ghost', type: 'button', onclick: () => act('/api/approval', { id: item.id, behavior: 'allow', remember: true }) }, 'Allow for this task')))));
   }
   const banner = document.getElementById('banner');
-  if (banner) banner.textContent = state.error;
+  if (banner) banner.textContent = uiMessage(state.error);
   const composer = document.getElementById('composer');
   const send = document.getElementById('send');
   const disabled = snapshot.composer === 'computer' || !snapshot.project || snapshot.stopPhone || state.sending;

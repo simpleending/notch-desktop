@@ -13,7 +13,7 @@ test('Colibri shows memory and fit reasons before download, blocks insufficient 
   const all=node=>[node,...node.children.flat(Infinity).filter(x=>x&&typeof x==='object').flatMap(all)];
   const text=node=>node.children.flat(Infinity).map(x=>typeof x==='object'&&x?text(x):x).join(' ');
   const button=(tree,label)=>all(tree).find(n=>n.type==='button'&&text(n)===label);
-  let tree=render();assert.match(text(tree),/6.0 GB available of 16.0 GB usable RAM/);assert.match(text(tree),/Not enough free RAM/);assert.match(text(tree),/Exact model\/context checks/);
+  let tree=render();assert.match(text(tree),/6.0 GB available of 16.0 GB usable RAM/);assert.match(text(tree),/Not enough free RAM/);assert.match(text(tree),/Available memory is checked again before loading/);
   all(tree).find(n=>n.props.role==='option').props.onClick();tree=render();assert.equal(button(tree,'Download and validate').props.disabled,true);assert.match(text(tree),/Close applications/);assert.deepEqual(calls,[]);
   await button(tree,'Refresh memory').props.onClick();tree=render();assert.deepEqual(calls,['catalog']);assert.match(text(tree),/Meets RAM precheck/);
   all(tree).find(n=>n.props.role==='option').props.onClick();tree=render();assert.equal(button(tree,'Download and validate').props.disabled,false);

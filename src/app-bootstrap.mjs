@@ -14,6 +14,7 @@ import { createAppUpdater } from './app-updater.mjs';
 import { createPhoneCompanion } from './phone-companion.mjs';
 import { createGitHubAuth } from './github-auth.mjs';
 import { createOriginGit } from './origin-git.mjs';
+import { originGitEnv } from '@freesyntax/notch-cli/dist/origin-auth.js';
 import { createRequire } from 'node:module';
 import { managedOllama } from '../vendor/notch-core/desktop-harness.js';
 app.setName('notch');
@@ -43,13 +44,26 @@ app.whenReady().then(() => {
       return result.canceled ? null : result.filePaths[0];
     },
   });
+  let originGitConfigured = false, previousOriginEnv;
+  const refreshOriginGit = signedIn => {
+    if (signedIn === originGitConfigured) return;
+    if (signedIn) {
+      const configured = originGitEnv(process.env);
+      previousOriginEnv = new Map(Object.keys(configured).filter(key => configured[key] !== process.env[key]).map(key => [key, process.env[key]]));
+      Object.assign(process.env, configured);
+    } else if (previousOriginEnv) for (const [key, value] of previousOriginEnv) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    originGitConfigured = signedIn;
+  };
   globalThis.__notchHost.origin = createOriginGit({
     directory: app.getPath('userData'),
+      onAuthChange: refreshOriginGit,
     pickDirectory: async () => {
       const result = await dialog.showOpenDialog({ title: 'Choose a folder for the clone', properties: ['openDirectory', 'createDirectory'] });
       return result.canceled ? null : result.filePaths[0];
     },
   });
+  app.on('will-quit', () => globalThis.__notchHost.origin?.close());
+  void globalThis.__notchHost.origin.status().catch(() => {});
   registerModelIpc(ipcMain,globalThis.__notchHost);
   void globalThis.__notchHost.phone.start();
 });

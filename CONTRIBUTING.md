@@ -27,6 +27,8 @@ On Windows, `build:core` requires Rust with the MSVC toolchain and Visual Studio
 
 The development guide covers preparing the workbench and Windows packaging. Downloaded models, generated installers, extracted workbench files, API keys, private chats, and machine-specific test reports do not belong in a pull request. Use small fixtures for regression tests.
 
+Product errors and status messages must use clear English. Pass dynamic product copy through `uiMessage` from `src/ui-messages.mjs` at the display boundary, and add a reviewed message there for new error codes. Keep raw errors for classification and logging. Never format conversation content, source code, terminal output, tool results, filenames, or document text. The message tests reject unformatted display paths; renderer assembly also checks those paths and verifies that English resource catalogs are complete before packaging.
+
 ## License and attribution
 
 Submit only code and assets you have the right to contribute. Contributions to notch's original code use the repository's [AGPL v3 license](LICENSE). Preserve applicable third-party notices.

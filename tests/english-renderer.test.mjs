@@ -43,3 +43,10 @@ test('English catalogs do not fall back to Chinese reference-preview labels or n
   assert.equal(vm.runInContext('newChatResources.zh.composer.referencePreview.message',context),'已发送消息');
   assert.equal(patchEnglishRenderer(patched),patched);
 });
+
+test('sidebar accessibility labels use an English fallback agent name instead of nav.chat',()=>{
+  const source='const shellResources={zh:{nav:{chats:"任务"}},en:{nav:{chats:"Tasks"}}};function agentName(t){return t("nav.chat");}';
+  const patched=patchEnglishRenderer(source),context=vm.createContext({});vm.runInContext(patched,context);
+  assert.equal(vm.runInContext('agentName(key=>shellResources.en.nav[key.slice(4)]??key)',context),'Chat');
+  assert.equal(patchEnglishRenderer(patched),patched);
+});

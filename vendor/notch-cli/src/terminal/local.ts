@@ -51,6 +51,7 @@ const {spawn}=require('node:child_process'),fs=require('node:fs');
 const p=JSON.parse(process.argv[1]),win=process.platform==='win32';
 if(p.runAsNode===undefined)delete process.env.ELECTRON_RUN_AS_NODE;else process.env.ELECTRON_RUN_AS_NODE=p.runAsNode;
 const child=spawn(win?(process.env.COMSPEC||'cmd.exe'):'/bin/sh',win?['/d','/s','/c','"'+p.command+'"']:['-lc',p.command],{cwd:p.cwd,windowsHide:true,windowsVerbatimArguments:win});
+child.once('spawn',()=>process.send?.('notch-shell-started'));
 child.stdin.end();
 child.stdout.on('data',data=>fs.appendFileSync(p.stdoutFile,data));
 child.stderr.on('data',data=>fs.appendFileSync(p.stderrFile,data));
@@ -59,19 +60,24 @@ child.on('close',code=>{process.exitCode=code??1;});
 `;
       const env={...process.env,...req.env};
       child=spawn(process.execPath,['-e',bootstrap,JSON.stringify({command:req.command,cwd:req.cwd,stdoutFile,stderrFile,runAsNode:env.ELECTRON_RUN_AS_NODE})],{
-        cwd:req.cwd,env:{...env,...(process.versions.electron?{ELECTRON_RUN_AS_NODE:'1'}:{})},windowsHide:true,detached:true,stdio:'ignore',
+        cwd:req.cwd,env:{...env,...(process.versions.electron?{ELECTRON_RUN_AS_NODE:'1'}:{})},windowsHide:true,detached:true,stdio:['ignore','ignore','ignore','ipc'],
       });
       req.signal?.addEventListener('abort',abort,{once:true});
       if(req.signal?.aborted)abort();
       const early=await new Promise<number|null|undefined>((resolve,reject)=>{
-        child!.once('error',reject);child!.once('exit',code=>resolve(code));
-        child!.once('spawn',()=>setTimeout(()=>resolve(undefined),250));
+        let grace: ReturnType<typeof setTimeout> | undefined;
+        const deadline=setTimeout(()=>{stopTree(child!);finish(new Error('The command did not start in time. Try again.'));},req.timeoutMs??DEFAULT_TIMEOUT_MS);
+        const finish=(error?:Error,code?:number|null)=>{clearTimeout(deadline);clearTimeout(grace);child!.removeListener('message',ready);error?reject(error):resolve(code);};
+        const ready=(message:unknown)=>{if(message==='notch-shell-started')grace=setTimeout(()=>finish(),250);};
+        child!.once('error',error=>finish(error));child!.once('exit',code=>finish(undefined,code));
+        // Begin the grace period only after the supervisor has actually launched the shell.
+        child!.on('message',ready);
       });
       req.signal?.throwIfAborted();
       child.unref();
       if(early!==undefined)return {exitCode:early,stdout:(await fs.readFile(stdoutFile,'utf8')).slice(0,DEFAULT_MAX_OUTPUT),stderr:(await fs.readFile(stderrFile,'utf8')).slice(0,DEFAULT_MAX_OUTPUT),durationMs:Date.now()-started};
       return {exitCode:0,stdout:'',stderr:'',durationMs:Date.now()-started,diagnostics:{background:true,pid:child.pid,stdoutFile,stderrFile}};
-    }finally{req.signal?.removeEventListener('abort',abort);}
+    }finally{req.signal?.removeEventListener('abort',abort);if(child?.connected)child.disconnect();}
   }
 
   run(req: TerminalRunRequest): Promise<TerminalRunResult> {

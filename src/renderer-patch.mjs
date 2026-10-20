@@ -1,6 +1,7 @@
 import { readFile, writeFile, readdir, cp, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { patchFunction, patchClassMethod } from './bundle-patch.mjs';
+import { verifyProductMessages } from './ui-message-verification.mjs';
 import { patchWorkbenchRenderer, installWorkbenchAssets } from './workbench-patch.mjs';
 import { patchModelPreload } from './model-ipc.mjs';
 
@@ -67,6 +68,7 @@ export async function installSetupRenderer(application, root) {
   }
   await writeFile(htmlFile, html);
   await installWorkbenchAssets(application, root);
+  await verifyProductMessages(application);
   for (const name of await readdir(assets)) {
     if (/^onboarding(?:Opening|Typing|Send|FinalSend)-[^/]+\.wav$/.test(name)) await unlink(path.join(assets, name));
   }
