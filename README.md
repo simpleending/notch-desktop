@@ -33,6 +33,8 @@ Open **Settings → Appearance → GitHub** to install GitHub CLI and sign in th
 
 Appearance has shortcuts to GitHub, updates, web research, phone access and reading preferences. Model lists support arrows, Page Up/Down and Home/End; the search field keeps its normal text-editing shortcuts. Downloads show their requirements before you confirm, and **Back to models** restores focus to your previous choice.
 
+The native **Commit or push** dialog keeps Git errors visible so you can resolve them and retry. If the commit succeeds but its push is rejected, the dialog offers **Push** again and preserves the local commit.
+
 `GH_TOKEN` takes precedence over `GITHUB_TOKEN`, and both override saved GitHub CLI credentials. Settings shows the effective account. Update or remove an environment token before browser sign-in; use **Sign in with another account** to change a saved account. GitHub CLI uses system credential storage when available and can fall back to its configuration file when secure storage is unavailable.
 
 For an existing Git project, `git remote -v` shows its remotes. Connect a missing destination with `git remote add origin <repository-url>`. Other Git hosts use your system Git credentials or SSH keys. Ask notch to commit and push to review the destination and files before publishing; sensitive file paths and renames stay excluded. A push rejection leaves the commit local so you can resolve authentication, permissions or remote changes and retry.

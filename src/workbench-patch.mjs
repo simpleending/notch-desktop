@@ -6,12 +6,14 @@ import { parse, tokenizer } from 'acorn';
 import { patchLocalOnlyRenderer } from './local-only-patch.mjs';
 import { patchEnglishRenderer } from './english-renderer-patch.mjs';
 import { patchWorkingStatus } from './working-status-patch.mjs';
+import { patchGitPublishDialog } from './git-publish-patch.mjs';
 
 const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
 const brandCardUrl = 'data:image/svg+xml;base64,' + readFileSync(new URL('../assets/notch-brand-card.svg',import.meta.url)).toString('base64');
 const symbolUrl = 'data:image/svg+xml;base64,' + Buffer.from(symbolMarkup).toString('base64');
 export const legacyBrandAsset = /^(?:duck|Qoduck|userCard|voice_|activeDays\d+Sticker|(?:automationFirstCreate|desktopPetFirstUse|forkFirstUse|goalFirstUse|mobileMessageFirstReceive|snakeFirstPlay|voiceFirstUse)Sticker|notch(?:Anniversary|Pioneer|-(?:loading-line|metal|mobile-download-visual))|profileStickerSparseState|quickNote(?:AddButton|EmptyState|OnboardingFirstNote|TitleQuick)|onboardingWallpaper|parchmentDoodle|(?:bird|crocodile|dog|gorilla)-|planAgentAvatar|agent(?:-team)?-creation-figure|Login_poster|update-notification-card|feedbackWatermark|(?:failed|idle|jumping|look|review|running|waiting|waving|glass)(?:-|_))/;
 export function patchSecondaryArtwork(source) {
+  source = patchGitPublishDialog(source);
   source = patchWorkingStatus(source);
   source = source.replace('backgroundImage:`url(${keyboardBackgroundSrc})`', 'backgroundImage:"linear-gradient(135deg,var(--notch-panel),var(--notch-accent-fill))"')
     .replaceAll('No task data yet :)', 'No tasks yet.')
