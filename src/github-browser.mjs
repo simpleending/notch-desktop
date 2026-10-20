@@ -1,4 +1,5 @@
 import { createGitHubSettings } from './github-settings-view.mjs';
+import { createOriginSettings } from './origin-settings-view.mjs';
 
 export const GITHUB_BROWSER_EVENT = 'notch:open-github';
 export function openGitHubBrowser() {
@@ -6,7 +7,7 @@ export function openGitHubBrowser() {
 }
 
 export function createGitHubBrowser(React, useTheme) {
-  const h = React.createElement, GitHubSettings = createGitHubSettings(React);
+  const h = React.createElement, GitHubSettings = createGitHubSettings(React), OriginSettings = createOriginSettings(React);
   function Entry({ variant = 'welcome', className = '' } = {}) {
     const { resolvedTheme } = useTheme();
     return h('button', { type: 'button', className: `notch-github-entry notch-github-entry-${variant} ${className}`,
@@ -17,6 +18,8 @@ export function createGitHubBrowser(React, useTheme) {
   }
   function Browser({ projects = [], onOpenProject }) {
     const [busy, setBusy] = React.useState(false), [error, setError] = React.useState('');
+    const [provider, setProvider] = React.useState('github');
+    const { resolvedTheme } = useTheme();
     const open = async directory => {
       if (busy) return;
       setBusy(true); setError('');
@@ -36,7 +39,12 @@ export function createGitHubBrowser(React, useTheme) {
           h('strong', null, project.name), h('small', null, project.path))))) :
           h('p', null, 'Already cloned a repository? Choose its folder to open it here.'),
         error ? h('p', { role: 'alert' }, error) : null),
-      h(GitHubSettings, { onOpenProject }));
+      h('div', { className: 'notch-repository-providers', role: 'group', 'aria-label': 'Repository service' },
+        h('button', { type: 'button', 'aria-pressed': provider === 'github', onClick: () => setProvider('github') },
+          h('img', { src: new URL(`./github/github-mark-${resolvedTheme?.endsWith('-dark') ? 'white' : 'black'}.svg`, import.meta.url).href, width: 16, height: 16, alt: '' }), 'GitHub'),
+        h('button', { type: 'button', 'aria-pressed': provider === 'origin', onClick: () => setProvider('origin') },
+          h('img', { src: new URL(`./origin/origin-repo-mark-${resolvedTheme?.endsWith('-dark') ? 'dark' : 'light'}.svg`, import.meta.url).href, width: 18, height: 18, alt: '' }), 'Origin')),
+      h(provider === 'origin' ? OriginSettings : GitHubSettings, { onOpenProject, localProjects: projects }));
   }
   return { Entry, Browser };
 }

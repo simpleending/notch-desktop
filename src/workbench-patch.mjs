@@ -161,7 +161,7 @@ function notchGitHubBrowserHost(){
   if(!open)return null;
   const projects=state.workspaces.filter(project=>!project.archived&&!isRemoteWorkspace(project)&&project.rootPaths?.[0]).map(project=>({id:project.workspaceId,name:project.name,path:project.rootPaths[0]}));
   const onOpenProject=async directory=>{await openClonedProject(directory,localWorkspaceService,navigation);setOpen(false)};
-  return reactExports.createElement(ContentDialog,{open,onClose:()=>setOpen(false),title:"GitHub repositories",description:"Clone from GitHub or open a project already on this device.",closeLabel:"Close repository browser",maxWidth:840,className:"notch-repository-dialog",children:reactExports.createElement(reactExports.Fragment,null,reactExports.createElement(notchRepositoryBrowser,{projects,onOpenProject}),error?reactExports.createElement("p",{role:"alert"},error):null)});
+  return reactExports.createElement(ContentDialog,{open,onClose:()=>setOpen(false),title:"Repositories",description:"Clone from GitHub or Cursor Origin, or open a project on this device.",closeLabel:"Close repository browser",maxWidth:840,className:"notch-repository-dialog",children:reactExports.createElement(reactExports.Fragment,null,reactExports.createElement(notchRepositoryBrowser,{projects,onOpenProject}),error?reactExports.createElement("p",{role:"alert"},error):null)});
 }`;
 }
 
@@ -201,7 +201,7 @@ export function patchThemeBroadcast(source) {
     return replaceOnce(body,'const m1=reactExports.useMemo(',effect+'const m1=reactExports.useMemo(');
   });
 }
-const gitHubAppearance = 'function AppearanceSettings(){const preferences=useWorkbenchPreferences(),{i18n}=useTranslation(),{localWorkspaceService}=useServices(),navigation=useNavigation();const onOpenProject=path=>openClonedProject(path,localWorkspaceService,navigation);return reactExports.createElement(NotchAppearance,{preferences,language:resolveInterfaceLanguage(i18n.resolvedLanguage??i18n.language),setLanguage:setInterfaceLanguage,onOpenProject});}';
+const gitHubAppearance = 'function AppearanceSettings(){const preferences=useWorkbenchPreferences(),{i18n}=useTranslation(),{localWorkspaceService}=useServices(),navigation=useNavigation(),state=useObservableValue(localWorkspaceService.stateObs);const localProjects=state.workspaces.filter(project=>!project.archived&&!isRemoteWorkspace(project)&&project.rootPaths?.[0]).map(project=>({path:project.rootPaths[0]}));const onOpenProject=path=>openClonedProject(path,localWorkspaceService,navigation);return reactExports.createElement(NotchAppearance,{preferences,language:resolveInterfaceLanguage(i18n.resolvedLanguage??i18n.language),setLanguage:setInterfaceLanguage,onOpenProject,localProjects});}';
 
 export function patchWorkbenchRenderer(source) {
   source = source.replaceAll('workbenchClient.openExternalUrl("https://freesyntax.dev")', 'workbenchClient.openExternalUrl("https://github.com/simpleending/notch-desktop")');
@@ -301,10 +301,11 @@ export async function verifyWorkbenchImports(assets, checkExports = true) {
 
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
   await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root,'assets/github'),path.join(assets,'github'),{recursive:true});
+  await cp(path.join(root,'assets/origin'),path.join(assets,'origin'),{recursive:true});
   await cp(path.join(root, 'assets/fonts'), path.join(assets, 'fonts'), { recursive: true });
   await cp(path.join(root, 'assets/notices'), path.join(assets, 'notices'), { recursive: true });
   await cp(path.join(root, 'assets/notch-symbol.png'), path.join(assets, 'notch-symbol.png'));

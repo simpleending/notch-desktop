@@ -22,6 +22,8 @@ Electron and Chromium notices ship with the Windows application. Native librarie
 
 ## Optional Colibri runtime
 
+The Origin repository icons in `assets/origin` are the unmodified light and dark SVG marks served by [Cursor's official Origin documentation](https://cursor.com/docs/origin). Origin and Cursor are their owners' trademarks. These marks identify the optional provider; notch is not affiliated with Cursor.
+
 Experimental model setup downloads the unmodified [Colibri 2.0.0 release](https://github.com/JustVugg/colibri/releases/tag/v2.0.0), licensed under Apache-2.0, into the user's isolated notch runtime directory. Its included LICENSE and notices are retained. Engine binaries and model weights are separate downloads; model licenses apply separately.
 
 ## Optional local voice runtime

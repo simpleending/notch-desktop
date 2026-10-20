@@ -11,6 +11,18 @@ test('pasted GitHub repository URLs normalize without accepting other hosts or t
   for (const value of ['http://github.com/owner/repo', 'https://github.com.evil.example/owner/repo', 'https://secret@github.com/owner/repo', 'https://github.com:444/owner/repo', 'ssh://other@github.com/owner/repo', 'ssh://git:secret@github.com/owner/repo', 'ssh://git@github.com:2222/owner/repo', 'ssh://git@evil.example/owner/repo', 'owner/..', 'owner/repo/tree/main', null]) assert.equal(githubRepository(value), null);
 });
 
+test('overlapping clone requests cannot open two destination pickers', async () => {
+  let selected, pickerEntered;
+  const entered = new Promise(resolve => { pickerEntered = resolve; });
+  const auth = createGitHubAuth({ env: {}, platform: 'linux', exists: async () => true,
+    run: async (file, args) => ({ stdout: file === 'which' ? '/usr/bin/gh' : JSON.stringify({ hosts: { 'github.com': [{ active: true, state: 'success', login: 'user' }] } }) }),
+    pickDirectory: () => { pickerEntered(); return new Promise(resolve => { selected = resolve; }); },
+  });
+  const first = auth.clone('team/project'); await entered;
+  await assert.rejects(auth.clone('team/project'), /already running/);
+  selected(null); await first;
+});
+
 test('clone URL preserves explicit SSH and HTTPS and applies the chosen protocol to repository names', () => {
   assert.equal(githubCloneUrl('owner/repo'), 'https://github.com/owner/repo.git');
   assert.equal(githubCloneUrl('owner/repo', 'ssh'), 'git@github.com:owner/repo.git');

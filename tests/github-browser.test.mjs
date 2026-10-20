@@ -70,7 +70,7 @@ test('the repository host preserves the current route on open/close and hands pr
   assert.equal(render(), null);
   const cleanup = effect(); events.dispatchEvent(new Event(GITHUB_BROWSER_EVENT));
   let dialog = render();
-  assert.equal(dialog.props.title, 'GitHub repositories');
+  assert.equal(dialog.props.title, 'Repositories');
   assert.deepEqual(all(dialog).find(node => node.type === 'browser').props.projects, [{ id: 'local', name: 'Clone', path: '/local' }]);
   assert.deepEqual(opened, []);
   dialog.props.onClose(); assert.equal(render(), null);

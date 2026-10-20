@@ -13,6 +13,7 @@ import { createLocalLiveVoice } from './local-live-voice.mjs';
 import { createAppUpdater } from './app-updater.mjs';
 import { createPhoneCompanion } from './phone-companion.mjs';
 import { createGitHubAuth } from './github-auth.mjs';
+import { createOriginGit } from './origin-git.mjs';
 import { createRequire } from 'node:module';
 import { managedOllama } from '../vendor/notch-core/desktop-harness.js';
 app.setName('notch');
@@ -35,9 +36,17 @@ app.whenReady().then(() => {
   globalThis.__notchHost.modelManager = createModelManager(app.getPath('userData'), { safeStorage });
   globalThis.__notchHost.webResearch = createWebResearch(app.getPath('userData'), { safeStorage, signal: globalThis.__notchDiscovery.signal });
   globalThis.__notchHost.github = createGitHubAuth({
+    directory: app.getPath('userData'),
     openExternal: url => shell.openExternal(url),
     pickDirectory: async purpose => {
       const result = await dialog.showOpenDialog({ title: purpose === 'local' ? 'Open a local repository' : 'Choose a folder for the clone', properties: purpose === 'local' ? ['openDirectory'] : ['openDirectory', 'createDirectory'] });
+      return result.canceled ? null : result.filePaths[0];
+    },
+  });
+  globalThis.__notchHost.origin = createOriginGit({
+    directory: app.getPath('userData'),
+    pickDirectory: async () => {
+      const result = await dialog.showOpenDialog({ title: 'Choose a folder for the clone', properties: ['openDirectory', 'createDirectory'] });
       return result.canceled ? null : result.filePaths[0];
     },
   });

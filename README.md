@@ -33,6 +33,10 @@ Choose **Clone from GitHub** on the welcome screen or **GitHub** in the sidebar 
 
 GitHub setup is also available in **Settings → Appearance → GitHub**. Install GitHub CLI and sign in through the browser; the sign-in is shared with the CLI. Once signed in, the repository browser loads your personal, organization and collaborator repositories. Scroll the list, filter loaded repositories by name or description, narrow it by owner, or use **Load more repositories** to include older repositories. Choose **Clone**, then **Open project** to work in that folder.
 
+Repositories already known on this device show **Open** instead of **Clone**, including after restarting the IDE. HTTPS and SSH addresses match the same GitHub repository. The IDE checks the real Git origin and folder availability before opening and independently prevents duplicate clone requests. Use **Open local repository…** once for a clone the IDE has never seen.
+
+The repository browser's **Origin** selector supports Cursor Origin clone URLs, local Open, and official setup/browsing links with theme-aware marks. Origin repository listing uses an installed, signed-in Origin CLI on macOS/Linux. On Windows, use **Browse on Cursor**, paste the clone URL, and configure native Windows Git credentials or SSH; Origin's documented WSL CLI credentials are separate. See the [repository browser guide](docs/repository-browser.md) for persistence, authentication and validation limits.
+
 Choose **HTTPS** or **SSH** as the clone protocol, or paste a GitHub repository URL to keep its explicit protocol. SSH clones, pulls and pushes use your device’s SSH keys, agent and Git configuration. Browser sign-in authenticates GitHub API access and HTTPS Git; SSH requires a key authorized on GitHub and a verified GitHub host key.
 
 Appearance has shortcuts to GitHub, updates, web research, phone access and reading preferences. Model lists support arrows, Page Up/Down and Home/End; the search field keeps its normal text-editing shortcuts. Downloads show their requirements before you confirm, and **Back to models** restores focus to your previous choice.

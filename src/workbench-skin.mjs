@@ -69,7 +69,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
         h('button', { key: label, type: 'button', disabled, onClick, 'aria-label': label }, label,
           h('span', { 'aria-hidden': true }, '→')))));
   }
-  function Appearance({ preferences, language, setLanguage, onOpenProject }) {
+  function Appearance({ preferences, language, setLanguage, onOpenProject, localProjects }) {
     const { themeMode, setThemeMode } = useTheme();
     const [workspace, setWorkspace] = React.useState('shared');
     const [workspaceError, setWorkspaceError] = React.useState('');
@@ -94,7 +94,7 @@ export function createNotchWorkbench(React, useTheme, primitives = {}) {
         h('select', { 'aria-label':'Task workspace', value:workspace, disabled:savingWorkspace, onChange:event=>changeWorkspace(event.target.value) }, h('option',{value:'shared'},'Project folder'),h('option',{value:'isolated'},'Isolated worktrees'))),
       workspaceError ? h('p',{role:'alert'},workspaceError) : null,
       h(PhoneSettings),
-      h(GitHubSettings, { onOpenProject }),
+      h(GitHubSettings, { onOpenProject, localProjects }),
       h(UpdateSettings),
       h(WebSettings),
       h('fieldset', { className: 'notch-appearance-modes' }, h('legend', { id: 'notch-reading-title', tabIndex: -1 }, 'Appearance'),

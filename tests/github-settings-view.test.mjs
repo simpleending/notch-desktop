@@ -89,3 +89,23 @@ test('repository browser filters owners and descriptions, names clone actions, a
     assert.ok(view.button(view.render(), 'Load more repositories'));
   } finally { view.close(); }
 });
+
+test('remembered GitHub rows and pasted URLs open their verified clone instead of cloning again', async () => {
+  const opened = [], calls = [], initial = { account: 'user', installed: true, phase: 'ready', repos: [{ nameWithOwner: 'Team/Repo' }, { nameWithOwner: 'Team/New' }], localClones: { 'team/repo': 'C:\\projects\\repo' } };
+  const view = harness(initial, async (...args) => { calls.push(args); return { ...initial, clonedPath: initial.localClones['team/repo'] }; });
+  const props = { onOpenProject: async directory => opened.push(directory) };
+  try {
+    const nodes = () => view.all(view.render(props));
+    assert.equal(nodes().find(node => node.props['aria-label'] === 'Open Team/Repo').children[0], 'Open');
+    assert.ok(nodes().find(node => node.props['aria-label'] === 'Clone Team/New'));
+    await nodes().find(node => node.props['aria-label'] === 'Open Team/Repo').props.onClick();
+    assert.deepEqual(calls, [['openRepo', 'Team/Repo']]);
+    assert.deepEqual(opened, ['C:\\projects\\repo']);
+    nodes().find(node => node.type === 'input').props.onChange({ target: { value: 'git@github.com:TEAM/REPO.git' } });
+    assert.ok(view.button(view.render(props), 'Open repository'));
+    nodes().find(node => node.type === 'form').props.onSubmit({ preventDefault() {} });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls.at(-1)[0], 'openRepo');
+    assert.equal(calls.some(([action]) => action === 'clone'), false);
+  } finally { view.close(); }
+});

@@ -1,6 +1,8 @@
 import { isPrimaryModelSender } from './model-policy.mjs';
 import { createGitHubAuth } from './github-auth.mjs';
 import { githubRepository } from './github-repository.mjs';
+import { originRepository } from './origin-repository.mjs';
+import path from 'node:path';
 import { detectLocalHardware } from '../vendor/notch-core/desktop-harness.js';
 
 export function registerModelIpc(ipcMain, host) {
@@ -50,11 +52,20 @@ export function registerModelIpc(ipcMain, host) {
     cancel: () => manager.cancelInstall(),
     status: () => manager.status(),
     queue: () => host.getQueueStatus(),
+    origin: (action, value) => {
+      if (!['status', 'namespaces', 'repos', 'remember', 'openRepo', 'clone'].includes(action)) throw Error('Choose a supported Origin action.');
+      if (['clone', 'openRepo'].includes(action) && !originRepository(value)) throw Error('Choose an Origin repository.');
+      if (action === 'remember' && (!Array.isArray(value) || value.length > 1000 || value.some(directory => typeof directory !== 'string' || directory.length > 4096 || directory.includes('\0') || !path.isAbsolute(directory)))) throw Error('Choose valid local project folders.');
+      if (action === 'repos' && (!value || typeof value.owner !== 'string' || !/^[A-Za-z0-9_.-]+$/.test(value.owner) || ['.', '..'].includes(value.owner) || value.owner.length > 256 || value.pageToken !== undefined && (typeof value.pageToken !== 'string' || value.pageToken.length > 4096))) throw Error('Choose a valid Origin namespace and page.');
+      if (['status', 'namespaces'].includes(action) && value !== undefined) throw Error('Invalid Origin request.');
+      return host.origin[action](value);
+    },
     github: (action, value) => {
-      if (!['status', 'install', 'login', 'cancel', 'repos', 'clone', 'pickLocal'].includes(action)) throw new Error('Choose a supported GitHub action.');
-      if (action === 'clone' && !githubRepository(value)) throw new Error('Choose a repository from the list or enter a GitHub repository URL.');
+      if (!['status', 'install', 'login', 'cancel', 'repos', 'clone', 'pickLocal', 'remember', 'openRepo'].includes(action)) throw new Error('Choose a supported GitHub action.');
+      if (['clone', 'openRepo'].includes(action) && !githubRepository(value)) throw new Error('Choose a repository from the list or enter a GitHub repository URL.');
+      if (action === 'remember' && (!Array.isArray(value) || value.length > 1000 || value.some(directory => typeof directory !== 'string' || directory.length > 4096 || directory.includes('\0') || !path.isAbsolute(directory)))) throw new Error('Choose valid local project folders.');
       if (action === 'repos' && value !== undefined && (!Number.isSafeInteger(value) || value < 1)) throw new Error('Choose a valid repository page.');
-      if (!['clone', 'repos'].includes(action) && value !== undefined) throw new Error('Invalid GitHub request.');
+      if (!['clone', 'repos', 'remember', 'openRepo'].includes(action) && value !== undefined) throw new Error('Invalid GitHub request.');
       return host.github[action](value);
     },
   };
@@ -86,6 +97,7 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
   webInstall:()=>ipcRenderer.invoke('notch-models:webInstall'),
   phone:(action,value)=>ipcRenderer.invoke('notch-models:phone',action,value),
   github:(action,value)=>ipcRenderer.invoke('notch-models:github',action,value),
+  origin:(action,value)=>ipcRenderer.invoke('notch-models:origin',action,value),
   workspace:mode=>ipcRenderer.invoke('notch-models:workspace',mode)
   ,voice:()=>ipcRenderer.invoke('notch-models:voice'),voiceInstall:()=>ipcRenderer.invoke('notch-models:voiceInstall'),voiceCancel:()=>ipcRenderer.invoke('notch-models:voiceCancel'),voiceModels:(action,input)=>ipcRenderer.invoke('notch-models:voiceModels',action,input)
  }));
@@ -108,6 +120,7 @@ export function patchModelPreload(source) {
   if(!source.includes("web:patch=>"))source=source.replace("workspace:mode=>", "web:patch=>ipcRenderer.invoke('notch-models:web',patch),\n  webInstall:()=>ipcRenderer.invoke('notch-models:webInstall'),\n  workspace:mode=>");
   if(!source.includes("phone:(action,value)=>"))source=source.replace("webInstall:()=>ipcRenderer.invoke('notch-models:webInstall')","webInstall:()=>ipcRenderer.invoke('notch-models:webInstall'),\n  phone:(action,value)=>ipcRenderer.invoke('notch-models:phone',action,value)");
   if(!source.includes("github:(action,value)=>"))source=source.replace("phone:(action,value)=>ipcRenderer.invoke('notch-models:phone',action,value)","phone:(action,value)=>ipcRenderer.invoke('notch-models:phone',action,value),\n  github:(action,value)=>ipcRenderer.invoke('notch-models:github',action,value)");
+  if(!source.includes("origin:(action,value)=>"))source=source.replace("github:(action,value)=>ipcRenderer.invoke('notch-models:github',action,value)","github:(action,value)=>ipcRenderer.invoke('notch-models:github',action,value),\n  origin:(action,value)=>ipcRenderer.invoke('notch-models:origin',action,value)");
   if(!source.includes('voiceInstall:()=>'))source=source.replace("workspace:mode=>", "voice:()=>ipcRenderer.invoke('notch-models:voice'),voiceInstall:()=>ipcRenderer.invoke('notch-models:voiceInstall'),voiceCancel:()=>ipcRenderer.invoke('notch-models:voiceCancel'),\n  workspace:mode=>");
   if(!source.includes('voiceModels:(action,input)=>')){
     if(source.split('voiceInstall:()=>').length!==2)throw new Error('The speech model bridge differs from the expected version.');

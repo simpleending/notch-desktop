@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { gitProcessEnv } from '../vendor/notch-core/desktop-harness.js';
 import { githubRepository, githubCloneUrl } from './github-repository.mjs';
+import { createLocalRepositories } from './local-repositories.mjs';
 
 export const DEVICE_URL = 'https://github.com/login/device';
 export const REPO_NAME = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
@@ -123,12 +124,14 @@ function emptyState(extra = {}) {
 
 export function createGitHubAuth({
   platform = process.platform, env = process.env, run = defaultRun, spawnProcess = spawn,
-  openExternal = async () => {}, pickDirectory = async () => null, exists, fetchApi = fetch,
+  openExternal = async () => {}, pickDirectory = async () => null, exists, fetchApi = fetch, directory,
 } = {}) {
   let phase = 'ready', code = null, url = DEVICE_URL, message = '', loginChild = null;
   let repos = null, repoPage = 0, hasMore = false, clonedPath = null;
   let cached = null, checkedAt = 0, checking = null, loginGeneration = 0;
   const childEnv = () => gitHubChildEnv(env);
+  const clones = createLocalRepositories(directory, { run, env: childEnv, platform });
+  let cloneBusy = false;
   const environmentToken = () => !!(env.GH_TOKEN || env.GITHUB_TOKEN);
 
   async function status(force = false) {
@@ -157,13 +160,26 @@ export function createGitHubAuth({
     const summary = environmentToken()
       ? account ? `Signed in as ${account} using ${source}.` : `${source} is configured but GitHub could not validate it. Update or remove it to use browser sign-in.`
       : account ? `Signed in as ${account}.` : installed ? 'Sign in with GitHub to clone and push, or sign in again to repair authentication.' : 'Install GitHub CLI, then sign in with the browser.';
-    return emptyState({ installed, account, phase, code, url, message: message || summary, environmentToken: environmentToken(), repos, repoPage, hasMore, clonedPath });
+    return emptyState({ installed, account, phase, code, url, message: message || summary, environmentToken: environmentToken(), repos, repoPage, hasMore, clonedPath, localClones: await clones.snapshot(force) });
   }
 
   return {
     status,
     async pickLocal() {
-      return pickDirectory('local');
+      const selected = await pickDirectory('local');
+      if (selected) await clones.remember([selected]);
+      return selected;
+    },
+    async remember(paths) {
+      await clones.remember(paths);
+      return status();
+    },
+    async openRepo(repo) {
+      const name = githubRepository(repo)?.toLowerCase();
+      const localPath = name && (await clones.snapshot(true))[name];
+      if (!localPath) throw Error('The local clone is no longer available. Refresh repositories or open its current folder.');
+      clonedPath = localPath; message = `Opening ${githubRepository(repo)} from ${localPath}.`;
+      return status();
     },
     async install(fromLogin = false) {
       if (phase !== 'ready' && !(fromLogin && phase === 'waiting')) throw new Error('GitHub setup is already running.');
@@ -256,19 +272,25 @@ export function createGitHubAuth({
       const cloneUrl = githubCloneUrl(repo);
       repo = githubRepository(repo);
       if (!repo || !cloneUrl) throw new Error('Choose a repository from the list or enter owner/repo or an HTTPS or SSH GitHub repository URL.');
-      if (phase !== 'ready') throw new Error('GitHub setup is already running.');
-      const current = await status(true);
-      if (!current.account) throw new Error(current.message);
-      const directory = await pickDirectory();
-      if (!directory) return current;
-      const gh = await locateGitHubCli({ platform, env: childEnv(), run, exists });
-      const destination = path.join(directory, repo.split('/')[1]);
-      phase = 'cloning'; message = `Cloning ${repo}…`;
-      try { await run(gh || 'git', gh ? ['repo', 'clone', cloneUrl, destination] : ['clone', cloneUrl, destination], { timeout: 600_000, env: gitProcessEnv(childEnv()) }); }
-      catch (error) { message = ''; throw new Error(redactGitHubOutput(error.stderr || error.message) || 'Clone failed.'); }
-      finally { phase = 'ready'; }
-      clonedPath = destination; message = `Cloned ${repo} to ${destination}.`;
-      return status();
+      if (phase !== 'ready' || cloneBusy) throw new Error('GitHub setup is already running.');
+      cloneBusy = true;
+      try {
+        const localPath = (await clones.snapshot(true))[repo.toLowerCase()];
+        if (localPath) { clonedPath = localPath; message = `Already cloned ${repo} to ${localPath}.`; return status(); }
+        const current = await status(true);
+        if (!current.account) throw new Error(current.message);
+        const directory = await pickDirectory();
+        if (!directory) return current;
+        const gh = await locateGitHubCli({ platform, env: childEnv(), run, exists });
+        const destination = path.join(directory, repo.split('/')[1]);
+        phase = 'cloning'; message = `Cloning ${repo}…`;
+        try { await run(gh || 'git', gh ? ['repo', 'clone', cloneUrl, destination] : ['clone', cloneUrl, destination], { timeout: 600_000, env: gitProcessEnv(childEnv()) }); }
+        catch (error) { message = ''; throw new Error(redactGitHubOutput(error.stderr || error.message) || 'Clone failed.'); }
+        finally { phase = 'ready'; }
+        clonedPath = destination;
+        await clones.remember([destination]); message = `Cloned ${repo} to ${destination}.`;
+        return status();
+      } finally { cloneBusy = false; }
     },
   };
 }
