@@ -190,6 +190,8 @@ export function resolveModel(config: ModelConfig): LanguageModel {
  *        `/models` would burn rate limit on every `/status` call).
  */
 export async function validateConfig(config: ModelConfig): Promise<{ ok: boolean; error?: string }> {
+  if (config.byokProvider === 'colibri' || (isByokRef(config.model) && parseByokRef(config.model).provider === 'colibri')) config.colibriAutoContext ??= config.contextWindow === undefined;
+  if (config.byokProvider === 'strata' || (isByokRef(config.model) && parseByokRef(config.model).provider === 'strata')) config.strataAutoContext ??= config.contextWindow === undefined;
   try { assertDirectEndpoint(config.baseUrl ?? process.env.NOTCH_BASE_URL); }
   catch (error) { return {ok:false,error:(error as Error).message}; }
   // BYOK branch.

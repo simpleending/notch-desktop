@@ -24,12 +24,15 @@ export function localContextProfile(bytes, hardware, metadata = {}, mounted = {}
   const cap = nativeKnown ? native : 8192;
   const required = context => weights + (known ? kvBytesPerToken * context : GiB * context / 8192);
   const choices = [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144].filter(context => nativeKnown && context <= cap && required(context) <= budget);
+  // The matching daemon digest proves this allocation already exists. Do not resize a live conversation from cold-load estimates.
+  const activeContext=resident>0 && nativeKnown && Number.isSafeInteger(mounted.context_length) && mounted.context_length>=2048 && mounted.context_length<=cap ? mounted.context_length : undefined;
+  if(activeContext && !choices.includes(activeContext)){choices.push(activeContext);choices.sort((a,b)=>a-b);}
   // Prefer a GPU-resident context; larger RAM/offload choices stay available manually.
   const gpu = hardware.totalVram > 0 || vramBudget > 0;
   const preferredBudget = hardware.appleSilicon || !gpu ? ramBudget : vramBudget;
   const automaticCap = known && (gpu || hardware.appleSilicon) ? 131072 : 8192;
   const automatic = choices.filter(context => context <= automaticCap && required(context) <= preferredBudget).at(-1);
-  return { choices, contextWindow: automatic || (choices.includes(8192) ? 8192 : choices[0] || Math.min(4096, cap)),
+  return { choices, contextWindow: activeContext || automatic || (choices.includes(8192) ? 8192 : choices[0] || Math.min(4096, cap)),
     fits: choices.length > 0 && Array.isArray(metadata.capabilities) && metadata.capabilities.includes('tools'),
     reason: !(Array.isArray(metadata.capabilities) && metadata.capabilities.includes('tools')) ? 'tool support not confirmed' : !nativeKnown ? 'native context limit not confirmed' : choices.length ? 'estimated memory fit' : 'not enough memory available',
     kvBytesPerToken: known ? kvBytesPerToken : null, bytes, nativeContext: cap };

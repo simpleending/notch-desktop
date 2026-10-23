@@ -5,6 +5,7 @@ import {
   colibriAsset,
   colibriCatalog,
   colibriCatalogFit,
+  colibriCompatibility,
   colibriModelEnvironment,
   colibriModels,
   colibriPlan,
@@ -12,10 +13,12 @@ import {
   colibriStatus,
   installColibri,
   prepareColibri,
+  setColibriPreference,
   startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-THL75LRA.js";
+} from "./chunk-TXSZPFVP.js";
+import "./chunk-S2VC66HG.js";
 import "./chunk-OBJXRYDA.js";
 export {
   COLIBRI_DEFAULT_CONTEXT,
@@ -24,6 +27,7 @@ export {
   colibriAsset,
   colibriCatalog,
   colibriCatalogFit,
+  colibriCompatibility,
   colibriModelEnvironment,
   colibriModels,
   colibriPlan,
@@ -31,6 +35,7 @@ export {
   colibriStatus,
   installColibri,
   prepareColibri,
+  setColibriPreference,
   startColibri,
   stopColibri,
   validateColibri

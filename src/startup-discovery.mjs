@@ -1,3 +1,19 @@
+import path from 'node:path';
+import {stat} from 'node:fs/promises';
+
+/** Resolve Windows PATH entries directly so startup never needs a where.exe console. */
+export async function findWindowsExecutable(command,{env=process.env,cwd=process.cwd(),exists=async file=>(await stat(file)).isFile()}={}){
+  if(typeof command!=='string'||!command||/[\0*?]/.test(command))return null;
+  const value=name=>Object.entries(env).find(([key])=>key.toLowerCase()===name.toLowerCase())?.[1]||'';
+  const extensions=path.win32.extname(command)?['']:(value('PATHEXT')||'.COM;.EXE;.BAT;.CMD').split(';').filter(ext=>/^\.[a-z0-9]+$/i.test(ext));
+  const directories=path.win32.isAbsolute(command)||/[\\/]/.test(command)?['']:[cwd,...value('PATH').split(';').map(part=>part.trim().replace(/^"|"$/g,'')).filter(Boolean)];
+  for(const directory of directories)for(const extension of extensions){
+    const file=path.win32.resolve(cwd,directory,command+extension);
+    try{if(await exists(file))return file;}catch{/* Missing or unreadable PATH entries are skipped. */}
+  }
+  return null;
+}
+
 const optionalLists = new Set([
   'external-application:list', 'chat-model:list', 'chat-composer-model:list',
   'app-plugin:views-list', 'app-plugin:configuration-settings-list', 'app-plugin:mcp-tool-presentations-list',
@@ -37,6 +53,7 @@ export function createStartupDiscovery() {
   const controller = new AbortController();
   const discovery = {
     signal: controller.signal,
+    findExecutable: command=>controller.signal.aborted?Promise.resolve(null):findWindowsExecutable(command),
     isPluginStop,
     stopPluginHost,
     stop() { controller.abort(); },

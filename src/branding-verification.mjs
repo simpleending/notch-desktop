@@ -12,6 +12,7 @@ export async function verifyRendererBranding(application) {
       if(!/\.(?:html|js|mjs|css|json)$/.test(entry.name))continue;
       const text=await fs.readFile(file,'utf8');files++;
       if(/qoder/i.test(text) || /\bQoduck\b|Q\s?达鸭/.test(text))throw new Error(`Original product branding remains in ${path.relative(application,file)}.`);
+      if(/\bElectron\b/.test(text))throw new Error(`Runtime branding remains in ${path.relative(application,file)}.`);
       if(text.includes('function OnboardingOverlaySurface(')) {
         bundles++;
         if(!text.includes('/* notch workbench skin */') || !text.includes('/* notch setup renderer */'))throw new Error('The notch renderer patches are missing.');

@@ -298,6 +298,7 @@ export const BUILTIN_BYOK_PROVIDERS: ByokProvider[] = [
     id: 'colibri', label: 'Colibri (experimental)', baseUrl: 'http://127.0.0.1:11437/v1',
     apiKeyEnv: '', defaultModel: '', fallbackApiKey: 'not-needed',
   },
+  { id: 'strata', label: 'Strata (experimental)', baseUrl: 'http://127.0.0.1:11438/v1', apiKeyEnv: '', defaultModel: '', fallbackApiKey: 'not-needed' },
   {
     id: '__custom__',
     label: 'Custom (user-supplied)',
@@ -564,6 +565,12 @@ export function resolveByokModel(spec: ByokSpec): {
 
   const provider = createOpenAI({
     ...(providerInfo.id === 'ollama' ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) }
+      : providerInfo.id === 'strata' ? { fetch: queuedLocalFetch(async (input, init) => {
+        const { startStrata } = await import('./strata.js');
+        const ready = await startStrata(modelId, spec.contextWindow, init?.signal ?? undefined);
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        return fetch(ready.baseUrl + url.pathname.replace(/^\/v1/, '') + url.search, init);
+      }) }
       : providerInfo.id === 'colibri' ? { fetch: queuedLocalFetch(async (input, init) => {
         const { startColibri } = await import('./colibri.js');
         const ready = await startColibri(modelId, spec.contextWindow, init?.signal ?? undefined);
@@ -627,6 +634,11 @@ export async function validateByokConfig(spec: ByokSpec): Promise<{ ok: boolean;
       if (info.capabilities && !info.capabilities.includes('tools')) {
         return { ok: false, error: 'This Ollama model does not advertise tool calling. Choose a tool-capable model with notch setup.' };
       }
+    } else if (providerInfo.id === 'strata') {
+      const { strataStatus } = await import('./strata.js');
+      const { selected } = await strataStatus();
+      if (!selected || selected.id !== spec.model) return { ok: false, error: 'Install this Strata model in Manage models first.' };
+      return { ok: true, contextWindow: selected.nativeContext, maxOutputTokens: 2048 };
     } else if (providerInfo.id === 'colibri') {
       const { colibriStatus } = await import('./colibri.js');
       const status = await colibriStatus();

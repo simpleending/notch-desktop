@@ -9,6 +9,9 @@ import { rebuildPluginCatalog, verifyPluginCatalog } from '../src/plugin-integri
 import { fileURLToPath } from 'node:url';
 import { patchLocalOnlyMain } from '../src/local-only-patch.mjs';
 import { installLocalFeatures } from '../src/local-feature-bundles.mjs';
+import { installBackgroundProcesses } from '../src/background-process-patch.mjs';
+import { applyWindowsIdentity } from './windows-identity.mjs';
+import { patchWebToolCatalog, patchWebSourceProjection } from '../src/web-tools-patch.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const output = path.resolve(process.argv[2] || 'release/Notch-prototype');
 const marker = JSON.parse(await readFile(path.join(output, 'prototype-build.json'), 'utf8'));
@@ -17,7 +20,7 @@ const installation = process.argv[3]; if (!installation) throw new Error('Provid
 if ((await inspectInstallation(installation)).archiveSha256 !== marker.baseline) throw new Error('The upstream installation changed; inspect it before refreshing.');
 const application = path.join(output, 'build-app');
 const original = extractFile(path.join(path.resolve(installation), 'resources/app.asar'), path.join('out','main','index.js')).toString('utf8');
-const patched = patchWorkbench(original); await writeFile(path.join(application, 'out/main/index.js'), patchLocalOnlyMain(patched.source));
+const patched = patchWorkbench(original); await writeFile(path.join(application, 'out/main/index.js'), patchWebSourceProjection(patchLocalOnlyMain(patchWebToolCatalog(patched.source))));
 const rendererFile = path.join('out', 'renderer', 'assets', 'index-nRmb_3VI.js');
 await writeFile(path.join(application, rendererFile), extractFile(path.join(path.resolve(installation), 'resources/app.asar'), rendererFile));
 async function rebrand(directory) {
@@ -37,6 +40,7 @@ await cp('vendor/notch-core', path.join(application, 'notch/vendor/notch-core'),
 await cp(path.join(root, 'node_modules'), path.join(application, 'notch/node_modules'), { recursive: true,
   filter: source => !/[/\\](?:electron|electron-qa|@electron|typescript|tsup|esbuild|@esbuild)(?:[/\\]|$)/.test(source) });
 await rebrandTree(application);
+await installBackgroundProcesses(application);
 await installSetupRenderer(application, root);
 const productFile = path.join(output, 'resources/product.json');
 const product = JSON.parse(await readFile(productFile, 'utf8'));
@@ -48,6 +52,10 @@ for (const name of ['extensions','dynamic-text','bundled-resources','application
 await installLocalFeatures(path.join(output, 'resources/extensions'));
 await rebuildPluginCatalog(path.join(output, 'resources/extensions'));
 await verifyPluginCatalog(path.join(output, 'resources/extensions'));
+const packageFile = path.join(application, 'package.json'), pkg = JSON.parse(await readFile(packageFile, 'utf8'));
+pkg.productName = 'notch';
+await writeFile(packageFile, JSON.stringify(pkg, null, 2));
+await applyWindowsIdentity(output, pkg.version);
 await createPackageWithOptions(application, path.join(output, 'resources/app.asar'), { unpack: '**/*.{node,dll,exe,so,dylib}', unpackDir: '**/{@ff-labs,ffi-rs,@yuuang}' });
 await writeFile(path.join(output, 'prototype-build.json'), JSON.stringify({ ...marker, methodPatches: patched.changes }, null, 2));
 console.log(JSON.stringify({ output, patchedMethods: patched.changes.length }));

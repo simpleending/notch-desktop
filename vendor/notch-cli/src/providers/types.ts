@@ -67,6 +67,10 @@ export interface ModelConfig {
   baseUrl?: string;
   /** Max context window in tokens (auto-set from model catalog) */
   contextWindow?: number;
+  /** Keep automatic sizing distinct from the effective context calculated for a turn. */
+  colibriAutoContext?: boolean;
+  strataAutoContext?: boolean;
+  /** Fresh capacity reported by the active model's runtime/provider. */
   nativeContextWindow?: number;
   /** Memory-sensitive native Ollama prompt batch size. */
   ollamaBatch?: number;

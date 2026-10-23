@@ -27,7 +27,7 @@ async function stopDaemon(){if(!daemon)return;const current=await processSnapsho
 async function launch(){
  app=await _electron.launch({executablePath:executable,args:[`--user-data-dir=${profile}`],env,timeout:45000});app.on('window',window=>window.on('pageerror',error=>errors.push(error.message)));
 }
-async function chooseHub(){await page.getByRole('button',{name:'Model',exact:true}).click();const tab=page.getByRole('tab',{name:'Hugging Face',exact:true});if(await tab.getAttribute('aria-selected')!=='true')await tab.click();}
+async function chooseHub(){await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();const tab=page.getByRole('tab',{name:'Hugging Face',exact:true});if(await tab.getAttribute('aria-selected')!=='true')await tab.click();}
 async function beginInstall(){const row=page.getByRole('option',{name:`Download ${repo}`,exact:true});await row.waitFor({timeout:60000});await row.click();await page.getByRole('button',{name:'Download model',exact:true}).click();}
 async function installChildren(){return app.evaluate(()=>process._getActiveHandles().filter(handle=>handle.spawnargs?.includes('models')&&handle.spawnargs.includes('install')).map(handle=>({pid:handle.pid,args:handle.spawnargs})));}
 async function closeApp(){const child=app.process(),before=await processSnapshot(),owned=ownedProcessIds(child.pid,before);await app.close();app=null;await waitFor(async()=>{const live=await processSnapshot();return !live.some(row=>owned.has(row.ProcessId)&&before.some(old=>old.ProcessId===row.ProcessId&&old.CreationDate===row.CreationDate));},'IDE or its download child survived shutdown',15000);}
@@ -45,7 +45,7 @@ try{
  await startDaemon();await beginInstall();await jobAt('complete',300000);await page.getByRole('button',{name:'Show installed models',exact:true}).click();
  const option=page.locator(`[role=option][title="ollama/${model}"]`);await option.waitFor({timeout:45000});await option.click({timeout:45000});await page.locator('.notch-model-picker').waitFor({state:'hidden'});checks.retryCompletesAndSelects=true;
  assert.deepEqual((await(await fetch(origin+'/api/ps')).json()).models,[]);checks.installProbeUnloaded=true;assert.deepEqual(await installChildren(),[]);
- await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('combobox',{name:'Context limit'}).selectOption('8192');await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('combobox',{name:'Context limit'}).selectOption('8192');await page.keyboard.press('Escape');
  await page.getByRole('button',{name:'Open project',exact:true}).click();await app.evaluate(({dialog},directory)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[directory]});},workspace);
  await page.getByText('Click to add a readable and editable folder',{exact:true}).click();await page.getByRole('dialog').getByRole('textbox').fill('download verification');await page.getByRole('button',{name:'Create',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
  await app.evaluate(()=>{const host=globalThis.__notchHost,query=host.query.bind(host);globalThis.__downloadChat=[];host.query=request=>{const result=query(request),emit=result.emit.bind(result);result.emit=event=>{if(event.type==='result')globalThis.__downloadChat.push({...event,model:result.model});return emit(event);};return result;};});

@@ -12,7 +12,7 @@ try{
  app=await _electron.launch({executablePath:executable,args:[`--user-data-dir=${profile}`],env,timeout:45000});
  let setup;const until=Date.now()+30000;while(!setup&&Date.now()<until){setup=app.windows().find(window=>window.url().includes('first-launch-onboarding-overlay'));if(!setup)await new Promise(resolve=>setTimeout(resolve,100));}
  assert.ok(setup);await setup.getByRole('button',{name:/^Continue/}).click();const closed=setup.waitForEvent('close');await setup.getByRole('button',{name:/^Open notch/}).click();await closed;page=await app.firstWindow();await page.locator('.notch-welcome').waitFor();
- await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('tab',{name:'Hugging Face',exact:true}).click();
+ await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('tab',{name:'Hugging Face',exact:true}).click();
  const dismiss=page.getByRole('button',{name:'Not now',exact:true});if(await dismiss.count())await dismiss.click();
  await page.getByRole('searchbox',{name:'Search models'}).fill(repo);
  const row=page.getByRole('option',{name:`Download ${repo}`,exact:true});await row.waitFor({timeout:60000});await row.click();

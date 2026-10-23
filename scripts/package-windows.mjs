@@ -1,4 +1,4 @@
-import { patchWebToolCatalog } from '../src/web-tools-patch.mjs';
+import { patchWebToolCatalog, patchWebSourceProjection } from '../src/web-tools-patch.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -19,6 +19,8 @@ import { installLocalFeatures } from '../src/local-feature-bundles.mjs';
 import { patchLocalOnlyMain } from '../src/local-only-patch.mjs';
 import './build-updater.mjs';
 import { copyOriginRuntime } from './copy-origin-runtime.mjs';
+import { installBackgroundProcesses } from '../src/background-process-patch.mjs';
+import { applyWindowsIdentity } from './windows-identity.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url)), version=process.argv[2] || '0.1.0-preview.1';
 if(process.platform!=='win32' || process.arch!=='x64')throw new Error('Build this installer on Windows x64.');
@@ -54,7 +56,7 @@ await fs.copyFile(path.join(ripgrepSource,'rg.exe'),path.join(app,'resources/bin
 assert.match((await promisify(execFile)(path.join(app,'resources/bin/notch-rg.exe'),['--version'],{windowsHide:true})).stdout,/^ripgrep 15\.2\.0[\s\S]*PCRE2 10\.45 is available/,'Packaged ripgrep must support the pinned PCRE2 engine.');
 extractAll(path.join(app,'resources/app.asar'),unpacked);
 const mainFile=path.join(unpacked,'out/main/index.js');
-await fs.writeFile(mainFile,patchProfileIcons(patchRecapLanguage(patchLocalOnlyMain(patchStartupShutdown(patchPersistedContextUsage(patchUndoIntegration(patchWebToolCatalog(patchDirectStartup(await fs.readFile(mainFile,'utf8'))))))))));
+await fs.writeFile(mainFile,patchWebSourceProjection(patchProfileIcons(patchRecapLanguage(patchLocalOnlyMain(patchStartupShutdown(patchPersistedContextUsage(patchUndoIntegration(patchWebToolCatalog(patchDirectStartup(await fs.readFile(mainFile,'utf8')))))))))));
 await fs.cp(path.join(root,'src'),path.join(unpacked,'notch/src'),{recursive:true});
 await installPhoneAssets(root, path.join(unpacked, 'notch/assets'));
 const coreTarget=path.join(unpacked,'notch/vendor/notch-core');
@@ -80,10 +82,11 @@ assert.equal(JSON.parse(await fs.readFile(path.join(cliTarget,'package.json'),'u
 assert.deepEqual(JSON.parse(await fs.readFile(path.join(cliTarget,'dist/working-messages.json'),'utf8')),JSON.parse(await fs.readFile(path.join(root,'vendor/notch-cli/src/ui/working-messages.json'),'utf8')),'CLI and IDE working messages must match.');
 await installSetupRenderer(unpacked,root);
 for(const folder of ['out/main','out/renderer','out/preload'])await rebrandTree(path.join(unpacked,folder));
+await installBackgroundProcesses(unpacked);
 await verifyWorkbenchImports(path.join(unpacked,'out/renderer/assets'));
 console.log(JSON.stringify({branding:await verifyRendererBranding(unpacked)}));
 const manifest=path.join(unpacked,'package.json'), metadata=JSON.parse(await fs.readFile(manifest,'utf8'));
-metadata.version=version;metadata.description='notch by freesyntax.dev';metadata.author='freesyntax.dev';metadata.homepage='https://github.com/simpleending/notch-desktop';await fs.writeFile(manifest,JSON.stringify(metadata,null,2));
+metadata.version=version;metadata.productName=productName;metadata.description='notch by freesyntax.dev';metadata.author='freesyntax.dev';metadata.homepage='https://github.com/simpleending/notch-desktop';await fs.writeFile(manifest,JSON.stringify(metadata,null,2));
 await createPackageWithOptions(unpacked,path.join(app,'resources/app.asar'),{unpack:'**/*.{node,dll,exe,so,dylib}',unpackDir:'**/{@ff-labs,ffi-rs,@yuuang}'});
 const extracted=path.join(staging,'build-app');
 if(!unpacked.startsWith(staging+path.sep) || !extracted.startsWith(staging+path.sep))throw new Error('Invalid packaging directory.');
@@ -96,19 +99,11 @@ await fs.copyFile(path.join(root,'assets/notices/sharp-win32-x64-LICENSE.txt'),p
 const buildManifest=path.join(app,'resources/build-manifest.json'), build=JSON.parse(await fs.readFile(buildManifest,'utf8'));
 build.productVersion=version;await fs.writeFile(buildManifest,JSON.stringify(build,null,2));
 const productFile=path.join(app,'resources/product.json'),product=JSON.parse(await fs.readFile(productFile,'utf8'));
-Object.assign(product,{channel:preview?'preview':'stable',appId,dataDirectoryName:appId,protocolScheme:preview?'notch-preview':'notch',windowsLauncherDirectory:`${preview?'notch-preview':'notch'}/Launcher`,windowsLauncherMutexName:preview?'Local/notchPreviewDesktopLauncher':'Local/notchDesktopLauncher'});
+Object.assign(product,{displayName:productName,electronApplicationName:productName,channel:preview?'preview':'stable',appId,dataDirectoryName:appId,protocolScheme:preview?'notch-preview':'notch',windowsLauncherDirectory:`${preview?'notch-preview':'notch'}/Launcher`,windowsLauncherMutexName:preview?'Local/notchPreviewDesktopLauncher':'Local/notchDesktopLauncher'});
 await fs.writeFile(productFile,JSON.stringify(product,null,2));
 await fs.writeFile(path.join(app,'resources/app-update.yml'),JSON.stringify({...updatePublish,updaterCacheDirName:'notch-updater'},null,2));
-// The prepackaged builder skips executable metadata; reuse its cached resource editor.
-const cache=path.join(process.env.LOCALAPPDATA,'electron-builder/Cache/winCodeSign');
-let editor;
-for(const folder of await fs.readdir(cache)){const candidate=path.join(cache,folder,'rcedit-x64.exe');try{await fs.access(candidate);editor=candidate;break;}catch{}}
-if(!editor)throw new Error('The electron-builder Windows resource editor is missing from its cache.');
-await promisify(execFile)(editor,[path.join(app,'Notch.exe'),'--set-icon',path.join(app,'resources/app-icon.ico'),
-  '--set-file-version',version.split('-')[0],'--set-product-version',version,
-  '--set-version-string','ProductName','notch','--set-version-string','FileDescription','notch by freesyntax.dev',
-  '--set-version-string','CompanyName','freesyntax.dev','--set-version-string','InternalName','notch',
-  '--set-version-string','OriginalFilename','Notch.exe','--set-version-string','LegalCopyright','Copyright 2026 Driftrail'],{windowsHide:true});
+// Prepackaged builds also need the runtime executable's Windows resources branded.
+await applyWindowsIdentity(app,version,productName);
 const configuration={appId,productName,executableName:'Notch',copyright:'Copyright 2026 Driftrail',
   directories:{output:path.join(staging,'installer')},extraMetadata:{version},npmRebuild:false,publish:updatePublish,
   win:{target:[{target:'nsis',arch:['x64']}],icon:path.join(app,'resources/app-icon.ico')},

@@ -32,6 +32,8 @@ export interface NotchTool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
 
 /** Shared context available to all tools during execution */
 export interface ToolContext {
+  /** Selects concise built-in descriptions without changing schemas or permissions. */
+  promptContextWindow?: number;
   /** Desktop SSH transport. Schemas and permissions still run before this boundary. */
   remoteWorkspace?: { leaseKey: string; execute(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> };
   webSettings?: () => Promise<import('../web/settings.js').WebSettings>;

@@ -72,7 +72,7 @@ async function fixture(){
 }
 async function select(model){
   console.log('Selecting '+model);
-  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('tab',{name:'OpenRouter',exact:true}).click();await page.getByRole('searchbox',{name:'Search models'}).fill(model);
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('tab',{name:'OpenRouter',exact:true}).click();await page.getByRole('searchbox',{name:'Search models'}).fill(model);
   await page.locator(`button[role="option"][title="openrouter/${model}"]`).click();
 }
 async function turn(index,model){
@@ -106,7 +106,7 @@ try{
   const label=await page.getByRole('button',{name:'Model',exact:true}).innerText();await close();
   await launch();await fixture();const reopened=await page.evaluate(id=>window.notchDesktop.openChatSession(id),sessionId);await page.getByText(reopened.summary.title,{exact:true}).first().click();
   // The fixture connects after startup; refresh the UI's earlier disconnected catalog.
-  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.keyboard.press('Escape');
   await page.waitForFunction(expected=>document.querySelector('button[aria-label="Model"]')?.innerText===expected,label,{timeout:15000});await turn(2,models[1]);
   const saved=await app.evaluate(async(_electron,{id,cwd})=>globalThis.__notchHost.loadSession(id,cwd),{id:sessionId,cwd});
   assert.match(JSON.stringify(saved.messages),/CONFIG_DECISION_SQLITE/);for(const receipt of receipts)assert.ok(JSON.stringify(saved.messages).includes(receipt));

@@ -25,7 +25,7 @@ try {
   assert.ok(setup);await setup.getByRole('button',{name:/^Continue/}).click();
   const closed=setup.waitForEvent('close');await setup.getByRole('button',{name:/^Open notch/}).click();await closed;
   page=await app.firstWindow();await page.locator('.notch-welcome').waitFor();
-  await page.getByRole('button',{name:'Model',exact:true}).click();
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();
   await page.getByRole('tab',{name:'Installed',exact:true}).click();
   const option=page.getByRole('option').filter({hasText:engine.model.name});await option.waitFor();assert(await option.isEnabled());await option.click();
   await page.getByRole('button',{name:'Model',exact:true}).filter({hasText:engine.model.name}).waitFor();

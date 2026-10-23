@@ -1,6 +1,8 @@
 import { uiMessage } from "./ui-messages.mjs";
+import { createLoadingSkeleton } from './loading-skeleton.mjs';
 export function createUpdateSettings(React) {
   const h=React.createElement;
+  const LoadingSkeleton=createLoadingSkeleton(React);
   return function UpdateSettings(){
     const [state,setState]=React.useState(null),[busy,setBusy]=React.useState(false),[error,setError]=React.useState('');
     const [pollError,setPollError]=React.useState(''),request=React.useRef(0),acting=React.useRef(false);
@@ -18,7 +20,7 @@ export function createUpdateSettings(React) {
         h('div',{className:'notch-update-actions'},h('button',{type:'button',disabled:busy||!state.supported||['checking','downloading'].includes(state.phase),onClick:()=>void act('check')},'Check for updates'),
           state.phase==='available'?h('button',{type:'button',disabled:busy||!state.canInstall,onClick:()=>void act('download')},'Download update'):null,
           state.phase==='ready'?h('button',{type:'button',disabled:busy||!state.canInstall,onClick:()=>void act('quit')},'Quit and install'):null)):
-        h('p',{role:'status'},'Loading update settings…'),
+        !pollError?h(LoadingSkeleton,{label:'Loading update settings…',rows:2}):null,
       h('a',{href:'https://github.com/simpleending/notch-desktop/releases/latest',target:'_blank',rel:'noopener noreferrer'},'View releases on GitHub'),
       error||pollError?h('p',{role:'alert'},uiMessage(error||pollError)):null);
   };

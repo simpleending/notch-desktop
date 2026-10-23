@@ -1,14 +1,26 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { NotchQuery } from './notch-query.mjs';
 import { createWorkspaceSearch } from './workspace-search.mjs';
 import { detectLocalHardware, runDesktopTurn, CheckpointManager } from '../vendor/notch-core/desktop-harness.js';
 import { localContextProfile } from './model-policy.mjs';
+import { desktopInstructionsForContext } from './context-prompts.mjs';
 import { validateLocalPlugin } from './plugin-validation.mjs';
 import { createRemoteWorkspace } from './remote-workspace.mjs';
 
 const localIdentity = Object.freeze({ status: 'signed-in', mode: 'local', user: { id: 'local-notch', name: 'Local workspace', nickname: 'Local workspace', email: null }, error: null, loginUrl: null });
+async function localWorkspace(cwd) {
+  try { return await fs.realpath(cwd); }
+  catch (error) {
+    const folder = path.resolve(cwd);
+    // Windows may clear an app-owned scratch workspace between launches.
+    if (error.code !== 'ENOENT' || path.dirname(folder) !== path.resolve(os.tmpdir()) || !/^notch-workbench-[\w-]+$/.test(path.basename(folder))) throw error;
+    await fs.mkdir(folder).catch(error => { if (error.code !== 'EEXIST') throw error; });
+    return fs.realpath(folder);
+  }
+}
 function sessionFile(directory, id) {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new Error('Invalid Notch session ID.');
   return path.join(directory, `${id}.json`);
@@ -89,6 +101,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
         // A failed transport is not an empty inventory; stale entries cannot start a local turn.
         for(const row of retained)if(!unique.has(row.key)){unique.set(row.key,{...row});nextEndpoints.set(row.key,endpoints.get(row.key));nextProfiles.set(row.key,{...profiles.get(row.key)});unverified.add(row.key);}
         if (host.modelManager) for (const row of await host.modelManager.mlxModels(hardware)) { unique.set(row.key,row); nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
+        if (host.modelManager?.strataModels) for(const row of await host.modelManager.strataModels(hardware)){unique.set(row.key,row);nextEndpoints.set(row.key,'http://127.0.0.1:11438/v1');nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens});}
         if (host.modelManager?.colibriModels) for (const row of await host.modelManager.colibriModels(hardware)) { unique.set(row.key,row); nextEndpoints.set(row.key,'http://127.0.0.1:11437/v1'); nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
         const nextModels=[...unique.values()];
         let nextDefault=nextModels.find(row=>row.isDefault&&row.enabled)?.key||nextModels.find(row=>row.enabled)?.key;
@@ -108,7 +121,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     async loadSession(id, cwd, executionTarget) {
       await fs.mkdir(sessions, { recursive: true });
       const remote = executionTarget?.host?.kind === 'ssh';
-      const realCwd = remote ? path.posix.normalize(cwd) : await fs.realpath(cwd || process.cwd());
+      const realCwd = remote ? path.posix.normalize(cwd) : await localWorkspace(cwd || process.cwd());
       try {
         const raw = await fs.readFile(sessionFile(sessions, id), 'utf8');
         const state = JSON.parse(raw);
@@ -179,6 +192,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
           const model = host.resolveModelChoice(turn.model);
           if(unverifiedModels.has(model))throw new Error('Could not verify the local model. Start Ollama or refresh to retry.');
           const apiKey = model.startsWith('openrouter/') ? await host.modelManager?.key('openrouter') : undefined;
+          turn = { ...turn, instructions: desktopInstructionsForContext(turn.instructions, profiles.get(model)?.contextWindow || 8192) };
           if (model.startsWith('openrouter/') && !apiKey) throw new Error('Connect an OpenRouter API key in the model picker.');
           const remoteWorkspace = request.executionTarget?.host?.kind === 'ssh' ? await host.remoteWorkspace(request.executionTarget, turn.signal) : undefined;
           return runTurn({ ...turn, model, apiKey, remoteWorkspace, webSettings: async () => await host.webResearch?.configuration() ?? { enabled: true, searchProvider: 'duckduckgo', browser: 'auto' }, workspaceMode: await host.modelManager?.getWorkspaceMode?.() ?? 'shared', workspaceSearch: (operation, params, cwd, signal) => host.workspaceSearch.tool(operation, cwd, params, signal),
@@ -188,7 +202,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
               await turn.onLifecycle?.(event, payload);
             },
             ripgrepPath: process.resourcesPath ? path.join(process.resourcesPath, 'bin', 'notch-rg.exe') : undefined,
-            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || (model.startsWith('colibri/') ? 16384 : 8192), nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 128, fallbacks: model.startsWith('openrouter/') ? host.modelManager?.fallbacks(model) : undefined });
+            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || (model.startsWith('colibri/') ? 16384 : 8192), automaticContext: model.startsWith('ollama/') && !host.modelManager?.requestedContext?.(model), availableContextWindows: profiles.get(model)?.choices, strataAutoContext: model.startsWith('strata/') ? !host.modelManager?.requestedContext(model) : undefined, colibriAutoContext: model.startsWith('colibri/') ? !host.modelManager?.requestedContext(model) : undefined, nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 128, fallbacks: model.startsWith('openrouter/') ? host.modelManager?.fallbacks(model) : undefined });
         },
       });
       queries.set(query.id, query);

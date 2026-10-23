@@ -1,12 +1,46 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, rmdir, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createHost } from '../src/notch-host.mjs';
 import { createModelManager } from '../src/model-manager.mjs';
 const GiB=2**30;
 const metadata={capabilities:['tools'],model_info:{'general.architecture':'test','test.block_count':32,'test.attention.head_count_kv':4,'test.attention.key_length':128,'test.attention.value_length':128,'test.context_length':262144}};
+
+test('missing app scratch workspaces recover without discarding history or recreating ordinary project directories',async()=>{
+  const profile=await mkdtemp(path.join(os.tmpdir(),'notch-workspace-recovery-'));
+  const folder=await mkdtemp(path.join(os.tmpdir(),'notch-workbench-'));
+  const project=await mkdtemp(path.join(os.tmpdir(),'user-project-'));
+  const host=createHost(profile);
+  try{
+    const state=await host.loadSession('saved-chat',folder);
+    state.messages.push({role:'user',content:'Preserve this history'});
+    await host.saveSession('saved-chat',state);
+    await rmdir(folder);await rmdir(project);
+    assert.deepEqual((await host.loadSession('saved-chat',folder)).messages,state.messages);
+    assert((await stat(folder)).isDirectory());
+    await assert.rejects(host.loadSession('missing-project',project),{code:'ENOENT'});
+    await assert.rejects(stat(project),{code:'ENOENT'});
+  }finally{await host.workspaceSearch.shutdown();}
+});
+
+test('a loaded model retains its verified context and conversation history when cold-load memory estimates would reject the follow-up',async()=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'notch-followup-memory-'));
+  let loaded=false,round=0;
+  const host=createHost(directory,{hardware:async()=>({totalMemory:32*GiB,availableMemory:(loaded?2:18)*GiB,totalVram:.35*GiB,availableVram:0}),
+    fetcher:async url=>({ok:true,json:async()=>url.endsWith('/api/tags')?{models:[{name:'fixture',size:4*GiB,digest:'exact'}]}:url.endsWith('/api/ps')?{models:loaded?[{name:'fixture',digest:'exact',size:1.6*GiB|0,size_vram:1.6*GiB|0,context_length:8192}]:[]}:metadata}),
+    runTurn:async turn=>{if(round++)assert(turn.messages.some(m=>m.role==='assistant'&&m.content==='First answer'));
+      loaded=true;turn.onText('First answer');return{messages:[...turn.messages,{role:'assistant',content:'First answer'}],text:'First answer',status:'completed'};}});
+  try{
+    await host.listModels(true);
+    for(const prompt of ['hello','tell me more']){
+      let result;for await(const event of host.query({cwd:directory,sessionId:'same-chat',model:'ollama/fixture',prompt}))if(event.type==='result')result=event;
+      assert.equal(result.is_error,false,result.errors?.join('\n'));
+    }
+    assert.equal((await host.listModels(true)).find(row=>row.key==='ollama/fixture').defaultContextWindow,8192);
+  }finally{await host.workspaceSearch.shutdown();}
+});
 
 test('local turns refresh memory before loading, retain manual preferences and report the actual context',async()=>{
   const directory=await mkdtemp(path.join(os.tmpdir(),'notch-context-host-'));

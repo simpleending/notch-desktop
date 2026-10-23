@@ -19,7 +19,8 @@ export { acquireLease } from './concurrency/lease.js';
 export { detectLocalHardware, parseNvidiaMemory, linuxGpuMemory, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
 export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
 export { managedOllama } from './providers/ollama-runtime.js';
-export { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri } from './providers/colibri.js';
+export { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } from './providers/colibri.js';
+export { prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, setStrataDirectory, installStrata, startStrata, stopStrata } from './providers/strata.js';
 export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };
 export interface DesktopTurn {
@@ -35,6 +36,10 @@ export interface DesktopTurn {
   maxOutputTokens?: number;
   baseUrl?: string;
   contextWindow?: number;
+  automaticContext?: boolean;
+  availableContextWindows?: number[];
+  colibriAutoContext?: boolean;
+  strataAutoContext?: boolean;
   nativeContextWindow?: number;
   ollamaBatch?: number;
   tools?: string[];
@@ -147,8 +152,10 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   try {
     return await runAgentLoop(turn.messages, {
       model: resolveModel(selection), modelId: selection.model,
-      systemPrompt: (turn.remoteWorkspace ? `You are Notch, an AI coding assistant. All workspace tools operate over SSH on the user's host.\n${turn.remoteWorkspace.instructions}` : await buildSystemPrompt(cwd, selection.model, ctx)) + (turn.instructions ? `\n\nDesktop agent instructions:\n${turn.instructions}` : ''), toolContext: ctx,
-      maxIterations: turn.maxIterations, contextWindow: selection.contextWindow,
+      contextWindows: turn.automaticContext ? turn.availableContextWindows : undefined,
+      resolveContext: contextWindow => resolveModel({ ...selection, contextWindow }),
+      systemPrompt: (turn.remoteWorkspace ? `You are Notch, an AI coding assistant. All workspace tools operate over SSH on the user's host.\n${turn.remoteWorkspace.instructions}` : await buildSystemPrompt(cwd, selection.model, ctx, selection.contextWindow)) + (turn.instructions ? `\n\nDesktop agent instructions:\n${turn.instructions}` : ''), toolContext: ctx,
+      maxIterations: turn.maxIterations, contextWindow: selection.contextWindow, strataModelId: provider === 'strata' ? (isByokRef(selection.model) ? parseByokRef(selection.model).model : selection.model) : undefined, strataAutoContext: turn.strataAutoContext, colibriAutoContext: turn.colibriAutoContext ?? selection.contextWindow === undefined, colibriModelId: selection.byokProvider === 'colibri' ? (selection.model.startsWith('colibri/') ? selection.model.slice(8) : selection.model) : undefined,
       onTextChunk: turn.onText, onToolCall: turn.onToolCall, onToolResult: turn.onToolResult,
       onUsage: turn.onUsage,
       maxOutputTokens: turn.maxOutputTokens, onCompact: turn.onCompact,

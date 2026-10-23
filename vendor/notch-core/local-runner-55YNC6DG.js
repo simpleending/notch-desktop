@@ -1,14 +1,16 @@
 import {
   detectLocalHardware
-} from "./chunk-GFTRJTWN.js";
+} from "./chunk-B72JEX4V.js";
 import {
   withLocalInference
 } from "./chunk-OBJXRYDA.js";
 import {
   detectDaemon,
-  ollamaRoot,
   showModel
-} from "./chunk-JALSGEWB.js";
+} from "./chunk-WPRAVALI.js";
+import {
+  ollamaRoot
+} from "./chunk-RKXQ4ULC.js";
 
 // vendor/notch-cli/src/providers/local-runner.ts
 import os from "os";

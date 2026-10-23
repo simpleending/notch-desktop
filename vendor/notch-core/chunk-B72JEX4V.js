@@ -164,6 +164,8 @@ function modelFit(model, hardware) {
 }
 
 export {
+  GiB,
+  supportsMlx,
   parseNvidiaMemory,
   linuxGpuMemory,
   detectLocalHardware,

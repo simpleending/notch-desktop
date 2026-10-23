@@ -81,9 +81,9 @@ try {
   await page.getByText('Click to add a readable and editable folder',{exact:true}).click();
   await page.getByRole('dialog').getByRole('textbox').fill('notch agent check');
   await page.getByRole('button',{name:'Create',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
-  await page.getByRole('button',{name:'Model',exact:true}).click();
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();
   await page.getByRole('option').filter({hasText:/Qwen3\.5/i}).first().click();
-  await page.getByRole('button',{name:'Model',exact:true}).click();
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();
   await page.getByRole('combobox',{name:'Context limit'}).selectOption('16384');
   await page.waitForFunction(()=>{const control=document.querySelector('select[aria-label="Context limit"]');return control?.value==='16384'&&!control.disabled;});
   await page.keyboard.press('Escape');

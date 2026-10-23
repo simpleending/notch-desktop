@@ -1,6 +1,6 @@
 import { app, session, ipcMain, safeStorage, shell, dialog } from 'electron';
 import path from 'node:path';
-import { writeFileSync, existsSync } from 'node:fs';
+import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { migrateBrandDatabase } from './brand-migration.mjs';
 import { createHost } from './notch-host.mjs';
@@ -18,6 +18,7 @@ import { originGitEnv } from '@freesyntax/notch-cli/dist/origin-auth.js';
 import { createRequire } from 'node:module';
 import { managedOllama } from '../vendor/notch-core/desktop-harness.js';
 app.setName('notch');
+if (process.platform === 'win32') app.setAppUserModelId(JSON.parse(readFileSync(path.join(process.resourcesPath, 'product.json'), 'utf8')).appId);
 globalThis.__notchDiscovery = createStartupDiscovery();
 const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
@@ -34,7 +35,7 @@ app.whenReady().then(() => session.defaultSession.webRequest.onBeforeRequest({ u
 app.whenReady().then(() => {
   const {autoUpdater}=createRequire(import.meta.url)('../vendor/notch-updater/index.cjs');
   globalThis.__notchHost.updates=createAppUpdater({app,updater:autoUpdater,directory:app.getPath('userData'),profileOverride:!!requestedProfile});
-  globalThis.__notchHost.modelManager = createModelManager(app.getPath('userData'), { safeStorage });
+  globalThis.__notchHost.modelManager = createModelManager(app.getPath('userData'), { safeStorage, chooseModelDirectory:async()=>{const result=await dialog.showOpenDialog({title:'Choose Strata model folder',properties:['openDirectory','createDirectory']});return result.canceled?null:result.filePaths[0];} });
   globalThis.__notchHost.webResearch = createWebResearch(app.getPath('userData'), { safeStorage, signal: globalThis.__notchDiscovery.signal });
   globalThis.__notchHost.github = createGitHubAuth({
     directory: app.getPath('userData'),

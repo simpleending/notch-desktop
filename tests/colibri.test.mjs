@@ -36,9 +36,20 @@ test('Colibri context changes check current memory and preserve the old preferen
   f.status.running=true;await assert.rejects(m.setContext(rows[0].key,8192,rows),/Unload/);
   f.status.running=false;f.colibri.colibriPlan=async()=>({fits:false});await assert.rejects(m.setContext(rows[0].key,8192,rows),/free memory/);assert.equal(m.requestedContext(rows[0].key),2048);
   f.colibri.colibriPlan=async()=>({fits:true});await m.setContext(rows[0].key,4096,[{...rows[0],enabled:false}]);assert.equal(m.requestedContext(rows[0].key),4096);
+  const checked=[];f.colibri.colibriPlan=async value=>{checked.push(value);return{fits:true,contextWindow:8192};};
+  await m.setContext(rows[0].key,'auto',rows);assert.deepEqual(checked,[undefined]);assert.equal(m.requestedContext(rows[0].key),undefined);
 });
 test('Colibri preload is installed once and repairs the prior release bridge',()=>{
   assert.equal(patchModelPreload(modelPreload),modelPreload);
   const old=modelPreload.replace("\n  colibri:(action,model)=>ipcRenderer.invoke('notch-models:colibri',action,model),",'');
   assert.equal(patchModelPreload(old),modelPreload);
+});
+
+test('backend and benchmark preferences are validated by the engine and catalog includes disabled choices',async()=>{
+  const backends=[{backend:'vulkan',available:true},{backend:'cuda',available:false,reason:'No NVIDIA GPU'}];
+  const f=fixture({async colibriCompatibility(){return{backends,gpu:'AMD Radeon 8060S'};},async setColibriPreference(key,value){if(value==='cuda')throw new Error('No NVIDIA GPU');f.calls.push([key,value]);}}),m=await manager(f);
+  assert.deepEqual((await m.colibri('catalog')).backends,backends);
+  await m.colibri('backend','vulkan');await m.colibri('benchmark',false);
+  assert.deepEqual(f.calls,[['backend','vulkan'],['benchmarkEnabled',false]]);
+  await assert.rejects(m.colibri('backend','cuda'),/No NVIDIA/);
 });

@@ -67,7 +67,7 @@ try {
     text: getComputedStyle(document.querySelector('.notch-welcome h1')).color }));
   assert.equal(checks.lightColors.main, 'rgb(245, 244, 246)');
   await appearance(page, true);
-  await page.getByRole('button', { name: 'Model', exact: true }).click();
+  await page.getByRole('button', { name: 'Model', exact: true }).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();
   checks.modelMenu = await page.locator('[role=menu], [role=listbox]').allTextContents();
   assert.ok(checks.modelMenu.length > 0);
   checks.menuRadius = await page.locator('.notch-model-picker').evaluate(menu=>getComputedStyle(menu).borderRadius);
@@ -158,13 +158,13 @@ try {
   checks.osEncryption=await app.evaluate(async({safeStorage})=>{const available=await safeStorage.isAsyncEncryptionAvailable();if(!available)return {available};const encrypted=await safeStorage.encryptStringAsync('notch-qa-only-secret');const decrypted=await safeStorage.decryptStringAsync(encrypted);return {available,roundTrip:decrypted.result==='notch-qa-only-secret',opaque:!encrypted.includes(Buffer.from('notch-qa-only-secret'))};});
   assert.deepEqual(checks.osEncryption,{available:true,roundTrip:true,opaque:true});
   await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:'Model',exact:true}).click();
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();
   await page.getByRole('tab',{name:'Installed',exact:true}).click();
   await page.getByRole('searchbox',{name:'Search models'}).fill('qwen3:4b');
   await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
   await page.getByRole('button',{name:'Model',exact:true}).filter({hasText:'qwen3:4b'}).waitFor();checks.modelSelection=true;
   await page.waitForFunction(()=>document.activeElement?.isContentEditable);checks.modelRestoresComposerFocus=true;
-  await page.getByRole('button',{name:'Model',exact:true}).click();
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();
   await page.getByRole('switch',{name:'Dark appearance'}).click();
   await page.locator('html[data-notch-appearance=light]').waitFor();
   assert.equal(await page.getByRole('switch',{name:'Dark appearance'}).evaluate(control=>control===document.activeElement),true);checks.modelOutsideFocus=true;

@@ -2,7 +2,17 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {createStartupDiscovery,stopPluginHost,isPluginStop} from '../src/startup-discovery.mjs';
+import {createStartupDiscovery,stopPluginHost,isPluginStop,findWindowsExecutable} from '../src/startup-discovery.mjs';
+
+test('Windows executable discovery reads PATH without spawning a command window',async()=>{
+  const seen=[];
+  const options={cwd:'C:\\project',env:{Path:'"Z:\\Apps\\bin";C:\\missing',PATHEXT:'.EXE;.CMD'},exists:async file=>{seen.push(file);return file==='Z:\\Apps\\bin\\editor.EXE';}};
+  assert.equal(await findWindowsExecutable('editor',options),'Z:\\Apps\\bin\\editor.EXE');
+  assert(seen.includes('C:\\project\\editor.EXE'));
+  assert.equal(await findWindowsExecutable('missing.exe',options),null);
+  assert.equal(await findWindowsExecutable('*.exe',options),null);
+  assert.equal(await findWindowsExecutable('Z:\\Apps\\bin\\editor.EXE',options),'Z:\\Apps\\bin\\editor.EXE');
+});
 import {patchStartupShutdown} from '../src/bundle-patch.mjs';
 
 test('discovery returns results/errors normally, cancels pending replies and refuses late work',async()=>{
@@ -31,7 +41,7 @@ test('shutdown settles initialization before clearing plugin registries and keep
   const ipc='class D8e{constructor(target){this.target=target}inFlight=new Set;handle(e,r,i){const n=async(a,...s)=>{const o=Promise.resolve().then(()=>r(a,...s)),A={channel:e,completion:o.then(()=>{},()=>{})};this.inFlight.add(A);A.completion.finally(()=>this.inFlight.delete(A));return await o};this.target.handle(e,n)}}';
   const controller='class zYr{shutdown(){}startProcess(e){}async initialize(){await this.replayInitialActivations()}async startProcessOnce(e){const r=this.processFactory();this.process=r;const i=this.liveness;try{if(await r.ready,this.process!==r)throw new Error("APP_PLUGIN_HOST_PROCESS_REPLACED");await i.check($Oe),this.setState("running"),i.startHeartbeat()}catch(n){this.failures.push(n);throw n}}async performActivation(e,r,i){this.process||await this.startProcess("starting");const n=1;try{if(await this.request("plugin.activate"),!this.runtimeStates.markActive(e,n))throw new Error("APP_PLUGIN_GENERATION_STALE:x");this.onActivationResult(e,n,"success")}catch(s){this.failures.push(s);throw s}}handleExit(e){if(this.process!==e)return;this.failures.push(new Error("unexpected exit"))}}';
   const overlay='class Ude{async createOverlayWindow(){const o=this.window;try{await this.load()}catch(c){throw this.logger.error("Onboarding overlay could not be opened",{error:c}),this.destroyOverlay(o),c}}}';
-  const patched=patchStartupShutdown(fixture+ipc+controller+overlay+'const mOr=3e3,FVe=1e3;function resources(t){return yo("mcp.shutdown","critical",4e3,()=>t.mcpService.shutdown())}function D7e(t,e,r=null){return w7e.request(A8r(t),e,r)}function k7e(t){return v7e.request(lr.getAllWindows().map(o8r),t,O3r)}function _7e(e){return {quiesceRenderer:()=>k7e(e),closeIpcIngress:()=>{r?.closeIngress(),P7e()}}}');assert.equal(patchStartupShutdown(patched),patched);
+  const patched=patchStartupShutdown(fixture+'async function k$(t){return HV(t)}'+ipc+controller+overlay+'const mOr=3e3,FVe=1e3;function resources(t){return yo("mcp.shutdown","critical",4e3,()=>t.mcpService.shutdown())}function D7e(t,e,r=null){return w7e.request(A8r(t),e,r)}function k7e(t){return v7e.request(lr.getAllWindows().map(o8r),t,O3r)}function _7e(e){return {quiesceRenderer:()=>k7e(e),closeIpcIngress:()=>{r?.closeIngress(),P7e()}}}');assert.equal(patchStartupShutdown(patched),patched);
   const Plugin=new Function(patched+';return Fue')();
   for(const fails of [false,true]){
     let finish;const events=[],plugin=new Plugin();

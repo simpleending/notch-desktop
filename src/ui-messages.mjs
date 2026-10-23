@@ -78,7 +78,7 @@ export function uiMessage(value, fallback = 'This action could not be completed.
   };
   let text = value.trim();
   if (/\b(?:TypeError|ReferenceError|SyntaxError|RangeError):/u.test(text)) return fallback;
-  // Electron can wrap a remote error more than once. Remove only the transport envelope.
+  // IPC can wrap a remote error more than once. Remove only the transport envelope.
   text = text.replace(/^(?:Error invoking remote method '[^'\r\n]+':\s*)+/u, '')
     .replace(/^(?:[A-Za-z]*Error:\s*)+/u, '');
   if (!text) return fallback;
@@ -100,5 +100,6 @@ export function uiMessage(value, fallback = 'This action could not be completed.
     || /^[A-Z][A-Z0-9_:-]{2,}$/u.test(text)
     || /^(?:undefined|null|\[object Object\])$/u.test(text)) return fallback;
   // Keep actionable English instructions that mention real identifiers such as GH_TOKEN or AGENTS.md.
+  if (/\belectron\b/iu.test(diagnostics)) return fallback;
   return text;
 }

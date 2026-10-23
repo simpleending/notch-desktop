@@ -40,6 +40,11 @@ test('isolated plugins and the phone receive the same self-contained formatter',
   assert.equal(scope.uiMessage('UNKNOWN_NEW_CODE'), uiMessage('UNKNOWN_NEW_CODE'));
 });
 
+test('framework diagnostics do not expose the runtime as the product name', () => {
+  for (const text of ['Electron filesystem is unavailable.', 'electron failed to send a notification.']) assert.equal(uiMessage(text, 'Restart notch and try again.'), 'Restart notch and try again.');
+  assert.equal(uiMessage('Open Electron.md in C:\\project.'), 'Open Electron.md in C:\\project.');
+});
+
 test('renderer patch formats notifications, descriptions and nested alerts while preserving protocol decisions', () => {
   const source = `function Settings({error}){
     const classification=error.message==='APP_PLUGIN_PERMISSION_DENIED';

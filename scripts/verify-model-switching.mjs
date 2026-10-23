@@ -24,9 +24,9 @@ async function probe(){await app.evaluate(()=>{
 });}
 async function restoredLabel(label){await page.waitForFunction(expected=>document.querySelector('button[aria-label="Model"]')?.innerText===expected,label,{timeout:15000});assert.equal(await page.getByRole('button',{name:'Model',exact:true}).innerText(),label);}
 async function select(model){
-  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('searchbox',{name:'Search models'}).fill(model);
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('searchbox',{name:'Search models'}).fill(model);
   const option=page.locator(`button[role="option"][title="ollama/${model}"]`);await option.waitFor();assert.equal(await option.count(),1);await option.click({timeout:15000});
-  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('combobox',{name:'Context limit'}).selectOption('8192');
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('combobox',{name:'Context limit'}).selectOption('8192');
   await page.waitForFunction(()=>document.querySelector('select[aria-label="Context limit"]')?.value==='8192');await page.keyboard.press('Escape');
 }
 async function turn(index,model,activeCheck=false){

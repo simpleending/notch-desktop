@@ -134,6 +134,8 @@ export function selectModel(current: ModelConfig, selection: ModelSelection): Mo
       delete next.headers;
       delete next.byokApiShape;
       delete next.contextWindow;
+      delete next.colibriAutoContext;
+      delete next.strataAutoContext;
       delete next.nativeContextWindow;
       delete next.maxOutputTokens;
       delete next.ollamaBatch;

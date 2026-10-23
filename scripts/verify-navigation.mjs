@@ -32,7 +32,7 @@ try {
   assert(setup); await setup.getByRole('button', { name: /^Continue/ }).click();
   const closed = setup.waitForEvent('close'); await setup.getByRole('button', { name: /^Open notch/ }).click(); await closed;
   page = await app.firstWindow(); await page.locator('.notch-welcome').waitFor();
-  await page.getByRole('button', { name: 'Model', exact: true }).click();
+  await page.getByRole('button', { name: 'Model', exact: true }).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();
   const picker = page.locator('.notch-model-picker');
   await picker.getByRole('tab', { name: 'Installed', exact: true }).focus();
   await page.keyboard.press('End'); assert.equal(await picker.getByRole('tab', { name: 'Colibri', exact: true }).getAttribute('aria-selected'), 'true');

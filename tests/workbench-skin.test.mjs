@@ -1,10 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import { parse } from 'acorn';
 import { createNotchWorkbench } from '../src/workbench-skin.mjs';
 import { patchWorkbenchRenderer, patchSecondaryArtwork, patchVoiceOverlayArtwork, patchThemeBroadcast } from '../src/workbench-patch.mjs';
 import { patchFunction } from '../src/bundle-patch.mjs';
 const React = { useState(value){return [value,()=>{}];},useEffect(){}, createElement(type, props, ...children) { return { type, props: props || {}, children }; } };
+test('focus uses a control fill instead of outline or glow rings', async () => {
+  const css = await fs.readFile(new URL('../src/workbench-skin.css', import.meta.url), 'utf8');
+  assert(!css.includes('outline:2px solid var(--notch-accent)'));
+  assert(css.includes(':is(:focus,:focus-visible){outline:none!important;box-shadow:none!important;'));
+  assert(css.includes('--tw-ring-shadow:0 0 #0000!important'));
+  assert(css.includes(':focus-visible{background-color:var(--notch-elevated)}'));
+});
 function all(tree) { return [tree, ...tree.children.flat(Infinity).filter(child => child && typeof child === 'object').flatMap(all)]; }
 
 test('About uses the theme-aware wordmark and installed version with a working close action', () => {

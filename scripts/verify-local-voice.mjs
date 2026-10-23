@@ -32,10 +32,10 @@ try{
  checks.push('real renderer microphone capture, PCM streaming, local transcription and composer insertion');
  await composer.fill('');await page.getByRole('button',{name:'Open project',exact:true}).click();await app.evaluate(({dialog},root)=>{dialog.showOpenDialog=async()=>({canceled:false,filePaths:[root]})},workspace);
  await page.getByText('Click to add a readable and editable folder',{exact:true}).click();await page.getByRole('dialog').getByRole('textbox').fill('Local voice test');await page.getByRole('button',{name:'Create',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
- await page.getByRole('button',{name:'Model',exact:true}).click();
+ await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();
  const modelOption=page.getByRole('option').filter({hasText:/Qwen3\.5/i}).first();
  for(let retry=0;retry<4&&!await modelOption.isEnabled();retry++){await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.waitForTimeout(2000);}
- await modelOption.click();await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('combobox',{name:'Context limit'}).selectOption('8192');await page.waitForFunction(()=>{const control=document.querySelector('select[aria-label="Context limit"]');return control?.value==='8192'&&!control.disabled});await page.keyboard.press('Escape');
+ await modelOption.click();await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('combobox',{name:'Context limit'}).selectOption('8192');await page.waitForFunction(()=>{const control=document.querySelector('select[aria-label="Context limit"]');return control?.value==='8192'&&!control.disabled});await page.keyboard.press('Escape');
  await composer.fill('Say READY.');await composer.press('Enter');
  await until(async()=>{const trace=await app.evaluate(()=>globalThis.__voiceQa);return trace.events.some(event=>event.type==='result'&&event.subtype==='success')},'initial real local model turn',240000);
  await page.evaluate(()=>{window.__voiceEvents=[];window.notchDesktop.onLiveVoiceEvent(event=>window.__voiceEvents.push(event))});

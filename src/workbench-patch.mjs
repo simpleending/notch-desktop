@@ -304,7 +304,7 @@ export async function verifyWorkbenchImports(assets, checkExports = true) {
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
   await cp(path.join(root, 'src/ui-messages.mjs'), path.join(assets, 'ui-messages.mjs'));
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'colibri-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'loading-skeleton.mjs', 'colibri-panel.mjs', 'strata-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
   await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root,'assets/github'),path.join(assets,'github'),{recursive:true});

@@ -20,7 +20,7 @@ try {
   for(const [width,height,dark] of [[900,600,true],[1000,700,false]]) {
     await app.evaluate(({BrowserWindow},{url,width,height})=>{const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL()===url);w.unmaximize();w.setBounds({x:40,y:40,width,height});},{url:page.url(),width,height});
     const theme=page.getByRole('switch',{name:'Dark appearance'});if((await theme.getAttribute('aria-checked')==='true')!==dark)await theme.click();
-    await page.getByRole('button',{name:'Model',exact:true}).click();
+    await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();
     for(const name of ['Installed','Hugging Face','OpenRouter','Colibri']) {
       const tab=page.getByRole('tab',{name,exact:true});await tab.click();assert.equal(await tab.getAttribute('aria-selected'),'true');await tab.click({trial:true});
       const rect=await tab.boundingBox();assert.ok(rect&&rect.x>=0&&rect.x+rect.width<=width&&rect.y>=45&&rect.y+rect.height<=height);

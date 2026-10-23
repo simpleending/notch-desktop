@@ -161,7 +161,7 @@ export function rebrandWorkbenchText(source) {
   // Disabled upstream endpoints must never turn into requests to unrelated domains.
   source = source.replace(/https?:\/\/(?:[a-z0-9-]+\.)*qoder\.(?:com\.cn|com|ai|sh)(?=[:/"'`\s]|$)/gi, 'https://disabled.notch.invalid');
   source = source.replace(/https:\/\/btardsb9ml-default-sea\.rum\.aliyuncs\.com\/rum\/web\/v2\?[^"'`\s]+/g, 'https://disabled.notch.invalid/telemetry');
-  return source.replace(/qoder/gi, 'notch').replace(/Notch/g, 'notch')
+  return source.replace(/qoder/gi, 'notch').replace(/Notch/g, 'notch').replace(/\bElectron\b/g, 'notch')
     .replace(/\bQoduck\b|Q\s?达鸭/g,'notch')
     .replaceAll('/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/u', '/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/iu');
 }
@@ -286,11 +286,16 @@ export function patchStartupShutdown(source) {
     return original.includes(guarded) ? original : original.replace(loop, guarded)
       .replace('if(p)return', 'if(globalThis.__notchDiscovery.signal.aborted)return {kind:"absent"};if(p)return');
   });
+  source=patchFunction(source,'k$',original=>{
+    if(original.includes('__notchDiscovery.findExecutable'))return original;
+    return original.replace('async function k$(t){','async function k$(t){if(process.platform==="win32")return await globalThis.__notchDiscovery.findExecutable(t)??undefined;');
+  });
   return patchFunction(source, '$Ft', original => {
-    if (original.includes('__notchDiscovery.signal')) return original;
+    if (original.includes('__notchDiscovery.findExecutable')) return original;
     const start = 'findExecutable:async i=>{', call = 'await HV(n,[i],{windowsHide:!0})';
-    if (!original.includes(start) || !original.includes(call)) throw new Error('Application discovery process differs from the inspected baseline.');
-    return original.replace(start, start + 'if(globalThis.__notchDiscovery.signal.aborted)return null;')
+    const oldGuard='if(globalThis.__notchDiscovery.signal.aborted)return null;';
+    if (!original.includes(start) || (!original.includes(call)&&!original.includes('signal:globalThis.__notchDiscovery.signal'))) throw new Error('Application discovery process differs from the inspected baseline.');
+    return original.replace(oldGuard,'').replace(start, start + oldGuard+'if(process.platform==="win32")return globalThis.__notchDiscovery.findExecutable(i);')
       .replace(call, 'await HV(n,[i],{windowsHide:!0,signal:globalThis.__notchDiscovery.signal})');
   });
 }

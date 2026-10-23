@@ -48,6 +48,7 @@ export function registerModelIpc(ipcMain, host) {
     hub: (runner,options) => manager.hubCatalog(runner,options),
     cloud: force => manager.cloudCatalog(force===true,true),
     colibri: (action,model) => manager.colibri(action,model),
+    strata: (action,model) => manager.strata(action,model),
     install: (repo,runner) => manager.startInstall(repo,runner),
     cancel: () => manager.cancelInstall(),
     status: () => manager.status(),
@@ -89,6 +90,7 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
   hub:(runner,options)=>ipcRenderer.invoke('notch-models:hub',runner,options),
   cloud:force=>ipcRenderer.invoke('notch-models:cloud',force),
   colibri:(action,model)=>ipcRenderer.invoke('notch-models:colibri',action,model),
+  strata:(action,model)=>ipcRenderer.invoke('notch-models:strata',action,model),
   install:(repo,runner)=>ipcRenderer.invoke('notch-models:install',repo,runner),
   cancel:()=>ipcRenderer.invoke('notch-models:cancel'),
   status:()=>ipcRenderer.invoke('notch-models:status'),
@@ -115,6 +117,8 @@ export function patchModelPreload(source) {
   if(!source.includes(cloud))source=source.replace(current,current+",\n  "+cloud);
   const queue="queue:()=>ipcRenderer.invoke('notch-models:queue')";
   if(!source.includes("colibri:(action,model)=>"))source=source.replace(cloud,cloud+",\n  colibri:(action,model)=>ipcRenderer.invoke('notch-models:colibri',action,model)");
+  const colibri="colibri:(action,model)=>ipcRenderer.invoke('notch-models:colibri',action,model)";
+  if(!source.includes("strata:(action,model)=>"))source=source.replace(colibri,colibri+",\n  strata:(action,model)=>ipcRenderer.invoke('notch-models:strata',action,model)");
   if(!source.includes(queue))source=source.replace("status:()=>ipcRenderer.invoke('notch-models:status')","status:()=>ipcRenderer.invoke('notch-models:status'),\n  "+queue);
   if(!source.includes("workspace:mode=>"))source=source.replace(queue,queue+",\n  workspace:mode=>ipcRenderer.invoke('notch-models:workspace',mode)");
   if(!source.includes("web:patch=>"))source=source.replace("workspace:mode=>", "web:patch=>ipcRenderer.invoke('notch-models:web',patch),\n  webInstall:()=>ipcRenderer.invoke('notch-models:webInstall'),\n  workspace:mode=>");

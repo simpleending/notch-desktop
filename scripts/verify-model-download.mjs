@@ -22,7 +22,7 @@ try{
  for(const [width,height,dark]of [[1000,700,true],[900,600,false]]){
   await app.evaluate(({BrowserWindow},{url,width,height})=>{const window=BrowserWindow.getAllWindows().find(window=>window.webContents.getURL()===url);window.unmaximize();window.setBounds({x:40,y:40,width,height});},{url:page.url(),width,height});
   const theme=page.getByRole('switch',{name:'Dark appearance'});if((await theme.getAttribute('aria-checked')==='true')!==dark)await theme.click();
-  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('tab',{name:'Hugging Face',exact:true}).click();
+  await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('tab',{name:'Hugging Face',exact:true}).click();
   const dismiss=page.getByRole('button',{name:'Not now',exact:true});if(await dismiss.count())await dismiss.click();
   const small=page.getByRole('option',{name:'Download lab/small-model',exact:true});await small.waitFor();
   const arrow=await small.locator('svg').evaluate(svg=>{const a=svg.getBoundingClientRect(),b=svg.parentElement.getBoundingClientRect();return {gap:b.right-a.right,width:a.width};});assert.ok(arrow.gap>=12&&arrow.gap<=18);assert.equal(arrow.width,18);
@@ -33,7 +33,7 @@ try{
   await confirm.getByText(/exceeds available memory/).waitFor();assert.equal(await page.getByRole('button',{name:'Download model',exact:true}).isDisabled(),true);assert.equal(await app.evaluate(()=>globalThis.__downloadCalls),calls);
   await page.getByRole('button',{name:'Back to models',exact:true}).click();await small.focus();await page.keyboard.press('Enter');await page.getByRole('button',{name:'Download model',exact:true}).click();
   await page.getByRole('progressbar',{name:'Model download progress'}).waitFor();assert.equal(await page.getByRole('progressbar').getAttribute('value'),'40');assert.equal(await app.evaluate(()=>globalThis.__downloadCalls),calls+1);
-  await page.keyboard.press('Escape');await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('progressbar',{name:'Model download progress'}).waitFor();
+  await page.keyboard.press('Escape');await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('tab',{name:'Hugging Face',exact:true}).click();await page.getByRole('progressbar',{name:'Model download progress'}).waitFor();
   await page.getByRole('button',{name:'Cancel download',exact:true}).click();await page.getByRole('status').filter({hasText:'Download cancelled'}).waitFor();
   await small.click();await page.getByRole('button',{name:'Download model',exact:true}).click();
   await app.evaluate(()=>{globalThis.__downloadJob={...globalThis.__downloadJob,state:'failed',message:'Model validation failed; downloaded files retained.'};});

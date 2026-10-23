@@ -5,10 +5,13 @@ import { cloudModelRows, normalizeOpenRouterFallbacks, openRouterModelKey } from
 import { localContextProfile } from './model-policy.mjs';
 import { installLocalModel } from './cli-bridge.mjs';
 import {createHubCatalog} from './hub-catalog.mjs';
-import { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri } from '../vendor/notch-core/desktop-harness.js';
+import { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } from '../vendor/notch-core/desktop-harness.js';
+
+import { prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, installStrata, stopStrata, setStrataDirectory, detectLocalHardware } from '../vendor/notch-core/desktop-harness.js';
 
 export function createModelManager(directory, { safeStorage, fetcher = fetch, recommend: recommendModels, install = installLocalModel,
-  colibri = { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri } } = {}) {
+  hardware: detectHardware = detectLocalHardware, chooseModelDirectory, strata = {prepareStrata,strataCatalog,strataModels,strataStatus,strataPlan,installStrata,stopStrata,setStrataDirectory},
+  colibri = { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } } = {}) {
   const keys = new Map(), preferences = new Map(), fallbacks = new Map();
   const keyFile = path.join(directory, 'provider-keys.encrypted.json'), contextFile = path.join(directory, 'model-context.json'), catalogFile = path.join(directory, 'openrouter-models.json');
   const fallbackFile = path.join(directory, 'openrouter-fallbacks.json');
@@ -80,15 +83,45 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
           source:'system',enabled:fit.fits,isDefault:true,isNew:false,priceFactor:0,tags:['local'],maxInputTokens:nativeContext,maxOutputTokens:2048,availableContextWindows:fit.choices,
           defaultContextWindow:service.context(`mlx/${row.repo}`,fit.choices,fit.contextWindow),recommendedContextWindow:fit.contextWindow,requestedContextWindow:service.requestedContext(`mlx/${row.repo}`),efforts:[],defaultEffort:null,supportsDisabled:true }; });
     },
+    async strataModels(hardware) {
+      return (await strata.strataModels(hardware)).map(row=>({...row,defaultContextWindow:service.context(row.key,row.availableContextWindows,row.defaultContextWindow),requestedContextWindow:service.requestedContext(row.key)}));
+    },
+    async strata(action, value) {
+      await ready;
+      if(!['catalog','setup','install','unload','directory'].includes(action))throw new Error('Choose a supported Strata action.');
+      if(action==='catalog')return {...await strata.strataCatalog(await detectHardware(true)),...await strata.strataStatus()};
+      if(action==='unload'){await strata.stopStrata();return service.strata('catalog');}
+      if(job?.public.state==='running')throw new Error('A model download is already running.');
+      if(action==='directory'){
+        const directory=value===undefined?await chooseModelDirectory?.():value;
+        if(directory)await strata.setStrataDirectory(directory);
+        return service.strata('catalog');
+      }
+      if(action==='install'&&(typeof value!=='string'||!/^[a-z0-9][a-z0-9_-]{0,127}$/.test(value)))throw new Error('Choose a Strata catalog model.');
+      const controller=new AbortController();job={controller,public:{id:randomUUID(),repo:action==='setup'?'Strata engine':value,runner:'strata',state:'running',message:'Preparing experimental Strata…'}};
+      const current=job,output=text=>{current.public.message=text.replace(/\x1b\[[0-9;]*m/g,'').trim().slice(-500);};
+      void (async()=>{
+        if(action==='setup')await strata.prepareStrata(controller.signal,output);
+        else await strata.installStrata(value,await detectHardware(true),controller.signal,output);
+        current.public.state='complete';current.public.message=action==='setup'?'Strata control is ready. Choose a model below.':'Strata model prepared. Select it in Installed; hardware and context are checked before loading. Speed benchmarks are off.';
+      })().catch(error=>{current.public.state=controller.signal.aborted?'cancelled':'failed';current.public.message=String(error.message).slice(-500);});
+      return service.status();
+    },
     async colibriModels(hardware) {
       return (await colibri.colibriModels(hardware)).map(row=>({...row,defaultContextWindow:service.context(row.key,row.availableContextWindows,row.defaultContextWindow),requestedContextWindow:service.requestedContext(row.key)}));
     },
     async colibri(action, model) {
       await ready;
-      if (!['catalog','setup','install','unload'].includes(action)) throw new Error('Choose a Colibri setup, model download or unload action.');
-      if (action==='catalog') { const status=await colibri.colibriStatus(); return {...status,models:status.installed?await colibri.colibriCatalog():[]}; }
+      if (!['catalog','setup','install','unload','backend','benchmark'].includes(action)) throw new Error('Choose a supported Colibri action.');
+      if (action==='catalog') {
+        const status=await colibri.colibriStatus();
+        let compatibility={};
+        if(status.installed && colibri.colibriCompatibility)try{compatibility=await colibri.colibriCompatibility();}catch{compatibility={backends:['cpu','vulkan','cuda','metal'].map(backend=>({backend,label:backend.toUpperCase(),available:false,reason:'Hardware compatibility could not be verified. Refresh and check the Colibri log.'}))};}
+        return {...status,...compatibility,models:status.installed?await colibri.colibriCatalog():[]};
+      }
       if (action==='unload') { await colibri.stopColibri(); return service.colibri('catalog'); }
       if (job?.public.state==='running') throw new Error('A model download is already running.');
+      if(action==='backend' || action==='benchmark') { await colibri.setColibriPreference(action==='backend'?'backend':'benchmarkEnabled',model); return service.colibri('catalog'); }
       if (action==='install' && (typeof model!=='string' || !/^[a-z0-9-]{1,80}$/.test(model))) throw new Error('Choose a Colibri catalog model.');
       const controller=new AbortController();
       job={controller,public:{id:randomUUID(),repo:action==='setup'?'Colibri engine':model,runner:'colibri',state:'running',message:action==='setup'?'Preparing Colibri…':'Preparing resumable model download…'}};
@@ -117,8 +150,9 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       await atomic(fallbackFile, Object.fromEntries(fallbacks));
       return service.allFallbacks();
     },
-    async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && (row.enabled || row.provider==='colibri')); if (!row || (tokens!=='auto' && !row.availableContextWindows.includes(tokens))) throw new Error('Choose a supported context limit for this model.');
-      if(row.provider==='colibri'){if((await colibri.colibriStatus()).running)throw new Error('Unload Colibri before changing context so free memory can be checked accurately.');if(!(await colibri.colibriPlan(tokens==='auto'?16384:tokens)).fits)throw new Error('This Colibri context exceeds current free memory. Close applications or choose a smaller context.');}
+    async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && (row.enabled || ['colibri','strata'].includes(row.provider))); if (!row || (tokens!=='auto' && !row.availableContextWindows.includes(tokens))) throw new Error('Choose a supported context limit for this model.');
+      if(row.provider==='strata'){if((await strata.strataStatus()).running)throw new Error('Unload Strata before changing context.');if(!(await strata.strataPlan(tokens==='auto'?undefined:tokens)).fits)throw new Error('This Strata context exceeds current free memory.');}
+      if(row.provider==='colibri'){if((await colibri.colibriStatus()).running)throw new Error('Unload Colibri before changing context so free memory can be checked accurately.');if(!(await colibri.colibriPlan(tokens==='auto'?undefined:tokens)).fits)throw new Error('This Colibri context exceeds current free memory. Close applications or choose a smaller context.');}
       if(tokens==='auto')preferences.delete(model);else preferences.set(model,tokens); await atomic(contextFile,Object.fromEntries(preferences)); },
     async hubCatalog(runner, options={}) { await ready; if (runner !== undefined && !['ollama','mlx'].includes(runner)) throw new Error('Choose Ollama or MLX.'); if(!options || typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(key=>!['query','page','force'].includes(key)))throw new Error('Invalid model search.'); return (recommendModels || (args=>hub.list(args)))({ ...options,runner,token:keys.get('huggingface') }); },
     async startInstall(repo, runner) {

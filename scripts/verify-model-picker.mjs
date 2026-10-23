@@ -24,6 +24,9 @@ try{
       const bounds=await app.evaluate(({BrowserWindow},{url,size})=>{const window=BrowserWindow.getAllWindows().find(window=>window.webContents.getURL()===url);window.unmaximize();window.setBounds({x:40,y:40,width:size[0],height:size[1]});return window.getBounds();},{url:page.url(),size});
       await page.waitForFunction(([width,height])=>Math.abs(innerWidth-width)<=2&&Math.abs(innerHeight-height)<=2,size);
       await page.getByRole('button',{name:'Model',exact:true}).click();
+      await page.getByRole('searchbox',{name:'Search ready models',exact:true}).waitFor();
+      assert.equal(await page.getByRole('tab').count(),0);
+      await page.getByRole('button',{name:'Manage models…',exact:true}).click();
       for(const name of ['Installed','Hugging Face','OpenRouter','Colibri']){
         const tab=page.getByRole('tab',{name,exact:true});await tab.click();
         await page.waitForFunction(id=>document.getElementById(id)?.getAttribute('aria-selected')==='true',await tab.getAttribute('id'));
