@@ -103,6 +103,7 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       void (async()=>{
         if(action==='setup')await strata.prepareStrata(controller.signal,output);
         else await strata.installStrata(value,await detectHardware(true),controller.signal,output);
+        controller.signal.throwIfAborted();
         current.public.state='complete';current.public.message=action==='setup'?'Strata control is ready. Choose a model below.':'Strata model prepared. Select it in Installed; hardware and context are checked before loading. Speed benchmarks are off.';
       })().catch(error=>{current.public.state=controller.signal.aborted?'cancelled':'failed';current.public.message=String(error.message).slice(-500);});
       return service.status();
@@ -133,6 +134,7 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
           await colibri.installColibri(model,{signal:controller.signal,token:keys.get('huggingface'),output});
           installed=true;
         } finally {if(installed)await colibri.stopColibri();} }
+        controller.signal.throwIfAborted();
         current.public.state='complete';current.public.message=action==='setup'?'Colibri is ready. Choose a coding model below.':'Tool validation passed. Open Installed to select the model; weights load when you send a message.';
       })().catch(error=>{current.public.state=controller.signal.aborted?'cancelled':'failed';current.public.message=String(error.message).replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);});
       return service.status();

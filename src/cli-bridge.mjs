@@ -6,13 +6,15 @@ const require = createRequire(import.meta.url);
 export const cliEntry = path.join(path.dirname(require.resolve('@freesyntax/notch-cli/package.json')), 'dist/index.js');
 
 /** Run the published harness without shell interpolation or renderer access to Node. */
-export function runCli(args, { cwd = process.cwd(), signal, onOutput, executable = process.execPath, entry = cliEntry, env = {} } = {}) {
+export function runCli(args, { cwd = process.cwd(), signal, onOutput, executable = process.execPath, entry = cliEntry, env = {}, timeout = 60000 } = {}) {
   if (Object.keys(env).some(key => key !== 'HF_TOKEN') || (env.HF_TOKEN && !/^hf_[\w]{8,256}$/.test(env.HF_TOKEN))) throw new Error('Invalid model download environment.');
+  if(!Number.isSafeInteger(timeout)||timeout<=0||timeout>24*3600000)throw new Error('Invalid local model operation timeout.');
   return new Promise((resolve, reject) => {
     const child = spawn(executable, [entry, ...args], { cwd, signal, windowsHide: true,
       env: { ...Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key/i.test(key))), ...env, ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: '1' } : {}) }, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '', stderr = '', failure;
     const fail = error => { failure ??= error; };
+    const timer=setTimeout(()=>{fail(new Error('Local model operation timed out. Downloaded files are retained; retry to resume.'));child.kill();},timeout);
     child.once('error', fail);
     const receive = (stream, chunk) => {
       const text = chunk.toString('utf8');
@@ -23,6 +25,7 @@ export function runCli(args, { cwd = process.cwd(), signal, onOutput, executable
     child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', chunk => receive('stdout', chunk)); child.stderr.on('data', chunk => receive('stderr', chunk));
     child.once('close', code => {
+      clearTimeout(timer);
       if (failure) reject(failure);
       else if (code !== 0) reject(new Error(stderr.trim() || `Notch exited with status ${code}.`));
       else resolve({ stdout, stderr });
@@ -42,7 +45,7 @@ export function installLocalModel(repo, runner, options) {
   if (!/^[\w](?:[\w.-]*[\w])?\/[\w](?:[\w.-]*[\w])?$/.test(repo)) throw new Error('Choose a public owner/model repository.');
   if (!['ollama', 'mlx'].includes(runner)) throw new Error('Choose ollama or mlx.');
   // Invoke only after the UI confirms the selected model/runtime download.
-  return runCli(['install', '--model', repo, '--runner', runner, '--yes', '--no-launch'], {...options,entry:options?.entry || fileURLToPath(new URL('../vendor/notch-core/desktop-model-download.js',import.meta.url))});
+  return runCli(['install', '--model', repo, '--runner', runner, '--yes', '--no-launch'], {timeout:24*3600000,...options,entry:options?.entry || fileURLToPath(new URL('../vendor/notch-core/desktop-model-download.js',import.meta.url))});
 }
 
 export function unloadLocalModel(options) { return runCli(['models', 'unload'], options); }

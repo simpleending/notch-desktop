@@ -42,6 +42,16 @@ test('switching across all local providers releases each preceding engine',async
 });
 
 for(const provider of ['colibri','strata']){
+ test(`${provider} failed startup clears busy state and allows remount`,async()=>{
+  const f=fixture(),key=provider+'/coder',method=provider==='colibri'?'startColibri':'startStrata';
+  const start=f.runtime[method];f.runtime[method]=async()=>{throw Error('Engine exited during loading');};
+  await assert.rejects(f.lifecycle.change('mount',key),/Engine exited/);
+  assert.equal(f.lifecycle.busy,false);assert.equal(f.loaded.size,0);
+  f.runtime[method]=start;
+  assert.deepEqual(await f.lifecycle.change('mount',key),{loaded:true});
+  assert.deepEqual([...f.loaded.keys()],[key]);
+  await f.lifecycle.change('eject',key);assert.equal(f.lifecycle.busy,false);assert.equal(f.loaded.size,0);
+ });
  test(`${provider} supports toggle, explicit eject, and switching in both directions without losing inventory`,async()=>{
   const f=fixture(),key=provider+'/coder';
   for(const action of ['toggle','eject']){
