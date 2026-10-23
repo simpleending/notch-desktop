@@ -1,4 +1,11 @@
 const GiB = 2 ** 30;
+export function dedicatedResidentVram(mounted, hardware) {
+  const resident=Number.isSafeInteger(mounted.size)&&mounted.size>0?mounted.size:0;
+  const reported=Number.isSafeInteger(mounted.size_vram)&&mounted.size_vram>=0?mounted.size_vram:0;
+  // Allocations above physical VRAM use shared system RAM on integrated GPUs.
+  const capacity=hardware.appleSilicon?0:Number.isSafeInteger(hardware.totalVram)&&hardware.totalVram>=0?hardware.totalVram:Infinity;
+  return Math.min(resident,reported,capacity);
+}
 export function localContextProfile(bytes, hardware, metadata = {}, mounted = {}) {
   const info = metadata.model_info || {}, arch = info['general.architecture'];
   const number = key => Number(info[`${arch}.${key}`]);
@@ -14,7 +21,7 @@ export function localContextProfile(bytes, hardware, metadata = {}, mounted = {}
   const known = Number.isFinite(kvBytesPerToken) && kvBytesPerToken > 0;
   // A running copy already occupies memory; count only that same model's reclaimable allocation.
   const resident = Number.isSafeInteger(mounted.size) && mounted.size>0 ? mounted.size : 0;
-  const residentVram = !hardware.appleSilicon && Number.isSafeInteger(mounted.size_vram) && mounted.size_vram>=0 ? Math.min(resident,mounted.size_vram) : 0;
+  const residentVram = dedicatedResidentVram(mounted,hardware);
   const ram = Math.min(hardware.totalMemory,hardware.availableMemory+resident-residentVram);
   const ramBudget = Math.max(0, Math.min(ram - GiB, hardware.totalMemory * .75));
   const vram = Math.min(hardware.totalVram ?? Infinity, hardware.availableVram + residentVram);

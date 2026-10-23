@@ -29,7 +29,7 @@ test('Strata setup, install, cancellation and context changes use the isolated e
 });
 
 test('Strata keeps unavailable backends and models visible with reasons, with benchmarks off',()=>{
-  const React={Fragment:'fragment',useState:value=>[value,()=>{}],useEffect(){},createElement:(type,props,...children)=>({type,props:props||{},children})};
+  const React={Fragment:'fragment',useState:value=>[value,()=>{}],useRef:()=>({current:null}),useEffect(){},createElement:(type,props,...children)=>({type,props:props||{},children})};
   const cached={installed:true,version:'0.2.2',gpu:'AMD Radeon 8060S',backend:'hip',reason:'Strix Halo support is experimental',dataDirectory:'Z:/Strata',freeDiskBytes:100e9,
     backends:[{backend:'cuda',available:false,reason:'No NVIDIA GPU'},{backend:'hip',available:true,reason:'AMD HIP'},{backend:'cpu',available:false,reason:'GPU required'}],
     models:[{id:'large',name:'Large model',download_gb:70,fits:false,reason:'Insufficient current memory'}]};

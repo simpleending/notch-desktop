@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { NotchQuery } from './notch-query.mjs';
 import { createWorkspaceSearch } from './workspace-search.mjs';
 import { detectLocalHardware, runDesktopTurn, CheckpointManager } from '../vendor/notch-core/desktop-harness.js';
-import { localContextProfile } from './model-policy.mjs';
+import { localContextProfile, dedicatedResidentVram } from './model-policy.mjs';
 import { desktopInstructionsForContext } from './context-prompts.mjs';
 import { createLocalModelLifecycle, localRuntime } from './local-model-lifecycle.mjs';
 import { validateLocalPlugin } from './plugin-validation.mjs';
@@ -91,8 +91,8 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
             const mounted = result.value.mounted.find(model=>model.name===row.name && (!row.digest || model.digest===row.digest));
             const reclaimable=results.flatMap(result=>result.status==='fulfilled'?result.value.mounted:[]).filter(model=>model!==mounted);
             const fit = localContextProfile(size,{...hardware,
-              availableMemory:Math.min(hardware.totalMemory,hardware.availableMemory+reclaimable.reduce((sum,model)=>sum+Math.max(0,(model.size||0)-(hardware.appleSilicon?0:model.size_vram||0)),0)),
-              availableVram:hardware.availableVram+reclaimable.reduce((sum,model)=>sum+(model.size_vram||0),0)},metadata,mounted);
+              availableMemory:Math.min(hardware.totalMemory,hardware.availableMemory+reclaimable.reduce((sum,model)=>sum+Math.max(0,(model.size||0)-dedicatedResidentVram(model,hardware)),0)),
+              availableVram:hardware.availableVram+reclaimable.reduce((sum,model)=>sum+dedicatedResidentVram(model,hardware),0)},metadata,mounted);
             const contextWindow = host.modelManager?.context(key,fit.choices,fit.contextWindow) || fit.contextWindow;
             const maxOutputTokens = Math.min(16384, Math.floor(contextWindow / 4));
             nextProfiles.set(key, { ...fit, contextWindow, maxOutputTokens });

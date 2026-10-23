@@ -4,9 +4,21 @@ import { mkdtemp, readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createModelManager } from '../src/model-manager.mjs';
-import { cloudModelRows, localContextProfile, isPrimaryModelSender, normalizeOpenRouterFallbacks, OPENROUTER_FALLBACK_LIMIT } from '../src/model-policy.mjs';
+import { cloudModelRows, localContextProfile, dedicatedResidentVram, isPrimaryModelSender, normalizeOpenRouterFallbacks, OPENROUTER_FALLBACK_LIMIT } from '../src/model-policy.mjs';
 import { parseNvidiaMemory, linuxGpuMemory } from '../vendor/notch-core/desktop-harness.js';
 const GiB=2**30;
+test('integrated GPU allocations above physical VRAM are reclaimable system RAM',()=>{
+ const resident={size:4*GiB,size_vram:4*GiB};
+ assert.equal(dedicatedResidentVram(resident,{totalVram:GiB/2}),GiB/2);
+ assert.equal(dedicatedResidentVram(resident,{totalVram:8*GiB}),4*GiB);
+ assert.equal(dedicatedResidentVram(resident,{}),4*GiB);
+ assert.equal(dedicatedResidentVram(resident,{appleSilicon:true,totalVram:8*GiB}),0);
+ assert.equal(dedicatedResidentVram({size:GiB,size_vram:-1},{totalVram:GiB}),0);
+ const metadata={capabilities:['tools'],model_info:{'general.architecture':'test','test.context_length':8192}};
+ const hw={availableMemory:4*GiB,totalMemory:32*GiB,availableVram:0,totalVram:GiB/2};
+ assert.equal(localContextProfile(3*GiB,hw,metadata,resident).fits,true);
+ assert.equal(localContextProfile(3*GiB,{...hw,totalVram:8*GiB},metadata,resident).fits,true);
+});
 test('task workspace defaults to the project, persists both choices, and rejects invalid saved settings',async()=>{
   const directory=await mkdtemp(path.join(os.tmpdir(),'notch-workspace-setting-'));
   const manager=createModelManager(directory);

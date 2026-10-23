@@ -29,6 +29,20 @@ function fixture(){
  const lifecycle=createLocalModelLifecycle({runtime,fetcher,catalog:async()=>keys.map(key=>({key,enabled:true,defaultContextWindow:8192})),endpoint:()=> 'http://127.0.0.1:11436/v1',context:()=>8192,assertIdle:()=>{if(busy)throw Error('Active response');}});
  return{loaded,calls,lifecycle,runtime,set busy(value){busy=value;},set failLoad(value){failLoad=value;},set failEject(value){failEject=value;}};
 }
+
+test('an integrated GPU resident does not hide a model that fits after releasing its shared RAM',async()=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'notch-uma-switch-')),GiB=2**30;
+ const host=createHost(directory,{hardware:async()=>({totalMemory:32*GiB,availableMemory:4*GiB,totalVram:GiB/2,availableVram:0}),
+  runtime:{withLocalInference:fn=>fn(),colibriStatus:async()=>({running:false}),strataStatus:async()=>({running:false}),loadedMlxModel:()=>undefined},
+  fetcher:async url=>{
+   if(url.includes(':11434'))throw Error('No secondary daemon');
+   if(url.endsWith('/api/tags'))return Response.json({models:[{name:'resident',size:3*GiB,digest:'resident'},{name:'next',size:3*GiB,digest:'next'}]});
+   if(url.endsWith('/api/ps'))return Response.json({models:[{name:'resident',digest:'resident',size:4*GiB,size_vram:4*GiB,context_length:8192}]});
+   return Response.json({capabilities:['tools'],model_info:{'general.architecture':'test','test.context_length':8192}});
+  }});
+ try{assert.equal((await host.listModels(true)).find(row=>row.key==='ollama/next').enabled,true);}
+ finally{await host.workspaceSearch.shutdown();await fs.rm(directory,{recursive:true,force:true});}
+});
 test('switching releases the old Ollama model before mounting the next; toggle and eject keep installed inventory',async()=>{
  const f=fixture();assert.deepEqual(await f.lifecycle.change('mount','ollama/next'),{loaded:true});
  assert.deepEqual([...f.loaded.keys()],['ollama/next']);assert(f.calls.indexOf('eject old')<f.calls.indexOf('load next'));
