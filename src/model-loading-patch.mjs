@@ -20,7 +20,8 @@ export function patchModelLoading(source) {
   });
   source = patchFunction(source, 'ChatComposer', body => {
     body = replace(body, '_6=L2?jsxRuntimeExports.jsx(SuggestionBanner,', '_6=o2?reactExports.createElement(NotchModelLoadingDots):L2?jsxRuntimeExports.jsx(SuggestionBanner,');
-    return body;
+    // Adding/removing a status must not remount the picker in the middle of a load.
+    return replace(body, 'G0=!!(l0||_6)', 'G0=!0');
   });
   return '/* notch model loading */\nimport {useModelActivity,createModelLoadingDots} from "./model-activity.mjs";\n' + source + '\nconst NotchModelLoadingDots=createModelLoadingDots(reactExports);\n';
 }

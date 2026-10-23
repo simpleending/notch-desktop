@@ -68,6 +68,8 @@ test('loading dots are accessible and replace the warning above the composer onl
   const dots=createModelLoadingDots(React)();assert.equal(dots.props.role,'status');assert.equal(dots.props['aria-label'],'Preparing model');assert.equal(dots.children.length,3);assert(dots.children.every(dot=>dot.props['aria-hidden']));
   const context={reactExports:React,createModelLoadingDots,jsxRuntimeExports:{jsx:React.createElement},SuggestionBanner:'warning'};
   const component=patched.slice(patched.indexOf('function ChatComposer('));
-  assert.equal(vm.runInNewContext(component+';ChatComposer({modelLoading:true,modelError:"unavailable"})',context).type.name,'ModelLoadingDots');
-  assert.equal(vm.runInNewContext(component+';ChatComposer({modelLoading:false,modelError:"unavailable"})',{...context}).type,'warning');
+  assert.equal(vm.runInNewContext(component+';ChatComposer({modelLoading:true,modelError:"unavailable"})',context).props.children[1].type.name,'ModelLoadingDots');
+  assert.equal(vm.runInNewContext(component+';ChatComposer({modelLoading:false,modelError:"unavailable"})',{...context}).props.children[1].type,'warning');
+  const idle=vm.runInNewContext(component+';ChatComposer({modelLoading:false,modelError:null})',{...context});
+  assert.equal(idle.type,'div');assert.equal(idle.props.children[1],null);assert.equal(idle.props.children[2],'composer');
 });
