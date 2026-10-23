@@ -120,7 +120,10 @@ function queuedLocalFetch(fetcher) {
     };
     try {
       signal?.throwIfAborted();
-      const response = await ownership.run(true, () => fetcher(input, init));
+      const response = await ownership.run(true, async () => {
+        await executionContext.getStore()?.prepareLocalModel?.();
+        return fetcher(input, init);
+      });
       if (!response.body) {
         await finish();
         return response;

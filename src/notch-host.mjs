@@ -7,6 +7,7 @@ import { createWorkspaceSearch } from './workspace-search.mjs';
 import { detectLocalHardware, runDesktopTurn, CheckpointManager } from '../vendor/notch-core/desktop-harness.js';
 import { localContextProfile } from './model-policy.mjs';
 import { desktopInstructionsForContext } from './context-prompts.mjs';
+import { createLocalModelLifecycle, localRuntime } from './local-model-lifecycle.mjs';
 import { validateLocalPlugin } from './plugin-validation.mjs';
 import { createRemoteWorkspace } from './remote-workspace.mjs';
 
@@ -25,12 +26,13 @@ function sessionFile(directory, id) {
   if (!/^[A-Za-z0-9_-]{1,128}$/.test(id)) throw new Error('Invalid Notch session ID.');
   return path.join(directory, `${id}.json`);
 }
-export function createHost(dataDirectory, { hardware: detectHardware = detectLocalHardware, fetcher = fetch, runTurn = runDesktopTurn } = {}) {
+export function createHost(dataDirectory, { hardware: detectHardware = detectLocalHardware, fetcher = fetch, runTurn = runDesktopTurn, runtime = localRuntime } = {}) {
   const sessions = path.join(dataDirectory, 'notch-sessions');
   let models = [], fetchedAt = 0, pending, defaultModel, discoveryWarning;
   let endpoints = new Map(), profiles = new Map(), unverifiedModels = new Set();
   const queries = new Map();
   const rewinding = new Set();
+  let lifecycle;
   const host = {
     remoteWorkspace: (target, signal) => createRemoteWorkspace(host.remoteSsh, target, signal),
     workspaceSearch: createWorkspaceSearch(),
@@ -41,6 +43,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     getDefaultModel: () => defaultModel,
     getModelDiscoveryWarning: () => discoveryWarning,
     getQueueStatus: () => [...queries.values()].filter(query => query.queueMessage).map(query => ({ sessionId: query.id, message: query.queueMessage })),
+    async localModelChange(action,key) { return lifecycle.change(action,key); },
     resolveModelChoice(model) {
       const chosen = !model || model === 'auto' ? defaultModel : model;
       if (!chosen || !models.some(row => row.key === chosen && row.enabled)) throw new Error('The selected model is unavailable or does not fit current memory. Choose a model in the composer.');
@@ -84,7 +87,10 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
             let metadata = {};
             try { const response = await fetcher(`${result.value.root}/api/show`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model: row.name }), signal: AbortSignal.timeout(3000) }); if (response.ok) metadata = await response.json(); } catch { /* Unverified models remain visible but cannot run tools. */ }
             const mounted = result.value.mounted.find(model=>model.name===row.name && (!row.digest || model.digest===row.digest));
-            const fit = localContextProfile(size,hardware,metadata,mounted);
+            const reclaimable=results.flatMap(result=>result.status==='fulfilled'?result.value.mounted:[]).filter(model=>model!==mounted);
+            const fit = localContextProfile(size,{...hardware,
+              availableMemory:Math.min(hardware.totalMemory,hardware.availableMemory+reclaimable.reduce((sum,model)=>sum+Math.max(0,(model.size||0)-(hardware.appleSilicon?0:model.size_vram||0)),0)),
+              availableVram:hardware.availableVram+reclaimable.reduce((sum,model)=>sum+(model.size_vram||0),0)},metadata,mounted);
             const contextWindow = host.modelManager?.context(key,fit.choices,fit.contextWindow) || fit.contextWindow;
             const maxOutputTokens = Math.min(16384, Math.floor(contextWindow / 4));
             nextProfiles.set(key, { ...fit, contextWindow, maxOutputTokens });
@@ -92,7 +98,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
             const label = metadata.model_info?.['general.base_model.0.name'];
             unique.set(key, { key, displayName: typeof label === 'string' && label ? label : row.name,
               description: fit.fits ? 'local Ollama · estimated memory fit' : fit.reason, provider: 'ollama', bytes: size, source: 'system', enabled: fit.fits,
-              isDefault: row.name.startsWith('notch-hf-'), isNew: false, priceFactor: 0, tags: ['local'],
+              running:!!mounted,isDefault: row.name.startsWith('notch-hf-'), isNew: false, priceFactor: 0, tags: ['local'],
               maxInputTokens: fit.nativeContext, maxOutputTokens, availableContextWindows: fit.choices, defaultContextWindow: contextWindow,
               recommendedContextWindow:fit.contextWindow, requestedContextWindow:host.modelManager?.requestedContext(key),
               efforts: [], defaultEffort: null, supportsDisabled: true });
@@ -100,7 +106,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
         }
         // A failed transport is not an empty inventory; stale entries cannot start a local turn.
         for(const row of retained)if(!unique.has(row.key)){unique.set(row.key,{...row});nextEndpoints.set(row.key,endpoints.get(row.key));nextProfiles.set(row.key,{...profiles.get(row.key)});unverified.add(row.key);}
-        if (host.modelManager) for (const row of await host.modelManager.mlxModels(hardware)) { unique.set(row.key,row); nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
+        if (host.modelManager) for (const row of await host.modelManager.mlxModels(hardware)) { unique.set(row.key,{...row,running:row.key==='mlx/'+runtime.loadedMlxModel()}); nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
         if (host.modelManager?.strataModels) for(const row of await host.modelManager.strataModels(hardware)){unique.set(row.key,row);nextEndpoints.set(row.key,'http://127.0.0.1:11438/v1');nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens});}
         if (host.modelManager?.colibriModels) for (const row of await host.modelManager.colibriModels(hardware)) { unique.set(row.key,row); nextEndpoints.set(row.key,'http://127.0.0.1:11437/v1'); nextProfiles.set(row.key,{contextWindow:row.defaultContextWindow,nativeContext:row.maxInputTokens,maxOutputTokens:row.maxOutputTokens}); }
         const nextModels=[...unique.values()];
@@ -181,6 +187,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     query(request) {
       if (host.phone) request = host.phone.prepare(request);
       const model = host.resolveModelChoice(request.model);
+      if(!model.startsWith('openrouter/')&&lifecycle.busy)throw Error('Wait for the local model to finish loading or ejecting.');
       const id = request.resumeSessionId || request.sessionId;
       const current = queries.get(id);
       if (id && ((current && !current.closed && !current.ended) || rewinding.has(id))) throw new Error('This session is already open or restoring files.');
@@ -192,7 +199,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
           const model = host.resolveModelChoice(turn.model);
           if(unverifiedModels.has(model))throw new Error('Could not verify the local model. Start Ollama or refresh to retry.');
           const apiKey = model.startsWith('openrouter/') ? await host.modelManager?.key('openrouter') : undefined;
-          turn = { ...turn, instructions: desktopInstructionsForContext(turn.instructions, profiles.get(model)?.contextWindow || 8192) };
+          turn = { ...turn, prepareLocalModel:model.startsWith('openrouter/')?undefined:()=>lifecycle.prepare(model), instructions: desktopInstructionsForContext(turn.instructions, profiles.get(model)?.contextWindow || 8192) };
           if (model.startsWith('openrouter/') && !apiKey) throw new Error('Connect an OpenRouter API key in the model picker.');
           const remoteWorkspace = request.executionTarget?.host?.kind === 'ssh' ? await host.remoteWorkspace(request.executionTarget, turn.signal) : undefined;
           return runTurn({ ...turn, model, apiKey, remoteWorkspace, webSettings: async () => await host.webResearch?.configuration() ?? { enabled: true, searchProvider: 'duckduckgo', browser: 'auto' }, workspaceMode: await host.modelManager?.getWorkspaceMode?.() ?? 'shared', workspaceSearch: (operation, params, cwd, signal) => host.workspaceSearch.tool(operation, cwd, params, signal),
@@ -212,5 +219,8 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     },
     async prepare(request) { host.phone?.note(request); let attached = false; return { attach(prompt) { if (attached) throw new Error('Prepared session already attached.'); attached = true; return host.query({ ...request, prompt }); }, async close() { attached = true; } }; },
   };
+  lifecycle=createLocalModelLifecycle({fetcher,runtime,catalog:()=>host.listModels(true),endpoint:key=>endpoints.get(key),
+    context:(key,row)=>key.startsWith('ollama/')||host.modelManager?.requestedContext?.(key)?row.defaultContextWindow:undefined,
+    assertIdle:()=>{if([...queries.values()].some(query=>query.active&&!query.model?.startsWith('openrouter/')))throw Error('Finish or interrupt the current local response before loading or ejecting a model.');}});
   return host;
 }

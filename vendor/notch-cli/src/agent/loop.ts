@@ -1,6 +1,6 @@
 import { toolOutput } from '../messages.js';
 import { ExecutionGuard } from './execution-guard.js';
-import { executionContext } from '../concurrency/local-inference.js';
+import { executionContext, withLocalInference } from '../concurrency/local-inference.js';
 import { withTaskWorkspace, openRouterTaskContext } from '../concurrency/task-workspace.js';
 import { isStepCount, asSchema, jsonSchema } from 'ai';
 /**
@@ -132,6 +132,7 @@ export async function runAgentLoop(
 }
 
 async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfig): Promise<AgentResponse> {
+  if(config.toolContext.prepareLocalModel)await withLocalInference(config.toolContext.prepareLocalModel,config.toolContext.abortSignal);
   // Build tools with read cache for this turn (prevents redundant file reads)
   const readCache = new Map<string, string>();
   const guard = new ExecutionGuard(messages);

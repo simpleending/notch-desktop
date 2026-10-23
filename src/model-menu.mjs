@@ -44,6 +44,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const [search,setSearch] = React.useState(''), [key,setKey] = React.useState(''), [busy,setBusy] = React.useState(false);
     const [error,setError] = React.useState(''), [confirm,setConfirm] = React.useState(null), [optional,setOptional] = React.useState(()=>{try{return localStorage.getItem('notch.models.hideHfToken')!=='1';}catch{return true;}});
     const [hubLoading,setHubLoading] = React.useState(false);
+    const [runtimeMessage,setRuntimeMessage]=React.useState('');
     const [colibri,setColibri]=React.useState(null);
     const [strata,setStrata]=React.useState(null);
     const [cloud,setCloud]=React.useState([]),[cloudLoading,setCloudLoading]=React.useState(false),cloudRequest=React.useRef(0);
@@ -121,6 +122,14 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const connectForm = (tab==='cloud' && !connected) || (tab==='hub' && !connected && optional);
     const selectable = row => props.manageOnly ? row.enabled && !props.loading : isModelSelectable(row,props.options,props.loading);
     const chain = current?.provider==='openrouter' ? normalizeOpenRouterFallbacks(current.key, state?.fallbacks?.[current.key]) : [];
+    const loaded=all.filter(row=>row.key!=='auto'&&row.provider!=='openrouter'&&row.running);
+    const changeRuntime=(row,action)=>act(async()=>{
+      setRuntimeMessage(action==='eject'||row.running?'Ejecting local model…':'Loading local model…');
+      try{
+        const data=await api.runtime(action,row.key);setState(data);
+        if(data.loaded){await props.onSelect(row.key);if(!props.manageOnly){const next=[row.key,...recent.filter(key=>key!==row.key)].slice(0,5);setRecent(next);try{localStorage.setItem('notch.models.recent',JSON.stringify(next));}catch{}changeOpen(false);}}
+      }finally{setRuntimeMessage('');}
+    });
     const saveFallbacks = ids => act(async()=>{ const data=await api.fallbacks(current.key, ids); setState(data); });
     const select = row => {
       if(busy)return;
@@ -132,6 +141,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
         return;
       }
       if(!selectable(row))return;
+      if(row.provider!=='openrouter'){void changeRuntime(row,'toggle');return;}
       props.onSelect(row.key); if(!props.manageOnly){const next=[row.key,...recent.filter(key=>key!==row.key)].slice(0,5);setRecent(next);try{localStorage.setItem('notch.models.recent',JSON.stringify(next));}catch{}changeOpen(false);}
     };
     const keyboard = event => focusModelOption(event, list.current);
@@ -146,9 +156,11 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const sourceIcon = row => row.provider==='openrouter'?h('img',{src:logo(resolvedTheme?.endsWith('-dark')?'openrouter-dark':'openrouter-light'),alt:'',width:14,height:14}):h('svg',{'aria-hidden':true,width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round'},h('path',{d:row.provider==='colibri'?'M8 3v3m8-3v3M8 18v3m8-3v3M3 8h3m12 0h3M3 16h3m12 0h3M6 6h12v12H6zM10 10h4v4h-4z':'M3 4h18v13H3zM8 21h8m-4-4v4'}));
     return h(Popover,{open,onOpenChange:changeOpen},
       h(PopoverTrigger,{asChild:true},h('button',{id:props.triggerId,type:'button',disabled:props.disabled || !api,title:api?undefined:'Manage models in the main notch window','aria-label':props.ariaLabel || 'Model',className:`notch-model-trigger ${props.triggerClassName || ''}`},
-        h('span',null,label),current?h('small',null,`${formatContext(current.defaultContextWindow)}${chain.length?` · ${chain.length} fallback${chain.length===1?'':'s'}`:''}`):null,h('span',{'aria-hidden':true},'⌄'))),
+        h('span',null,label),current?h('small',null,`${formatContext(current.defaultContextWindow)}${current.running?' · Loaded':''}${chain.length?` · ${chain.length} fallback${chain.length===1?'':'s'}`:''}`):null,h('span',{'aria-hidden':true},'⌄'))),
       h(PopoverContent,{side:props.side || 'top',align:props.align || 'end',collisionPadding:{top:56,right:16,bottom:16,left:16},forceDark:false,surface:'solid',className:'notch-model-picker','aria-label':'Choose a model',onInteractOutside:()=>{interactedOutside.current=true;},onCloseAutoFocus:event=>{if(!interactedOutside.current && props.onRestoreFocus){event.preventDefault();props.onRestoreFocus();}}},
         tab!=='ready'?h('div',{className:'notch-model-manager-header'},!props.manageOnly?h('button',{type:'button',className:'notch-model-link',onClick:()=>switchTab('ready')},'← Back to models'):null,h('strong',null,'Manage models')):null,
+        ['ready','installed'].includes(tab)&&loaded.length?h('div',{className:'notch-loaded-models',role:'group','aria-label':'Loaded local models'},...loaded.map(row=>h('div',{key:row.key},h('span',null,h('strong',null,row.displayName),h('small',null,'Loaded')),h('button',{type:'button',title:'Eject from memory; keep downloaded files','aria-label':`Eject ${row.displayName}`,disabled:busy||props.disabled,onClick:()=>void changeRuntime(row,'eject')},h('svg',{'aria-hidden':true,width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7},h('path',{d:'m5 14 7-9 7 9H5Zm0 4h14v3H5z'})))))):null,
+        runtimeMessage?h('p',{role:'status',className:'notch-model-note'},runtimeMessage):null,
         tab!=='ready'?h('div',{className:'notch-model-tabs',role:'tablist','aria-label':'Model source'},...tabs.map(([name,title],index)=>h('button',{
           key:name,id:`${id}-${name}`,type:'button',role:'tab','aria-selected':tab===name,'aria-controls':`${id}-panel`,tabIndex:tab===name?0:-1,
           onClick:()=>switchTab(name),onKeyDown:focusModelTab},
@@ -177,7 +189,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
               h('span',{className:'notch-hub-model-info'},h('strong',null,row.repo),h('small',{className:'notch-model-source'},h('img',{src:logo('huggingface'),alt:'',width:14,height:14}),'Hugging Face · Local download'),h('small',null,`${formatSize(row.bytes)} download · ${formatSize(row.required)} estimated memory${row.fits?'':' · exceeds available memory'}`)),
               h('svg',{'aria-hidden':true,width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round',className:'notch-model-download-icon'},h('path',{d:'M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4'}))):
               h('button',{type:'button',key:row.key,title:row.key,role:'option',tabIndex:row===firstOption?0:-1,'aria-selected':!pickingFallback && row.key===current?.key,disabled:disabledRow(row),onClick:()=>select(row)},
-                h('span',{className:'notch-model-title'},h('strong',null,row.displayName),!pickingFallback && row.key===current?.key?h('span',{'aria-hidden':true},'✓'):null),
+                h('span',{className:'notch-model-title'},h('strong',null,row.displayName),row.running?h('small',null,'Loaded · click to eject'):null,!pickingFallback && row.key===current?.key?h('span',{'aria-hidden':true},'✓'):null),
                 h('small',{className:'notch-model-source'},sourceIcon(row),modelSource(row)),
                 h('small',null,tab==='cloud'?`${formatContext(row.defaultContextWindow)} context · ${Number.isFinite(row.pricing?.input)&&Number.isFinite(row.pricing?.output)?`$${row.pricing.input.toFixed(2)} in / $${row.pricing.output.toFixed(2)} out per 1M tokens`:'see provider pricing'}${row.enabled?'':` · ${row.description}`}`:`${formatContext(row.defaultContextWindow)} context${Number.isFinite(row.bytes)?` · ${formatSize(row.bytes)} weights`:''}${row.enabled?'':` · ${row.description}`}`)))),
           showSkeleton && !confirm?h(LoadingSkeleton,{label:'Loading models…'}):null,

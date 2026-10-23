@@ -13,6 +13,10 @@ export function registerModelIpc(ipcMain, host) {
     const models = (await host.listModels(refreshModels)).filter(row=>row.key!=='auto');
     return { ...status, models, defaultModel: host.getDefaultModel(), discoveryWarning:host.getModelDiscoveryWarning(), hardware: await detectLocalHardware(), fallbacks: manager.allFallbacks() };
   };
+  const unloadProvider=async provider=>{
+    for(const row of await host.listModels(true))if(row.provider===provider&&row.running)await host.localModelChange('eject',row.key);
+    return manager[provider]('catalog');
+  };
   const handlers = {
     updates: (action='status',value) => {
       if(!['status','check','automatic','download','quit'].includes(action))throw new Error('Choose a supported update action.');
@@ -34,7 +38,12 @@ export function registerModelIpc(ipcMain, host) {
       throw new Error('Choose a supported phone action.');
     },
     workspace: async mode => mode === undefined ? manager.getWorkspaceMode() : manager.setWorkspaceMode(mode),
-    state: refresh => state(refresh === true),
+    state: refresh => state(refresh === true,true),
+    runtime: async (action,key) => {
+      if(!['mount','toggle','eject'].includes(action))throw Error('Choose a supported local model action.');
+      const result=await host.localModelChange(action,key);
+      return {...await state(false,true),...result};
+    },
     connect: async (provider,key) => { await manager.connect(provider,key); return state(false,true); },
     disconnect: async provider => { await manager.disconnect(provider); return state(false,true); },
     context: async (model,tokens) => { await manager.setContext(model,tokens,await host.listModels(true)); return state(false,true); },
@@ -47,8 +56,8 @@ export function registerModelIpc(ipcMain, host) {
     },
     hub: (runner,options) => manager.hubCatalog(runner,options),
     cloud: force => manager.cloudCatalog(force===true,true),
-    colibri: (action,model) => manager.colibri(action,model),
-    strata: (action,model) => manager.strata(action,model),
+    colibri: (action,model) => action==='unload'?unloadProvider('colibri'):manager.colibri(action,model),
+    strata: (action,model) => action==='unload'?unloadProvider('strata'):manager.strata(action,model),
     install: (repo,runner) => manager.startInstall(repo,runner),
     cancel: () => manager.cancelInstall(),
     status: () => manager.status(),
@@ -83,6 +92,7 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
  contextBridge.exposeInMainWorld('notchModels',Object.freeze({
   updates:(action,value)=>ipcRenderer.invoke('notch-models:updates',action,value),
   state:refresh=>ipcRenderer.invoke('notch-models:state',refresh),
+  runtime:(action,key)=>ipcRenderer.invoke('notch-models:runtime',action,key),
   connect:(provider,key)=>ipcRenderer.invoke('notch-models:connect',provider,key),
   disconnect:provider=>ipcRenderer.invoke('notch-models:disconnect',provider),
   context:(model,tokens)=>ipcRenderer.invoke('notch-models:context',model,tokens),
@@ -107,6 +117,7 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
 
 export function patchModelPreload(source) {
   if(!source.includes('/* notch model settings bridge */'))return source+modelPreload;
+  if(!source.includes('runtime:(action,key)=>'))source=source.replace("state:refresh=>ipcRenderer.invoke('notch-models:state',refresh),","state:refresh=>ipcRenderer.invoke('notch-models:state',refresh),\n  runtime:(action,key)=>ipcRenderer.invoke('notch-models:runtime',action,key),");
   if(!source.includes('updates:(action,value)=>'))source=source.replace('state:refresh=>','updates:(action,value)=>ipcRenderer.invoke(\'notch-models:updates\',action,value),\n  state:refresh=>');
   const current="hub:(runner,options)=>ipcRenderer.invoke('notch-models:hub',runner,options)",previous="hub:runner=>ipcRenderer.invoke('notch-models:hub',runner)";
   if(!source.includes(current)){

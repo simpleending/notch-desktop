@@ -7,7 +7,7 @@ import {
   ollamaContextLength,
   parseByokRef,
   resolveByokModel
-} from "./chunk-GMSEACYM.js";
+} from "./chunk-RPRLYY5F.js";
 import {
   Rollout
 } from "./chunk-S5MWOFHZ.js";
@@ -21,7 +21,7 @@ import {
   strataModels,
   strataPlan,
   strataStatus
-} from "./chunk-Y5HB5A4J.js";
+} from "./chunk-EGH6TAGU.js";
 import {
   colibriCatalog,
   colibriCompatibility,
@@ -31,13 +31,19 @@ import {
   installColibri,
   prepareColibri,
   setColibriPreference,
+  startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-TXSZPFVP.js";
+} from "./chunk-B7FVLX4V.js";
 import "./chunk-S2VC66HG.js";
 import {
   managedOllama
 } from "./chunk-3C22YZAZ.js";
+import {
+  loadedMlxModel,
+  startMlx,
+  stopMlx
+} from "./chunk-4LWR5MD4.js";
 import {
   LOCAL_MODEL_CATALOG,
   detectLocalHardware,
@@ -48,8 +54,9 @@ import {
 } from "./chunk-B72JEX4V.js";
 import {
   acquireLease,
-  executionContext
-} from "./chunk-OBJXRYDA.js";
+  executionContext,
+  withLocalInference
+} from "./chunk-LUGHZTHG.js";
 import {
   listModels,
   showModel
@@ -7632,6 +7639,7 @@ Task changes are saved separately because these project files changed: ${deliver
   return result;
 }
 async function runAgentLoopInternal(messages, config) {
+  if (config.toolContext.prepareLocalModel) await withLocalInference(config.toolContext.prepareLocalModel, config.toolContext.abortSignal);
   const readCache = /* @__PURE__ */ new Map();
   const guard = new ExecutionGuard(messages);
   const toolCtxWithCache = {
@@ -7673,7 +7681,7 @@ async function runAgentLoopInternal(messages, config) {
   const outputLimit = config.maxOutputTokens ?? (/^(?:ollama(?:-anthropic)?|mlx|colibri|strata)\//.test(config.modelId ?? "") ? 16384 : void 0);
   const colibriModelId = config.colibriModelId ?? (/^colibri[/:]/.test(config.modelId ?? "") ? config.modelId.slice(8) : void 0);
   if (colibriModelId) {
-    const { startColibri, colibriStatus: colibriStatus2 } = await import("./colibri-2MZZUAQ4.js");
+    const { startColibri: startColibri2, colibriStatus: colibriStatus2 } = await import("./colibri-HJ73IUNT.js");
     const automatic = config.colibriAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 12288, 16384, 32768, 65536, 131072, 262144].find((value) => {
       try {
@@ -7684,14 +7692,14 @@ async function runAgentLoopInternal(messages, config) {
     });
     if (automatic && !useful) throw new Error("Instructions and tools exceed the Colibri context limit. Reduce project instructions or the selected tools.");
     if (!automatic) contextBudget(contextWindow, overhead, outputLimit);
-    await startColibri(colibriModelId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, config.toolContext.log, useful);
+    await startColibri2(colibriModelId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, config.toolContext.log, useful);
     contextWindow = (await colibriStatus2()).contextWindow;
-    const { resolveByokModel: resolveByokModel2 } = await import("./byok-ZZD6WEGQ.js");
+    const { resolveByokModel: resolveByokModel2 } = await import("./byok-K67UOA6W.js");
     config.model = resolveByokModel2({ provider: "colibri", model: colibriModelId, contextWindow }).model;
   }
   const strataId = config.strataModelId ?? (/^strata[/:]/.test(config.modelId ?? "") ? config.modelId.slice(7) : void 0);
   if (strataId) {
-    const { startStrata: startStrata2 } = await import("./strata-YKAX7AUB.js");
+    const { startStrata: startStrata2 } = await import("./strata-J4RL2VBU.js");
     const automatic = config.strataAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 16384, 32768, 65536, 131072, 262144, 524288].find((n) => {
       try {
@@ -7703,7 +7711,7 @@ async function runAgentLoopInternal(messages, config) {
     if (!useful) throw new Error("Instructions and tools exceed the Strata context limit.");
     const ready = await startStrata2(strataId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, useful);
     contextWindow = ready.contextWindow;
-    const { resolveByokModel: resolveByokModel2 } = await import("./byok-ZZD6WEGQ.js");
+    const { resolveByokModel: resolveByokModel2 } = await import("./byok-K67UOA6W.js");
     config.model = resolveByokModel2({ provider: "strata", model: strataId, contextWindow }).model;
   }
   const fittedContext = fitContextWindow(contextWindow, overhead, outputLimit, config.contextWindows);
@@ -8497,15 +8505,12 @@ async function runDesktopTurn(turn) {
     const { managedOllama: managedOllama2 } = await import("./ollama-runtime-ASVPSEWA.js");
     await managedOllama2("0.40.3", turn.signal);
   }
-  if (provider === "mlx") {
-    const { startMlx } = await import("./local-runner-55YNC6DG.js");
-    selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
-  }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
   const permissions = await loadPermissions(configRoot);
   const delivered = /* @__PURE__ */ new Set();
   const allowed = definitionRules(turn.allowedTools, "allow"), denied = definitionRules(turn.disallowedTools, "deny");
   const ctx = {
+    prepareLocalModel: turn.prepareLocalModel,
     remoteWorkspace: turn.remoteWorkspace,
     webSettings: turn.webSettings ?? (async () => ({ enabled: true, searchProvider: "duckduckgo", browser: "auto" })),
     workspaceMode: () => turn.workspaceMode ?? config.workspaceMode ?? "shared",
@@ -8609,6 +8614,7 @@ export {
   installResearchBrowser,
   installStrata,
   linuxGpuMemory,
+  loadedMlxModel,
   managedOllama,
   modelFit,
   parseNvidiaMemory,
@@ -8618,8 +8624,11 @@ export {
   safeTailStart,
   setColibriPreference,
   setStrataDirectory,
+  startColibri,
+  startMlx,
   startStrata,
   stopColibri,
+  stopMlx,
   stopStrata,
   strataCatalog,
   strataModels,
@@ -8627,5 +8636,6 @@ export {
   strataStatus,
   validSearchKey,
   validateColibri,
-  webSettingsSchema
+  webSettingsSchema,
+  withLocalInference
 };

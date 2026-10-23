@@ -3,7 +3,7 @@ import {
 } from "./chunk-B72JEX4V.js";
 import {
   withLocalInference
-} from "./chunk-OBJXRYDA.js";
+} from "./chunk-LUGHZTHG.js";
 import {
   detectDaemon,
   showModel
@@ -125,6 +125,9 @@ async function downloadMlx(repo, signal) {
 async function stopMlx() {
   return withLocalInference(stopMlxInternal);
 }
+function loadedMlxModel() {
+  return mlxChild && mlxChild.exitCode === null ? mlxModel : void 0;
+}
 async function stopMlxInternal() {
   const child = mlxChild;
   mlxChild = void 0;
@@ -202,13 +205,15 @@ async function checkOllamaTools(model, host) {
   if (!info.capabilities?.includes("tools")) throw new Error(`${model} does not advertise tool support. It was downloaded, but will not replace the current coding model.`);
   return info;
 }
+
 export {
   MLX_URL,
-  checkOllamaTools,
-  downloadMlx,
   ensureOllama,
   prepareMlx,
-  startMlx,
+  downloadMlx,
   stopMlx,
-  unloadOllama
+  loadedMlxModel,
+  startMlx,
+  unloadOllama,
+  checkOllamaTools
 };

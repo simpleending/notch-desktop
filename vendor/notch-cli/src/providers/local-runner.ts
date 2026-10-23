@@ -96,6 +96,9 @@ export async function downloadMlx(repo: string, signal?: AbortSignal): Promise<v
 export async function stopMlx(): Promise<boolean> {
   return withLocalInference(stopMlxInternal);
 }
+export function loadedMlxModel(): string | undefined {
+  return mlxChild && mlxChild.exitCode === null ? mlxModel : undefined;
+}
 async function stopMlxInternal(): Promise<boolean> {
   const child = mlxChild;
   mlxChild = undefined; mlxModel = undefined;

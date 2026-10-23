@@ -78,7 +78,7 @@ function menu(t,api={},props={}) {
   const previousWindow=globalThis.window,previousStorage=globalThis.localStorage;
   const saved=new Map();
   globalThis.localStorage={getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value)};
-  globalThis.window={notchModels:{state:async()=>({models:[local,cloud,colibri],openrouter:true}),cloud:async()=>[cloud],...api}};
+  globalThis.window={notchModels:{state:async()=>({models:[local,cloud,colibri],openrouter:true}),runtime:async()=>({models:[local,cloud,colibri],openrouter:true,loaded:true}),cloud:async()=>[cloud],...api}};
   const ui=renderHooks(React=>createModelMenu(React,{Popover:'popover',PopoverTrigger:'trigger',PopoverContent:'content'},()=>({resolvedTheme:'notch-dark'})),{open:true,value:cloud.key,options,onSelect(){},...props});
   t.after(()=>{ui.dispose();globalThis.window=previousWindow;globalThis.localStorage=previousStorage;});
   return {ui,saved};
@@ -106,6 +106,7 @@ test('composer opens one ready list, selects a model, and remembers it without l
   assert.equal(ui.find(node=>node.props.className==='notch-model-source').length,3);
   assert.equal(catalogs,0);
   rows[1].props.onClick();
+  await ui.settle();
   assert.equal(selected,local.key);assert.equal(closed,false);
   assert.deepEqual(JSON.parse(saved.get('notch.models.recent')),[local.key]);
 });
@@ -121,6 +122,29 @@ test('management preserves tabs and context controls, and Back clears the search
   button(ui,'← Back to models').props.onClick();await ui.settle();
   assert.equal(ui.find(node=>node.props.role==='tab').length,0);
   assert.equal(ui.find(node=>node.props.role==='option').length,3);
+});
+
+test('local selection waits for loading, and selecting a loaded model ejects without changing the selected model',async t=>{
+ let resolve,selected;const calls=[];
+ const {ui}=menu(t,{runtime:async(action,key)=>{calls.push([action,key]);return new Promise(done=>{resolve=done;});}},{onSelect:key=>selected=key});
+ await ui.settle();ui.find(node=>node.props.title===local.key&&node.props.role==='option')[0].props.onClick();await ui.settle();
+ assert.equal(selected,undefined);assert.deepEqual(calls,[['toggle',local.key]]);assert(button(ui,'Refresh').props.disabled);
+ resolve({models:[{...local,running:true},cloud,colibri],loaded:true});await ui.settle();assert.equal(selected,local.key);
+});
+
+test('eject controls appear in the picker and management, preserve selection, and report load failures',async t=>{
+ let selected;const calls=[],mounted={...local,running:true};
+ const {ui}=menu(t,{state:async()=>({models:[mounted,cloud,colibri]}),runtime:async(action,key)=>{calls.push([action,key]);return{models:[local,cloud,colibri],loaded:false};}},{onSelect:key=>selected=key});
+ await ui.settle();assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,1);
+ button(ui,'Manage models…').props.onClick();await ui.settle();assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,1);
+ ui.find(node=>node.props['aria-label']==='Eject Local coder')[0].props.onClick();await ui.settle();
+ assert.deepEqual(calls,[['eject',local.key]]);assert.equal(selected,undefined);assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,0);
+});
+
+test('a failed load keeps the previous selection and makes the error and retry controls available',async t=>{
+ let selected;const {ui}=menu(t,{runtime:async()=>{throw Error('The model did not finish loading.');}},{onSelect:key=>selected=key});
+ await ui.settle();ui.find(node=>node.props.role==='option'&&node.props.title===local.key)[0].props.onClick();await ui.settle();
+ assert.equal(selected,undefined);assert.equal(button(ui,'Refresh').props.disabled,false);assert(ui.find(node=>node.props.role==='alert').length);
 });
 
 test('management settings still open directly on the existing tabs',async t=>{

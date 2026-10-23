@@ -4,7 +4,7 @@ import {
 import {
   acquireLease,
   withLocalInference
-} from "./chunk-OBJXRYDA.js";
+} from "./chunk-LUGHZTHG.js";
 
 // vendor/notch-cli/src/providers/colibri.ts
 import os from "os";

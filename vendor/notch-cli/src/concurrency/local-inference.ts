@@ -22,7 +22,10 @@ export function queuedLocalFetch(fetcher: typeof fetch): typeof fetch {
     const abort = () => { void (reader?.cancel(signal?.reason) ?? Promise.resolve()).catch(() => {}).finally(finish); };
     try {
       signal?.throwIfAborted();
-      const response = await ownership.run(true, () => fetcher(input, init));
+      const response = await ownership.run(true, async () => {
+        await executionContext.getStore()?.prepareLocalModel?.();
+        return fetcher(input, init);
+      });
       if (!response.body) { await finish(); return response; }
       reader = response.body.getReader();
       signal?.addEventListener('abort', abort, { once: true });

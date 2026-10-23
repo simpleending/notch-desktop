@@ -19,11 +19,15 @@ export { acquireLease } from './concurrency/lease.js';
 export { detectLocalHardware, parseNvidiaMemory, linuxGpuMemory, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
 export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
 export { managedOllama } from './providers/ollama-runtime.js';
+export { withLocalInference } from './concurrency/local-inference.js';
+export { startMlx, stopMlx, loadedMlxModel } from './providers/local-runner.js';
+export { startColibri } from './providers/colibri.js';
 export { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } from './providers/colibri.js';
 export { prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, setStrataDirectory, installStrata, startStrata, stopStrata } from './providers/strata.js';
 export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };
 export interface DesktopTurn {
+  prepareLocalModel?: () => Promise<void>;
   remoteWorkspace?: ToolContext['remoteWorkspace'] & { instructions: string };
   webSettings?: ToolContext['webSettings'];
   workspaceSearch?: ToolContext['workspaceSearch'];
@@ -100,15 +104,13 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     const { managedOllama } = await import('./providers/ollama-runtime.js');
     await managedOllama('0.40.3', turn.signal);
   }
-  if (provider === 'mlx') {
-    const { startMlx } = await import('./providers/local-runner.js');
-    selection.baseUrl = await startMlx(parseByokRef(selection.model).model, turn.signal);
-  }
+  // Managed MLX starts inside its queued transport after the previous local model is released.
   if (provider === 'ollama' || provider === 'ollama-anthropic') selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
   const permissions = await loadPermissions(configRoot);
   const delivered = new Set<string>();
   const allowed = definitionRules(turn.allowedTools, 'allow'), denied = definitionRules(turn.disallowedTools, 'deny');
   const ctx: ToolContext = {
+    prepareLocalModel: turn.prepareLocalModel,
     remoteWorkspace: turn.remoteWorkspace,
     webSettings: turn.webSettings ?? (async () => ({ enabled: true, searchProvider: 'duckduckgo', browser: 'auto' })),
     workspaceMode: () => turn.workspaceMode ?? config.workspaceMode ?? 'shared',

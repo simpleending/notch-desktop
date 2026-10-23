@@ -1,6 +1,6 @@
 import {
   queuedLocalFetch
-} from "./chunk-OBJXRYDA.js";
+} from "./chunk-LUGHZTHG.js";
 import {
   ollamaChatUrl,
   ollamaRoot
@@ -579,17 +579,17 @@ function resolveByokModel(spec) {
   }
   const provider = createOpenAI({
     ...providerInfo.id === "ollama" ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) } : providerInfo.id === "strata" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startStrata } = await import("./strata-YKAX7AUB.js");
+      const { startStrata } = await import("./strata-J4RL2VBU.js");
       const ready = await startStrata(modelId, spec.contextWindow, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready.baseUrl + url.pathname.replace(/^\/v1/, "") + url.search, init);
     }) } : providerInfo.id === "colibri" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startColibri } = await import("./colibri-2MZZUAQ4.js");
+      const { startColibri } = await import("./colibri-HJ73IUNT.js");
       const ready = await startColibri(modelId, spec.contextWindow, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
     }) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startMlx } = await import("./local-runner-55YNC6DG.js");
+      const { startMlx } = await import("./local-runner-JIFOAN2R.js");
       const ready = await startMlx(modelId, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
@@ -634,12 +634,12 @@ async function validateByokConfig(spec) {
         return { ok: false, error: "This Ollama model does not advertise tool calling. Choose a tool-capable model with notch setup." };
       }
     } else if (providerInfo.id === "strata") {
-      const { strataStatus } = await import("./strata-YKAX7AUB.js");
+      const { strataStatus } = await import("./strata-J4RL2VBU.js");
       const { selected } = await strataStatus();
       if (!selected || selected.id !== spec.model) return { ok: false, error: "Install this Strata model in Manage models first." };
       return { ok: true, contextWindow: selected.nativeContext, maxOutputTokens: 2048 };
     } else if (providerInfo.id === "colibri") {
-      const { colibriStatus } = await import("./colibri-2MZZUAQ4.js");
+      const { colibriStatus } = await import("./colibri-HJ73IUNT.js");
       const status = await colibriStatus();
       if (!status.verified || status.modelId !== spec.model) return { ok: false, error: "Set up and validate a Colibri model with notch models install --runner colibri." };
       return { ok: true, contextWindow: status.nativeContext, maxOutputTokens: 2048 };

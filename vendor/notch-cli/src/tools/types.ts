@@ -32,6 +32,7 @@ export interface NotchTool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
 
 /** Shared context available to all tools during execution */
 export interface ToolContext {
+  prepareLocalModel?: () => Promise<void>;
   /** Selects concise built-in descriptions without changing schemas or permissions. */
   promptContextWindow?: number;
   /** Desktop SSH transport. Schemas and permissions still run before this boundary. */

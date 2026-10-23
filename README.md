@@ -24,7 +24,9 @@ Windows releases check GitHub for new stable versions after opening, download up
 - **Use your phone.** In **Settings → Appearance → Phone**, turn on a private page from this computer. Pair the phone and add it to the home screen. The model and the project stay here.
 - **Review and undo changes.** Restore a selected agent turn and its later tracked file changes, even after restarting. Undo previews protect later manual edits and never change files themselves.
 - **Use the memory you have.** notch adjusts conversation size to your available memory. You can choose a limit yourself when you need more room.
+- **Load and eject local models.** Selecting a local model loads it after releasing the previously loaded local model. Click a loaded model again, or use its eject button in the picker or Manage models, to release its memory. Ejecting keeps downloaded files and your chat's selected model; sending another message loads it again. Active local responses must finish or be interrupted before a manual model change.
 - **Work your way.** Choose dark or light mode, adjust the text, and search your project’s files.
+- **Acknowledge task failures.** Opening a task clears its red failure badge while keeping the error in the conversation. A new failure can show a new badge.
 - **Keep knowledge and sites locally.** Knowledge Center saves searchable text notes and imports Markdown, text, CSV and JSON files. Sites saves HTML drafts with an offline static preview and HTML export. Both work without an account, keep drafts across restarts, and store their data in your device’s notch profile. Extensions opens the local extension manager; Workspace Index describes the automatic local file search.
 
 ## GitHub and Git remotes

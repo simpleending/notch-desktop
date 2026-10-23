@@ -108,7 +108,8 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       return service.status();
     },
     async colibriModels(hardware) {
-      return (await colibri.colibriModels(hardware)).map(row=>({...row,defaultContextWindow:service.context(row.key,row.availableContextWindows,row.defaultContextWindow),requestedContextWindow:service.requestedContext(row.key)}));
+      const status=await colibri.colibriStatus();
+      return (await colibri.colibriModels(hardware)).map(row=>({...row,running:status.running&&row.key==='colibri/'+status.modelId,defaultContextWindow:service.context(row.key,row.availableContextWindows,row.defaultContextWindow),requestedContextWindow:service.requestedContext(row.key)}));
     },
     async colibri(action, model) {
       await ready;
