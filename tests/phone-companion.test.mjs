@@ -238,7 +238,7 @@ test('phone access is chosen in the menu and does not copy full access from the 
     for (let attempt = 0; attempt < 40 && modes.length < 2; attempt++) await new Promise(resolve => setTimeout(resolve, 25));
     assert.equal(modes[1], 'read-only');
     release();
-  } finally { release(); await phone.close(); await fs.rm(root, { recursive: true, force: true }); await fs.rm(project, { recursive: true, force: true }); }
+  } finally { release(); await phone.close(); await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); await fs.rm(project, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); }
 });
 
 test('phone and computer tasks can be renamed and archived from the phone', async () => {
