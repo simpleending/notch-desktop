@@ -136,9 +136,12 @@ test('eject controls appear in the picker and management, preserve selection, an
  let selected;const calls=[],mounted={...local,running:true};
  const {ui}=menu(t,{state:async()=>({models:[mounted,cloud,colibri]}),runtime:async(action,key)=>{calls.push([action,key]);return{models:[local,cloud,colibri],loaded:false};}},{onSelect:key=>selected=key});
  await ui.settle();assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,1);
+  ui.find(node=>node.props.role==='option'&&node.props.title===local.key)[0].props.onClick();await ui.settle();
+  assert.deepEqual(calls,[['toggle',local.key]]);assert.equal(selected,undefined);
+  button(ui,'Refresh').props.onClick();await ui.settle();
  button(ui,'Manage models…').props.onClick();await ui.settle();assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,1);
  ui.find(node=>node.props['aria-label']==='Eject Local coder')[0].props.onClick();await ui.settle();
- assert.deepEqual(calls,[['eject',local.key]]);assert.equal(selected,undefined);assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,0);
+  assert.deepEqual(calls,[['toggle',local.key],['eject',local.key]]);assert.equal(selected,undefined);assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,0);
 });
 
 test('a failed load keeps the previous selection and makes the error and retry controls available',async t=>{
