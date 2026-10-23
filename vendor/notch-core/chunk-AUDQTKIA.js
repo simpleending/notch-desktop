@@ -5,10 +5,7 @@ import {
   loadSyncedByokKeys,
   parseByokRef,
   resolveByokModel
-} from "./chunk-3HATLMNQ.js";
-import {
-  acquireLease
-} from "./chunk-LUGHZTHG.js";
+} from "./chunk-HBJOSRXS.js";
 import {
   listModels,
   showModel
@@ -17,6 +14,9 @@ import {
   ollamaChatUrl,
   ollamaRoot
 } from "./chunk-RKXQ4ULC.js";
+import {
+  acquireLease
+} from "./chunk-SWZ3JTKY.js";
 
 // vendor/notch-cli/src/config.ts
 import fs4 from "fs/promises";

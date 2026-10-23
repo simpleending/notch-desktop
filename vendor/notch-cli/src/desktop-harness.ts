@@ -18,7 +18,7 @@ export { gitProcessEnv } from './github/gh.js';
 export { acquireLease } from './concurrency/lease.js';
 export { detectLocalHardware, parseNvidiaMemory, linuxGpuMemory, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
 export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
-export { managedOllama } from './providers/ollama-runtime.js';
+export { managedOllama, setManagedOllamaLauncher, withManagedOllamaStart } from './providers/ollama-runtime.js';
 export { withLocalInference } from './concurrency/local-inference.js';
 export { startMlx, stopMlx, loadedMlxModel } from './providers/local-runner.js';
 export { startColibri } from './providers/colibri.js';

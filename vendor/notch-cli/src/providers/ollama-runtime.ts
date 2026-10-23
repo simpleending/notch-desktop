@@ -8,10 +8,22 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
 import { execFile, spawn } from 'node:child_process';
+import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { promisify } from 'node:util';
+import { acquireLease } from '../concurrency/lease.js';
+import { AsyncLocalStorage } from 'node:async_hooks';
 const exec = promisify(execFile);
 export const MANAGED_OLLAMA_HOST = 'http://127.0.0.1:11436';
 const root = () => path.join(os.homedir(), '.notch', 'runtimes', 'ollama');
+let launcher: (executable: string, options: SpawnOptions) => ChildProcess = (executable, options) => spawn(executable, ['serve'], options);
+/** Desktop Windows installs provide a persistent ConPTY host; CLI and other platforms keep their launcher. */
+export function setManagedOllamaLauncher(value: typeof launcher): void { launcher = value; }
+const startupOwner = new AsyncLocalStorage<boolean>();
+export async function withManagedOllamaStart<T>(operation: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (startupOwner.getStore()) return operation();
+  const release = await acquireLease('managed-ollama-start', signal);
+  try { return await startupOwner.run(true, operation); } finally { await release(); }
+}
 interface Asset { name: string; size: number; digest: string; browser_download_url: string }
 
 export function versionAtLeast(actual: string, minimum: string): boolean {
@@ -64,6 +76,10 @@ async function downloadAsset(asset: Asset, directory: string, signal?: AbortSign
 }
 
 export async function managedOllama(minimum = '0.30.0', signal?: AbortSignal, allowInstall = true): Promise<string> {
+  return withManagedOllamaStart(() => ensureManagedOllama(minimum, signal, allowInstall), signal);
+}
+
+async function ensureManagedOllama(minimum: string, signal?: AbortSignal, allowInstall = true): Promise<string> {
   const running = await daemonVersion(MANAGED_OLLAMA_HOST);
   if (running) {
     if (!versionAtLeast(running, minimum)) throw new Error(`Port 11436 hosts incompatible Ollama ${running}. Stop that server before retrying.`);
@@ -127,9 +143,15 @@ export async function managedOllama(minimum = '0.30.0', signal?: AbortSignal, al
   signal?.throwIfAborted();
   const log = await open(path.join(root(), 'server.log'), 'a', 0o600);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api_key/i.test(key)));
-  const child = spawn(installed.executable, ['serve'], { detached: process.platform !== 'win32', stdio: ['ignore', log.fd, log.fd], windowsHide: true,
+  let child: ChildProcess;
+  let failure: Error | undefined;
+  try { child = launcher(installed.executable, { detached: process.platform !== 'win32', stdio: ['ignore', log.fd, log.fd], windowsHide: true,
     env: { ...env, OLLAMA_HOST: '127.0.0.1:11436', OLLAMA_NO_CLOUD: '1' } });
-  await log.close(); let failure: Error | undefined; child.on('error', error => { failure = error; }); child.unref();
+    child.on('error', error => { failure = error; });
+    child.once('exit', code => { if (code !== 0) failure ??= new Error(`Managed Ollama exited (${code}). See ${path.join(root(), 'server.log')}.`); });
+  }
+  finally { await log.close(); }
+  child.unref();
   for (let attempt = 0; attempt < 60; attempt++) {
     signal?.throwIfAborted(); if (failure) throw failure;
     const version = await daemonVersion(MANAGED_OLLAMA_HOST);

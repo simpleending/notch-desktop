@@ -3,7 +3,7 @@ import {
 } from "./chunk-B72JEX4V.js";
 import {
   withLocalInference
-} from "./chunk-LUGHZTHG.js";
+} from "./chunk-M6FOGWEU.js";
 import {
   detectDaemon,
   showModel
@@ -71,7 +71,7 @@ async function ensureOllama(host, signal) {
       if (error.code !== "ENOENT") throw error;
     }
   }
-  const { managedOllama } = await import("./ollama-runtime-X53IPCAE.js");
+  const { managedOllama } = await import("./ollama-runtime-3KRDVJSV.js");
   return managedOllama("0.30.0", signal);
 }
 async function runPython(executable, args, signal) {

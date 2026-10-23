@@ -2,9 +2,11 @@ import {
   quietPython
 } from "./chunk-S2VC66HG.js";
 import {
-  acquireLease,
   withLocalInference
-} from "./chunk-LUGHZTHG.js";
+} from "./chunk-M6FOGWEU.js";
+import {
+  acquireLease
+} from "./chunk-SWZ3JTKY.js";
 
 // vendor/notch-cli/src/providers/strata.ts
 import os from "os";

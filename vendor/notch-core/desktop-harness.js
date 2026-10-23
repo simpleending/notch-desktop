@@ -16,13 +16,13 @@ import {
   selectModel,
   withSharedWorker,
   withTaskWorkspace
-} from "./chunk-XTRJYQC6.js";
+} from "./chunk-AUDQTKIA.js";
 import {
   getConfigDir,
   isByokRef,
   ollamaContextLength,
   parseByokRef
-} from "./chunk-3HATLMNQ.js";
+} from "./chunk-HBJOSRXS.js";
 import {
   Rollout
 } from "./chunk-S5MWOFHZ.js";
@@ -30,7 +30,7 @@ import {
   loadedMlxModel,
   startMlx,
   stopMlx
-} from "./chunk-PM65DKYD.js";
+} from "./chunk-OZ465FDJ.js";
 import {
   LOCAL_MODEL_CATALOG,
   detectLocalHardware,
@@ -49,7 +49,7 @@ import {
   strataModels,
   strataPlan,
   strataStatus
-} from "./chunk-JVWC6ABC.js";
+} from "./chunk-YECVHNLG.js";
 import {
   colibriCatalog,
   colibriCompatibility,
@@ -62,18 +62,22 @@ import {
   startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-HMKNUDLS.js";
+} from "./chunk-HLNSOBYP.js";
 import "./chunk-S2VC66HG.js";
 import {
-  acquireLease,
   executionContext,
   withLocalInference
-} from "./chunk-LUGHZTHG.js";
+} from "./chunk-M6FOGWEU.js";
 import "./chunk-MO7YLYB6.js";
 import "./chunk-RKXQ4ULC.js";
 import {
-  managedOllama
-} from "./chunk-EOHGS2EF.js";
+  managedOllama,
+  setManagedOllamaLauncher,
+  withManagedOllamaStart
+} from "./chunk-G4ZZBABE.js";
+import {
+  acquireLease
+} from "./chunk-SWZ3JTKY.js";
 
 // vendor/notch-cli/src/desktop-harness.ts
 import path22 from "path";
@@ -6102,7 +6106,7 @@ async function runAgentLoopInternal(messages, config) {
   const outputLimit = config.maxOutputTokens ?? (/^(?:ollama(?:-anthropic)?|mlx|colibri|strata)\//.test(config.modelId ?? "") ? 16384 : void 0);
   const colibriModelId = config.colibriModelId ?? (/^colibri[/:]/.test(config.modelId ?? "") ? config.modelId.slice(8) : void 0);
   if (colibriModelId) {
-    const { startColibri: startColibri2, colibriStatus: colibriStatus2 } = await import("./colibri-5XF3S45A.js");
+    const { startColibri: startColibri2, colibriStatus: colibriStatus2 } = await import("./colibri-AGI5KKLR.js");
     const automatic = config.colibriAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 12288, 16384, 32768, 65536, 131072, 262144].find((value) => {
       try {
@@ -6115,12 +6119,12 @@ async function runAgentLoopInternal(messages, config) {
     if (!automatic) contextBudget(contextWindow, overhead, outputLimit);
     await startColibri2(colibriModelId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, config.toolContext.log, useful);
     contextWindow = (await colibriStatus2()).contextWindow;
-    const { resolveByokModel } = await import("./byok-EFKPWFAB.js");
+    const { resolveByokModel } = await import("./byok-UJOZCS6R.js");
     config.model = resolveByokModel({ provider: "colibri", model: colibriModelId, contextWindow }).model;
   }
   const strataId = config.strataModelId ?? (/^strata[/:]/.test(config.modelId ?? "") ? config.modelId.slice(7) : void 0);
   if (strataId) {
-    const { startStrata: startStrata2 } = await import("./strata-MCKIJEPT.js");
+    const { startStrata: startStrata2 } = await import("./strata-G6F254BZ.js");
     const automatic = config.strataAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 16384, 32768, 65536, 131072, 262144, 524288].find((n) => {
       try {
@@ -6132,7 +6136,7 @@ async function runAgentLoopInternal(messages, config) {
     if (!useful) throw new Error("Instructions and tools exceed the Strata context limit.");
     const ready = await startStrata2(strataId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, useful);
     contextWindow = ready.contextWindow;
-    const { resolveByokModel } = await import("./byok-EFKPWFAB.js");
+    const { resolveByokModel } = await import("./byok-UJOZCS6R.js");
     config.model = resolveByokModel({ provider: "strata", model: strataId, contextWindow }).model;
   }
   const fittedContext = fitContextWindow(contextWindow, overhead, outputLimit, config.contextWindows);
@@ -6923,7 +6927,7 @@ async function runDesktopTurn(turn) {
     delete selection.byokApiShape;
   }
   if (provider === "ollama" && selection.baseUrl?.replace(/\/v1\/?$/, "") === "http://127.0.0.1:11436") {
-    const { managedOllama: managedOllama2 } = await import("./ollama-runtime-X53IPCAE.js");
+    const { managedOllama: managedOllama2 } = await import("./ollama-runtime-3KRDVJSV.js");
     await managedOllama2("0.40.3", turn.signal);
   }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
@@ -7044,6 +7048,7 @@ export {
   runDesktopTurn,
   safeTailStart,
   setColibriPreference,
+  setManagedOllamaLauncher,
   setStrataDirectory,
   startColibri,
   startMlx,
@@ -7058,5 +7063,6 @@ export {
   validSearchKey,
   validateColibri,
   webSettingsSchema,
-  withLocalInference
+  withLocalInference,
+  withManagedOllamaStart
 };

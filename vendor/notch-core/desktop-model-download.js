@@ -5,7 +5,7 @@ import {
   startMlx,
   stopMlx,
   unloadOllama
-} from "./chunk-PM65DKYD.js";
+} from "./chunk-OZ465FDJ.js";
 import {
   GiB,
   LOCAL_MODEL_CATALOG,
@@ -13,7 +13,7 @@ import {
   inspectHubModel,
   modelFit
 } from "./chunk-B72JEX4V.js";
-import "./chunk-LUGHZTHG.js";
+import "./chunk-M6FOGWEU.js";
 import {
   formatBytes,
   listModels,
@@ -23,6 +23,7 @@ import {
   ollamaChatUrl,
   ollamaRoot
 } from "./chunk-RKXQ4ULC.js";
+import "./chunk-SWZ3JTKY.js";
 
 // vendor/notch-cli/src/commands/local-models.ts
 import { Command } from "commander";
@@ -53,8 +54,8 @@ async function runLocalModelsCli(argv, options = {}) {
     if (!["recommend", "install", "status", "unload"].includes(action)) throw new Error("Choose recommend, install, status, or unload.");
     if (flags.json && !["recommend", "status"].includes(action)) throw new Error("--json is supported for recommend and status.");
     if (action === "unload") {
-      const { loadConfig } = await import("./config-3V3T53NO.js");
-      const { parseByokRef, isByokRef } = await import("./byok-EFKPWFAB.js");
+      const { loadConfig } = await import("./config-3AA5PYAY.js");
+      const { parseByokRef, isByokRef } = await import("./byok-UJOZCS6R.js");
       const { models } = await loadConfig({ projectRoot: flags.cwd });
       const current = models.chat;
       const ref = isByokRef(current.model) ? parseByokRef(current.model) : { provider: current.byokProvider, model: current.model };
@@ -133,7 +134,7 @@ Installing ${selected.repo}; model license: ${selected.license || "see model car
         const { officialOllamaTemplate } = await import("./ollama-model-template-L5TE3W6X.js");
         template = await officialOllamaTemplate(selected.ollamaBase, signal);
         if (template.requires) {
-          const { daemonVersion, versionAtLeast, managedOllama } = await import("./ollama-runtime-X53IPCAE.js");
+          const { daemonVersion, versionAtLeast, managedOllama } = await import("./ollama-runtime-3KRDVJSV.js");
           const version = await daemonVersion(host);
           if (!version || !versionAtLeast(version, template.requires)) host = await managedOllama(template.requires, signal);
         }
@@ -183,7 +184,7 @@ Installing ${selected.repo}; model license: ${selected.license || "see model car
     if (args?.ok !== true) throw new Error("The model did not produce a valid tool call. Download is retained, but your previous model selection is unchanged.");
     signal.throwIfAborted();
     const selection = { provider: runner, model: selected.model, sourceRepo: selected.repo, baseUrl, contextWindow: fit.contextLength, ...runner === "ollama" ? { ollamaBatch: fit.batchSize } : {} };
-    const { persistConfigPatch } = await import("./config-3V3T53NO.js");
+    const { persistConfigPatch } = await import("./config-3AA5PYAY.js");
     await persistConfigPatch(flags.cwd, { provider: selection, byok: void 0, model: void 0, baseUrl: void 0, apiKey: void 0 });
     console.log(`Ready: ${runner}/${selected.model}. Saved for ${flags.cwd}.`);
     leaveLoaded = flags.launch !== false && (options.embedded || !!process.stdin.isTTY);

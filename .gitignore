@@ -12,3 +12,4 @@ release/
 *.tgz
 *.asar
 /vendor/notch-core/native/
+/native/windows-console/target/

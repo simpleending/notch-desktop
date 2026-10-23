@@ -64,6 +64,7 @@ if(!path.resolve(coreTarget).startsWith(path.resolve(staging)+path.sep))throw ne
 await fs.rm(coreTarget,{recursive:true,force:true});
 await fs.cp(path.join(root,'vendor/notch-core'),coreTarget,{recursive:true});
 await fs.access(path.join(coreTarget,'native/notch-hardware-win32-x64.exe'));
+await fs.access(path.join(coreTarget,'native/notch-console-win32-x64.exe'));
 await fs.access(path.join(coreTarget,'native/THIRD-PARTY-NOTICES.txt'));
 await fs.cp(path.join(root,'vendor/notch-updater'),path.join(unpacked,'notch/vendor/notch-updater'),{recursive:true});
 await fs.cp(path.join(root,'node_modules/playwright-core'),path.join(unpacked,'notch/node_modules/playwright-core'),{recursive:true});

@@ -1,3 +1,7 @@
+import {
+  acquireLease
+} from "./chunk-SWZ3JTKY.js";
+
 // vendor/notch-cli/src/providers/ollama-runtime.ts
 import os from "os";
 import path from "path";
@@ -9,9 +13,24 @@ import { Readable, Transform } from "stream";
 import { pipeline } from "stream/promises";
 import { execFile, spawn } from "child_process";
 import { promisify } from "util";
+import { AsyncLocalStorage } from "async_hooks";
 var exec = promisify(execFile);
 var MANAGED_OLLAMA_HOST = "http://127.0.0.1:11436";
 var root = () => path.join(os.homedir(), ".notch", "runtimes", "ollama");
+var launcher = (executable, options) => spawn(executable, ["serve"], options);
+function setManagedOllamaLauncher(value) {
+  launcher = value;
+}
+var startupOwner = new AsyncLocalStorage();
+async function withManagedOllamaStart(operation, signal) {
+  if (startupOwner.getStore()) return operation();
+  const release = await acquireLease("managed-ollama-start", signal);
+  try {
+    return await startupOwner.run(true, operation);
+  } finally {
+    await release();
+  }
+}
 function versionAtLeast(actual, minimum) {
   const parse = (value) => /^v?(\d+)\.(\d+)\.(\d+)$/.exec(value)?.slice(1).map(Number);
   const a = parse(actual), b = parse(minimum);
@@ -77,6 +96,9 @@ async function downloadAsset(asset, directory, signal) {
   return file;
 }
 async function managedOllama(minimum = "0.30.0", signal, allowInstall = true) {
+  return withManagedOllamaStart(() => ensureManagedOllama(minimum, signal, allowInstall), signal);
+}
+async function ensureManagedOllama(minimum, signal, allowInstall = true) {
   const running = await daemonVersion(MANAGED_OLLAMA_HOST);
   if (running) {
     if (!versionAtLeast(running, minimum)) throw new Error(`Port 11436 hosts incompatible Ollama ${running}. Stop that server before retrying.`);
@@ -154,17 +176,24 @@ async function managedOllama(minimum = "0.30.0", signal, allowInstall = true) {
   signal?.throwIfAborted();
   const log = await open(path.join(root(), "server.log"), "a", 384);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api_key/i.test(key)));
-  const child = spawn(installed.executable, ["serve"], {
-    detached: process.platform !== "win32",
-    stdio: ["ignore", log.fd, log.fd],
-    windowsHide: true,
-    env: { ...env, OLLAMA_HOST: "127.0.0.1:11436", OLLAMA_NO_CLOUD: "1" }
-  });
-  await log.close();
+  let child;
   let failure;
-  child.on("error", (error) => {
-    failure = error;
-  });
+  try {
+    child = launcher(installed.executable, {
+      detached: process.platform !== "win32",
+      stdio: ["ignore", log.fd, log.fd],
+      windowsHide: true,
+      env: { ...env, OLLAMA_HOST: "127.0.0.1:11436", OLLAMA_NO_CLOUD: "1" }
+    });
+    child.on("error", (error) => {
+      failure = error;
+    });
+    child.once("exit", (code) => {
+      if (code !== 0) failure ??= new Error(`Managed Ollama exited (${code}). See ${path.join(root(), "server.log")}.`);
+    });
+  } finally {
+    await log.close();
+  }
   child.unref();
   for (let attempt = 0; attempt < 60; attempt++) {
     signal?.throwIfAborted();
@@ -178,6 +207,8 @@ async function managedOllama(minimum = "0.30.0", signal, allowInstall = true) {
 
 export {
   MANAGED_OLLAMA_HOST,
+  setManagedOllamaLauncher,
+  withManagedOllamaStart,
   versionAtLeast,
   runtimeAssetName,
   daemonVersion,

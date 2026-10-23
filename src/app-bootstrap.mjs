@@ -16,7 +16,8 @@ import { createGitHubAuth } from './github-auth.mjs';
 import { createOriginGit } from './origin-git.mjs';
 import { originGitEnv } from '@freesyntax/notch-cli/dist/origin-auth.js';
 import { createRequire } from 'node:module';
-import { managedOllama } from '../vendor/notch-core/desktop-harness.js';
+import { managedOllama, setManagedOllamaLauncher, withLocalInference, withManagedOllamaStart } from '../vendor/notch-core/desktop-harness.js';
+import { createQuietOllama } from './quiet-ollama.mjs';
 app.setName('notch');
 if (process.platform === 'win32') app.setAppUserModelId(JSON.parse(readFileSync(path.join(process.resourcesPath, 'product.json'), 'utf8')).appId);
 globalThis.__notchDiscovery = createStartupDiscovery();
@@ -24,7 +25,16 @@ const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
 globalThis.__notchProfileOverride = requestedProfile ? { directory: app.getPath('userData'), existed: existsSync(path.join(app.getPath('userData'), 'main.sqlite')) } : null;
 globalThis.__notchHost = createHost(app.getPath('userData'));
-globalThis.__notchHost.runtimeReady = managedOllama('0.40.3', globalThis.__notchDiscovery.signal, false).catch(() => {});
+if(process.platform==='win32')setManagedOllamaLauncher(()=>{throw Error('The hidden local runtime is not ready. Retry loading the model.');});
+globalThis.__notchHost.runtimeReady = (async()=>{
+  const start=()=>managedOllama('0.40.3',globalThis.__notchDiscovery.signal,false);
+  if(process.platform==='win32'){
+    const quiet=await createQuietOllama();
+    setManagedOllamaLauncher(quiet.launch);
+    await quiet.migrate({withLocalInference,withManagedOllamaStart,start:()=>managedOllama('0.40.3',undefined,false),signal:globalThis.__notchDiscovery.signal});
+  }
+  await start();
+})().catch(error=>console.error('Local runtime startup:',error.message));
 globalThis.__notchHost.voice = createLocalVoice(app.getPath('userData'),{getKey:async provider=>(await globalThis.__notchHost.modelManager?.key(provider))||process.env.OPENROUTER_API_KEY});
 globalThis.__notchHost.createLiveVoice = createLocalLiveVoice;
 app.on('will-quit', () => { void globalThis.__notchHost.voice.shutdown(); });

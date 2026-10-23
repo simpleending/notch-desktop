@@ -1,6 +1,6 @@
 {
   "name": "@freesyntax/notch-desktop",
-  "version": "0.1.43",
+  "version": "0.1.44",
   "private": true,
   "type": "module",
   "description": "notch by freesyntax.dev: local models first, optional provider API keys",
@@ -19,6 +19,7 @@
     "verify:search": "node scripts/verify-search.mjs",
     "verify:agent": "node scripts/verify-agent.mjs",
     "verify:gui-background": "node scripts/verify-gui-background.mjs",
+    "verify:hidden-console": "node scripts/verify-hidden-console.mjs",
     "verify:automations": "node scripts/verify-automations.mjs",
     "verify:automations:local": "node scripts/verify-local-automations.mjs",
     "verify:compaction": "node scripts/verify-compaction.mjs",
