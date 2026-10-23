@@ -171,10 +171,10 @@ test('model IPC rejects remote pages, child frames and auxiliary notch surfaces'
   for(const url of ['https://notch-app/renderer','notch-app://renderer/index.html?surface=browser','notch-app://other/index.html'])assert.equal(isPrimaryModelSender({sender,senderFrame:{url}}),false);
   const child={url:frame.url};assert.equal(isPrimaryModelSender({sender,senderFrame:child}),false);
 });
-test('model download validates memory, supports cancellation and only forwards the HF token',async()=>{
+test('model download validates the catalog, supports cancellation and only forwards the HF token',async()=>{
   const directory=await mkdtemp(path.join(os.tmpdir(),'notch-model-download-'));
   const manager=createModelManager(directory,{recommend:async()=>({models:[{repo:'owner/public-model',fits:true}]}),install:async (repo,runner,{signal,env,onOutput})=>{assert.equal(repo,'owner/public-model');assert.deepEqual(env,{});onOutput({text:'Downloading 10%'});await new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true}));}});
-  await assert.rejects(manager.startInstall('bad/missing','ollama'),/fits/);
+  await assert.rejects(manager.startInstall('bad/missing','ollama'),/compatible/);
   assert.equal((await manager.startInstall('owner/public-model','ollama')).job.state,'running');
   await assert.rejects(manager.startInstall('owner/public-model','ollama'),/already/);
   await manager.cancelInstall();await new Promise(resolve=>setImmediate(resolve));assert.equal((await manager.status()).job.state,'cancelled');
@@ -186,6 +186,17 @@ test('concurrent install requests cannot start two downloads after metadata vali
   const a=manager.startInstall('lab/new','ollama'),b=manager.startInstall('lab/new','ollama');release();
   const results=await Promise.allSettled([a,b]);assert.equal(results.filter(result=>result.status==='fulfilled').length,1);assert.equal(installs,1);
   assert.match(results.find(result=>result.status==='rejected').reason.message,/already/);await manager.cancelInstall();
+});
+
+test('low free RAM does not fail a verified file download, and late cancellation cannot report success',async()=>{
+ let finish;
+ const manager=createModelManager(await mkdtemp(path.join(os.tmpdir(),'notch-download-memory-')),{recommend:async()=>({models:[{repo:'lab/new',fits:false,bytes:4*GiB}]}),install:()=>new Promise(resolve=>finish=resolve)});
+ await manager.startInstall('lab/new','ollama');finish();
+ for(let i=0;i<20&&(await manager.status()).job.state==='running';i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal((await manager.status()).job.state,'complete');
+ await manager.startInstall('lab/new','ollama');await manager.cancelInstall();finish();
+ for(let i=0;i<20&&(await manager.status()).job.state==='running';i++)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal((await manager.status()).job.state,'cancelled');
 });
 
 test('download progress exposes the last stage, redacts tokens and clears percentages during validation',async()=>{

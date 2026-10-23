@@ -75,7 +75,7 @@ test('native state follows running, approval and idle while context counts use t
   await query.setModel('ollama/fixture');assert.equal(await query.getContextUsage(),null);
 });
 
-test('model selection cannot change a turn that starts while the catalog is loading', async () => {
+test('a new turn waits for model selection and its saved state instead of racing it', async () => {
   const f=fixture();let send,finishCatalog,startCatalog,started;
   const input=new Promise(resolve=>{send=resolve;});
   const catalogStarted=new Promise(resolve=>{startCatalog=resolve;});
@@ -83,13 +83,14 @@ test('model selection cannot change a turn that starts while the catalog is load
   f.host.listModels=()=>{startCatalog();return new Promise(resolve=>{finishCatalog=resolve;});};
   async function* prompts(){yield {message:{content:await input}};}
   const query=new NotchQuery(f.host,{cwd:process.cwd(),model:'ollama/fixture',prompt:prompts()},{runTurn:async turn=>{
-    started();await new Promise((_,reject)=>turn.signal.addEventListener('abort',()=>reject(turn.signal.reason),{once:true}));
+    assert.equal(turn.model,'ollama/new');started();await new Promise((_,reject)=>turn.signal.addEventListener('abort',()=>reject(turn.signal.reason),{once:true}));
   }});
   await query.ready;assert.equal(await query.getContextUsage(),null);
   const changing=query.setModel('ollama/new');await catalogStarted;
-  send('Begin a task');await turnStarted;
+  send('Begin a task');await new Promise(resolve=>setImmediate(resolve));assert.equal(query.active,undefined);
+  await assert.rejects(query.setModel('ollama/fixture'),/previous model selection/);
   finishCatalog([{key:'ollama/new',enabled:true}]);
-  await assert.rejects(changing,/Finish or interrupt/);assert.equal(query.model,'ollama/fixture');
+  await changing;await turnStarted;assert.equal(query.model,'ollama/new');
   await query.close();
 });
 test('native compaction progress closes on success and failure without fabricated token counts',async()=>{

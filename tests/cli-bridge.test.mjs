@@ -21,6 +21,15 @@ test('installation refuses unsafe repositories and unsupported runners before sp
   assert.throws(() => installLocalModel('owner/model;echo', 'ollama'), /repository/);
   assert.throws(() => installLocalModel('owner/model', 'unknown'), /ollama or mlx/);
 });
+
+test('desktop downloads use the file-only entry without a coding task or model selection',async()=>{
+ const cwd=await mkdtemp(path.join(os.tmpdir(),'notch-download-entry-')),entry=path.join(cwd,'fixture.mjs');
+ try{
+  await writeFile(entry,'console.log(JSON.stringify(process.argv.slice(2)));');
+  const result=await installLocalModel('Nimbus-Labs/Nimbus-4B-GGUF','ollama',{cwd,entry});
+  assert.deepEqual(JSON.parse(result.stdout),['install','--model','Nimbus-Labs/Nimbus-4B-GGUF','--runner','ollama','--yes','--no-launch']);
+ }finally{await rm(cwd,{recursive:true,force:true});}
+});
 test('bridge rejects nonzero exits and supports cancellation', async () => {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'notch-desktop-'));
   try {

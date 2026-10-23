@@ -1,16 +1,44 @@
 import {
-  findByokProvider,
+  acquireProjectLease,
+  checkAccess,
+  checkPermission,
+  createHandlerContext,
+  isBuiltInReadTool,
+  loadConfig,
+  loadPermissions,
+  openRouterTaskContext,
+  pushTailNotification,
+  recordAutoModeDenial,
+  recordInteractiveApproval,
+  recordShadowUsage,
+  resolveModel,
+  runPermissionCheck,
+  selectModel,
+  withSharedWorker,
+  withTaskWorkspace
+} from "./chunk-XTRJYQC6.js";
+import {
   getConfigDir,
   isByokRef,
-  listByokProviders,
-  loadSyncedByokKeys,
   ollamaContextLength,
-  parseByokRef,
-  resolveByokModel
-} from "./chunk-RPRLYY5F.js";
+  parseByokRef
+} from "./chunk-3HATLMNQ.js";
 import {
   Rollout
 } from "./chunk-S5MWOFHZ.js";
+import {
+  loadedMlxModel,
+  startMlx,
+  stopMlx
+} from "./chunk-PM65DKYD.js";
+import {
+  LOCAL_MODEL_CATALOG,
+  detectLocalHardware,
+  inspectHubModel,
+  linuxGpuMemory,
+  modelFit,
+  parseNvidiaMemory
+} from "./chunk-B72JEX4V.js";
 import {
   installStrata,
   prepareStrata,
@@ -21,7 +49,7 @@ import {
   strataModels,
   strataPlan,
   strataStatus
-} from "./chunk-EGH6TAGU.js";
+} from "./chunk-JVWC6ABC.js";
 import {
   colibriCatalog,
   colibriCompatibility,
@@ -34,1630 +62,23 @@ import {
   startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-B7FVLX4V.js";
+} from "./chunk-HMKNUDLS.js";
 import "./chunk-S2VC66HG.js";
-import {
-  managedOllama
-} from "./chunk-3C22YZAZ.js";
-import {
-  loadedMlxModel,
-  startMlx,
-  stopMlx
-} from "./chunk-4LWR5MD4.js";
-import {
-  LOCAL_MODEL_CATALOG,
-  detectLocalHardware,
-  inspectHubModel,
-  linuxGpuMemory,
-  modelFit,
-  parseNvidiaMemory
-} from "./chunk-B72JEX4V.js";
 import {
   acquireLease,
   executionContext,
   withLocalInference
 } from "./chunk-LUGHZTHG.js";
+import "./chunk-MO7YLYB6.js";
+import "./chunk-RKXQ4ULC.js";
 import {
-  listModels,
-  showModel
-} from "./chunk-WPRAVALI.js";
-import {
-  ollamaChatUrl,
-  ollamaRoot
-} from "./chunk-RKXQ4ULC.js";
+  managedOllama
+} from "./chunk-EOHGS2EF.js";
 
 // vendor/notch-cli/src/desktop-harness.ts
-import path26 from "path";
-import fs22 from "fs/promises";
-import os7 from "os";
-
-// vendor/notch-cli/src/config.ts
-import fs4 from "fs/promises";
-import path4 from "path";
-
-// vendor/notch-cli/src/providers/registry.ts
-import { createOpenAI } from "@ai-sdk/openai";
-
-// vendor/notch-cli/src/providers/pi-ai-adapter.ts
-var PI_AI_PROVIDER_MAP = {
-  openai: "openai",
-  anthropic: "anthropic",
-  google: "google",
-  "google-vertex": "google-vertex",
-  mistral: "mistral",
-  bedrock: "amazon-bedrock",
-  azure: "azure-openai-responses"
-};
-var UNSUPPORTED_BY_PI_AI = /* @__PURE__ */ new Set(["openrouter", "groq", "together"]);
-function piAiMode() {
-  const enabled = process.env.NOTCH_USE_PI_AI;
-  if (!enabled || enabled === "0" || enabled.toLowerCase() === "false") return "off";
-  const mode = (process.env.NOTCH_PI_AI_MODE ?? "shadow").toLowerCase();
-  return mode === "swap" ? "swap" : "shadow";
-}
-function shouldRouteViaPiAi(config) {
-  if (piAiMode() === "off") return false;
-  const provider = extractProvider(config);
-  if (!provider) return false;
-  if (UNSUPPORTED_BY_PI_AI.has(provider)) return false;
-  return provider in PI_AI_PROVIDER_MAP;
-}
-var PiAiNotInstalledError = class extends Error {
-  constructor(originalError) {
-    super(
-      `NOTCH_USE_PI_AI is set but @earendil-works/pi-ai could not be loaded. Install with: pnpm --filter @freesyntax/notch-cli add @earendil-works/pi-ai. Original error: ${originalError instanceof Error ? originalError.message : String(originalError)}`
-    );
-    this.name = "PiAiNotInstalledError";
-  }
-};
-async function resolveModelViaPiAi(config) {
-  const { providerName, modelId } = extractProviderAndModel(config);
-  const piAiProvider = PI_AI_PROVIDER_MAP[providerName];
-  if (!piAiProvider) {
-    throw new Error(
-      `pi-ai does not support BYOK provider "${providerName}". Supported: ${Object.keys(PI_AI_PROVIDER_MAP).join(", ")}. Set NOTCH_USE_PI_AI=0 or use a different provider.`
-    );
-  }
-  if (!modelId) {
-    throw new Error(
-      `pi-ai resolution requires a non-empty model id. Config: ${JSON.stringify({ byokProvider: config.byokProvider, model: config.model })}`
-    );
-  }
-  const piAi = await loadPiAi();
-  const model = piAi.getBuiltinModel(piAiProvider, modelId);
-  if (!model) {
-    throw new Error(
-      `pi-ai has no registered model "${piAiProvider}/${modelId}". pi-ai only lists tool-calling-capable models; if your model is text-only, keep it on the AI SDK path (UNSUPPORTED_BY_PI_AI) or clear NOTCH_USE_PI_AI.`
-    );
-  }
-  return { model, piAiProvider, modelId };
-}
-async function computePiAiCostUsd(config, usage) {
-  try {
-    const handle = await resolveModelViaPiAi(config);
-    const piAi = await loadPiAi();
-    const usageBucket = {
-      input: usage.input,
-      output: usage.output,
-      cacheRead: usage.cacheRead ?? 0,
-      cacheWrite: usage.cacheWrite ?? 0,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
-    };
-    piAi.calculateCost(handle.model, usageBucket);
-    return usageBucket.cost.total;
-  } catch {
-    return null;
-  }
-}
-var shadowContexts = /* @__PURE__ */ new WeakMap();
-function registerShadowContext(model, context) {
-  if (piAiMode() === "off") return;
-  shadowContexts.set(model, context);
-}
-async function recordShadowUsage(model, usage, opts) {
-  if (piAiMode() === "off") return;
-  const ctx = shadowContexts.get(model);
-  if (!ctx) return;
-  const inputTokens = usage.promptTokens ?? 0;
-  const outputTokens = usage.completionTokens ?? 0;
-  const piAiCostUsd = await computePiAiCostUsd(ctx.config, {
-    input: inputTokens,
-    output: outputTokens
-  });
-  await recordShadowCost({
-    requestId: opts?.requestId ?? `usage-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-    provider: ctx.provider,
-    modelId: ctx.modelId,
-    inputTokens,
-    outputTokens,
-    piAiCostUsd,
-    stripeChargeUsd: opts?.stripeChargeUsd ?? null,
-    timestamp: Date.now()
-  });
-}
-async function recordShadowCost(event) {
-  if (piAiMode() === "off") return;
-  try {
-    const { homedir } = await import("os");
-    const { mkdir, appendFile } = await import("fs/promises");
-    const { join: join2 } = await import("path");
-    const dir = join2(homedir(), ".notch");
-    await mkdir(dir, { recursive: true });
-    await appendFile(join2(dir, "pi-ai-shadow.jsonl"), `${JSON.stringify(event)}
-`, "utf8");
-  } catch {
-  }
-}
-var piAiModulePromise = null;
-async function loadPiAi() {
-  if (!piAiModulePromise) {
-    piAiModulePromise = (async () => {
-      try {
-        const [catalog, mod] = await Promise.all([
-          import("@earendil-works/pi-ai/providers/all"),
-          import("@earendil-works/pi-ai")
-        ]);
-        return { getBuiltinModel: catalog.getBuiltinModel, calculateCost: mod.calculateCost };
-      } catch (err) {
-        piAiModulePromise = null;
-        throw new PiAiNotInstalledError(err);
-      }
-    })();
-  }
-  return piAiModulePromise;
-}
-function extractProvider(config) {
-  if (config.byokProvider) return config.byokProvider;
-  if (typeof config.model === "string" && isByokRef(config.model)) {
-    return parseByokRef(config.model).provider;
-  }
-  return void 0;
-}
-function extractProviderAndModel(config) {
-  if (config.byokProvider) {
-    return {
-      providerName: config.byokProvider,
-      modelId: typeof config.model === "string" ? config.model : ""
-    };
-  }
-  if (typeof config.model === "string" && isByokRef(config.model)) {
-    const { provider, model } = parseByokRef(config.model);
-    return { providerName: provider, modelId: model };
-  }
-  throw new Error(
-    "resolveModelViaPiAi called on a non-BYOK config. Notch-hosted Modal endpoints still use the AI SDK path."
-  );
-}
-
-// vendor/notch-cli/src/providers/registry.ts
-var MODEL_CATALOG = {};
-function assertDirectEndpoint(value) {
-  if (!value) return;
-  const host = new URL(value.includes("://") ? value : `http://${value}`).hostname.toLowerCase();
-  if (host === "freesyntax.dev" || host.endsWith(".freesyntax.dev") || host.startsWith("acemagnifique--notch-serve-") && host.endsWith(".modal.run")) {
-    throw new Error("This saved endpoint belongs to the retired hosted service. Choose a local model with notch models or configure your own provider with notch setup.");
-  }
-}
-var MODEL_IDS = Object.keys(MODEL_CATALOG);
-function isValidModel(id) {
-  return id in MODEL_CATALOG;
-}
-function resolveModel(config) {
-  assertDirectEndpoint(config.baseUrl ?? process.env.NOTCH_BASE_URL);
-  if (config.byokProvider) {
-    const resolved = resolveByokModel({
-      provider: config.byokProvider,
-      model: typeof config.model === "string" && config.model.length > 0 ? config.model : void 0,
-      apiKey: config.apiKey,
-      baseUrl: config.baseUrl,
-      headers: { ...config.headers, ...config.byokHeaders },
-      apiShape: config.byokApiShape,
-      contextWindow: config.contextWindow,
-      nativeContextWindow: config.nativeContextWindow,
-      maxOutputTokens: config.maxOutputTokens,
-      ollamaBatch: config.ollamaBatch,
-      fallbacks: config.fallbacks
-    });
-    firePiAiShadowProbe(config, resolved.model);
-    return resolved.model;
-  }
-  if (typeof config.model === "string" && isByokRef(config.model)) {
-    const { provider, model } = parseByokRef(config.model);
-    const resolved = resolveByokModel({
-      provider,
-      model,
-      apiKey: config.apiKey,
-      baseUrl: config.baseUrl,
-      headers: { ...config.headers, ...config.byokHeaders },
-      apiShape: config.byokApiShape,
-      contextWindow: config.contextWindow,
-      nativeContextWindow: config.nativeContextWindow,
-      maxOutputTokens: config.maxOutputTokens,
-      ollamaBatch: config.ollamaBatch,
-      fallbacks: config.fallbacks
-    });
-    firePiAiShadowProbe(config, resolved.model);
-    return resolved.model;
-  }
-  const baseUrl = config.baseUrl ?? process.env.NOTCH_BASE_URL;
-  if (!baseUrl) throw new Error("Hosted Notch models are retired. Run notch models for a local model or notch setup for your own provider.");
-  return createOpenAI({ apiKey: config.apiKey ?? process.env.NOTCH_API_KEY ?? "not-needed", baseURL: baseUrl, headers: config.headers }).chat(config.model);
-}
-function firePiAiShadowProbe(config, resolvedModel) {
-  if (piAiMode() === "off") return;
-  if (!shouldRouteViaPiAi(config)) return;
-  const provider = extractByokProvider(config);
-  const modelId = typeof config.model === "string" ? config.model : "unknown";
-  if (provider) {
-    registerShadowContext(resolvedModel, {
-      provider,
-      modelId,
-      config
-    });
-  }
-  void (async () => {
-    let handle = null;
-    let error = null;
-    try {
-      handle = await resolveModelViaPiAi(config);
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-    }
-    await recordShadowCost({
-      requestId: `probe-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      provider: handle?.piAiProvider ?? provider ?? "unknown",
-      modelId: handle?.modelId ?? modelId,
-      inputTokens: 0,
-      // real counts come from loop.ts via recordShadowUsage
-      outputTokens: 0,
-      piAiCostUsd: null,
-      stripeChargeUsd: null,
-      timestamp: Date.now(),
-      ...error ? { error } : {}
-    });
-  })();
-}
-function extractByokProvider(config) {
-  if (config.byokProvider) return config.byokProvider;
-  if (typeof config.model === "string" && isByokRef(config.model)) {
-    return parseByokRef(config.model).provider;
-  }
-  return void 0;
-}
-
-// vendor/notch-cli/src/providers/ollama-credentials.ts
-import fs from "fs/promises";
-import path from "path";
-function notchConfigDir() {
-  const xdg = process.env.XDG_CONFIG_HOME;
-  if (xdg) return path.join(xdg, "notch");
-  const appdata = process.env.APPDATA;
-  if (appdata && process.platform === "win32") return path.join(appdata, "notch");
-  const home2 = process.env.HOME ?? process.env.USERPROFILE;
-  if (!home2) {
-    throw new Error("Cannot determine home directory for credential storage.");
-  }
-  return path.join(home2, ".config", "notch");
-}
-function ollamaCredsPath() {
-  return path.join(notchConfigDir(), "ollama.json");
-}
-async function readOllamaCreds() {
-  try {
-    const raw = await fs.readFile(ollamaCredsPath(), "utf-8");
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.apiKey !== "string" || typeof parsed.endpoint !== "string") return null;
-    return {
-      apiKey: parsed.apiKey,
-      endpoint: parsed.endpoint,
-      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : Date.now()
-    };
-  } catch {
-    return null;
-  }
-}
-
-// vendor/notch-cli/src/permissions/index.ts
-import fs2 from "fs/promises";
-import path2 from "path";
-import os from "os";
-import { minimatch } from "minimatch";
-
-// vendor/notch-cli/src/permissions/handlers/bash-classifier.ts
-var DESTRUCTIVE_PATTERNS = [
-  /\brm\s+(-[a-zA-Z]*[rf][a-zA-Z]*|--recursive|--force)/i,
-  /\brm\s+-rf?\s+\//i,
-  /\bsudo\s+rm\b/i,
-  /\bdd\s+if=/i,
-  /\bmkfs\./i,
-  /\bshred\b/i,
-  /\bchmod\s+-R\s+/i,
-  /\bchown\s+-R\s+/i,
-  /:\(\)\s*\{\s*:\|:&\s*\};:/,
-  // fork bomb
-  /\b>\s*\/dev\/sd[a-z]/i,
-  /\bgit\s+push\s+(?:.*\s)?(?:-f|--force|--force-with-lease)\b/i,
-  /\bgit\s+reset\s+--hard\b/i,
-  /\bgit\s+clean\s+-[a-zA-Z]*[fd]/i,
-  /\bgit\s+checkout\s+--\s+\./,
-  /\bnpm\s+publish\b/i,
-  /\byarn\s+publish\b/i,
-  /\bpnpm\s+publish\b/i,
-  /\bdocker\s+(?:rm|rmi|system\s+prune|volume\s+rm)\b/i,
-  /\bkubectl\s+delete\b/i,
-  /\bterraform\s+destroy\b/i,
-  /\bmv\s+\/\s+/i,
-  /\bfind\s+.*\s-delete\b/i,
-  /\bfind\s+.*-exec\s+rm\b/i,
-  /\btruncate\s+-s\s+0/i,
-  /\b(poweroff|shutdown|reboot|halt)\b/i,
-  /\bkillall?\s+-9/i
-];
-var NETWORK_PATTERNS = [
-  /\bcurl\b/i,
-  /\bwget\b/i,
-  /\bhttpie?\b/i,
-  /\bnc\b/i,
-  /\bnetcat\b/i,
-  /\bssh\b/i,
-  /\bscp\b/i,
-  /\brsync\s+.*::?/i,
-  /\bftp\b/i,
-  /\bsftp\b/i,
-  /\btelnet\b/i,
-  /\bnmap\b/i,
-  /\bping\b/i,
-  /\bdig\b/i,
-  /\bnslookup\b/i,
-  /\bhost\s+[a-z0-9.-]+\.[a-z]+/i,
-  /\bgit\s+(?:clone|fetch|pull|push)\b/i,
-  /\bnpm\s+(?:install|i|update|audit|fund)\b/i,
-  /\bpip\s+install\b/i,
-  /\bapt(?:-get)?\s+(?:install|update|upgrade)\b/i,
-  /\bbrew\s+(?:install|update|upgrade)\b/i,
-  /\b(?:python|python3|node|bun)\s+-c\s+.*(?:urllib|requests|fetch|http)/i,
-  /\bcurl.*\|\s*(?:sh|bash|zsh|fish)\b/i,
-  // explicit "pipe to shell"
-  /\bwget.*\|\s*(?:sh|bash|zsh|fish)\b/i
-];
-var SAFE_PATTERNS = [
-  /^\s*ls(\s|$)/i,
-  /^\s*pwd(\s|$)/,
-  /^\s*whoami(\s|$)/,
-  /^\s*id(\s|$)/,
-  /^\s*echo\s/i,
-  /^\s*printf\s/i,
-  /^\s*cat\s/i,
-  /^\s*head\s/i,
-  /^\s*tail\s/i,
-  /^\s*wc\s/i,
-  /^\s*file\s/i,
-  /^\s*stat\s/i,
-  /^\s*du\s/i,
-  /^\s*df\s/i,
-  /^\s*which\s/i,
-  /^\s*type\s/i,
-  /^\s*env(\s|$)/i,
-  /^\s*date(\s|$)/i,
-  /^\s*uname/i,
-  /^\s*hostname(\s|$)/i,
-  /^\s*uptime(\s|$)/i,
-  /^\s*history(\s|$)/i,
-  /^\s*git\s+(status|log|diff|show|branch|blame|config\s+--get|remote\s+-v|stash\s+list|tag\s+-l|ls-files)\b/i,
-  /^\s*node\s+--version/i,
-  /^\s*npm\s+(ls|list|outdated|view|config\s+get|--version|-v|root)\b/i,
-  /^\s*yarn\s+(list|--version)\b/i,
-  /^\s*(python|python3)\s+--version/i,
-  /^\s*pip\s+(list|show|--version)\b/i,
-  /^\s*(rg|ripgrep)\s/i,
-  /^\s*grep\s/i,
-  /^\s*find\s+[^|;&]*(?<!-delete)\s*$/i,
-  // find without -delete/-exec rm
-  /^\s*tree(\s|$)/i,
-  /^\s*jq\s/i,
-  /^\s*awk\s/i,
-  /^\s*sed\s+-n\s/i,
-  // sed in print-only mode
-  /^\s*(make|cargo|go|npm|bun|pnpm|yarn)\s+(test|check|vet|fmt\s+--check|build\s+--dry-run)\b/i,
-  /^\s*(cargo|rustc)\s+--version/i,
-  /^\s*docker\s+(ps|images|logs|inspect|version)\b/i,
-  /^\s*kubectl\s+(get|describe|logs|version|config\s+current-context)\b/i
-];
-function classifyBashCommand(command) {
-  const cmd = command.trim();
-  if (!cmd) return { category: "safe" };
-  const head = cmd.split(/[\s;|&]/)[0] ?? "";
-  for (const p of DESTRUCTIVE_PATTERNS) {
-    if (p.test(cmd)) {
-      return { category: "destructive", matchedPattern: p.source, head };
-    }
-  }
-  for (const p of NETWORK_PATTERNS) {
-    if (p.test(cmd)) {
-      return { category: "network", matchedPattern: p.source, head };
-    }
-  }
-  for (const p of SAFE_PATTERNS) {
-    if (p.test(cmd)) {
-      return { category: "safe", matchedPattern: p.source, head };
-    }
-  }
-  return { category: "unknown", head };
-}
-
-// vendor/notch-cli/src/permissions/handlers/interactive.ts
-var SESSION_RECENT_MS = 3e4;
-var recentApprovals = /* @__PURE__ */ new Map();
-function fingerprintArgs(args) {
-  const keys = Object.keys(args).sort();
-  const parts = [];
-  for (const k of keys) {
-    const v = args[k];
-    const s = typeof v === "string" ? v : JSON.stringify(v);
-    parts.push(`${k}=${s.slice(0, 200)}`);
-  }
-  return parts.join("|");
-}
-function makeKey(sessionId, toolName, args) {
-  return `${sessionId}\0${toolName}\0${fingerprintArgs(args)}`;
-}
-function recordInteractiveApproval(sessionId, toolName, args) {
-  const key = makeKey(sessionId, toolName, args);
-  recentApprovals.set(key, { key, expires: Date.now() + SESSION_RECENT_MS });
-}
-function wasRecentlyApproved(sessionId, toolName, args) {
-  const key = makeKey(sessionId, toolName, args);
-  const hit = recentApprovals.get(key);
-  if (!hit) return false;
-  if (hit.expires < Date.now()) {
-    recentApprovals.delete(key);
-    return false;
-  }
-  return true;
-}
-var interactiveHandler = {
-  surface: "interactive",
-  check: async (toolName, args, baseDecision, ctx) => {
-    if (baseDecision === "allow") {
-      if (toolName === "shell" && typeof args.command === "string") {
-        const pending = async () => {
-          const cls = classifyBashCommand(args.command);
-          if (cls.category === "destructive") {
-            return {
-              outcome: "prompt",
-              reason: `classifier flagged destructive command: ${cls.matchedPattern}`
-            };
-          }
-          return { outcome: "allow" };
-        };
-        return { outcome: "allow", pendingClassifierCheck: pending };
-      }
-      return { outcome: "allow" };
-    }
-    if (baseDecision === "deny") {
-      return { outcome: "deny", reason: "denied by permission config" };
-    }
-    if (wasRecentlyApproved(ctx.sessionId, toolName, args)) {
-      return {
-        outcome: "allow",
-        silent: true,
-        reason: "session-recent approval (within 30s)"
-      };
-    }
-    return { outcome: "prompt" };
-  }
-};
-
-// vendor/notch-cli/src/permissions/handlers/one-shot.ts
-var oneShotHandler = {
-  surface: "one-shot",
-  check: async (toolName, _args, baseDecision, ctx) => {
-    if (baseDecision === "allow") return { outcome: "allow" };
-    if (baseDecision === "deny") {
-      return { outcome: "deny", reason: "denied by permission config" };
-    }
-    if (ctx.autoConfirm) {
-      return {
-        outcome: "allow",
-        silent: true,
-        reason: "--yes flag set; auto-confirming one-shot"
-      };
-    }
-    const count = (ctx.denialCounter.get(toolName) ?? 0) + 1;
-    ctx.denialCounter.set(toolName, count);
-    return {
-      outcome: "deny",
-      silent: true,
-      reason: "one-shot mode denies prompt-level tools without --yes",
-      tailNotification: `one-shot: denied ${toolName} (pass --yes to auto-approve)`
-    };
-  }
-};
-
-// vendor/notch-cli/src/permissions/handlers/coordinator.ts
-var COORDINATOR_ALLOWED = /* @__PURE__ */ new Set([
-  "agent_spawn",
-  "agent_send_message",
-  "agent_stop",
-  "read",
-  "grep",
-  "glob"
-]);
-var coordinatorHandler = {
-  surface: "coordinator",
-  check: async (toolName, _args, baseDecision, _ctx) => {
-    if (COORDINATOR_ALLOWED.has(toolName)) {
-      if (baseDecision === "deny") {
-        return { outcome: "deny", reason: "coordinator tool explicitly denied by config" };
-      }
-      return { outcome: "allow", silent: true };
-    }
-    if (baseDecision === "deny") {
-      return { outcome: "deny", reason: "denied by permission config" };
-    }
-    return {
-      outcome: "deny",
-      silent: true,
-      reason: "Coordinator must delegate write operations to a worker.",
-      tailNotification: `coordinator: blocked ${toolName} (delegate to worker)`
-    };
-  }
-};
-
-// vendor/notch-cli/src/permissions/handlers/subagent.ts
-var subagentHandler = {
-  surface: "subagent",
-  check: async (toolName, _args, baseDecision, ctx) => {
-    if (baseDecision === "allow") return { outcome: "allow" };
-    if (baseDecision === "deny") {
-      return { outcome: "deny", reason: "denied by permission config" };
-    }
-    const count = (ctx.denialCounter.get(toolName) ?? 0) + 1;
-    ctx.denialCounter.set(toolName, count);
-    const id = ctx.subagentId ?? "unknown";
-    return {
-      outcome: "deny",
-      silent: true,
-      reason: "subagent has no interactive UI to prompt",
-      tailNotification: `subagent ${id}: denied ${toolName} (no UI to prompt)`
-    };
-  }
-};
-
-// vendor/notch-cli/src/permissions/handlers/auto-mode.ts
-var AUTO_IMPLICIT_WRITE_KEY = "__auto_mode_implicit_writes__";
-var AUTO_WRITE_NOTIFY_THRESHOLD = 10;
-var WRITE_TOOLS = /* @__PURE__ */ new Set(["write", "edit", "apply_patch", "shell", "git"]);
-function hardDenyReason(toolName, args) {
-  if (toolName === "git") {
-    const op = typeof args.operation === "string" ? args.operation : "";
-    const flags = typeof args.flags === "string" ? args.flags : "";
-    const argsStr = typeof args.args === "string" ? args.args : "";
-    const combined = `${op} ${flags} ${argsStr}`.toLowerCase();
-    if (op !== "commit_and_push" && combined.includes("push") && /(-f\b|--force\b|--force-with-lease\b)/.test(combined)) {
-      return "force-push is never auto-approved";
-    }
-    if (combined.includes("reset") && combined.includes("--hard")) {
-      return "git reset --hard is never auto-approved";
-    }
-  }
-  if (toolName === "shell" && typeof args.command === "string") {
-    const cmd = args.command;
-    if (/\bnpm\s+publish\b/i.test(cmd) || /\byarn\s+publish\b/i.test(cmd) || /\bpnpm\s+publish\b/i.test(cmd)) {
-      return "package publish is never auto-approved";
-    }
-    if (/\bgit\s+push\b.*\b(?:-f|--force|--force-with-lease)\b/i.test(cmd)) {
-      return "force-push is never auto-approved";
-    }
-    if (/\b(?:rm\s+-rf?|dd\s+if=|mkfs\.|shred)\b/i.test(cmd)) {
-      return "classifier-flagged destructive shell command";
-    }
-  }
-  return null;
-}
-var autoModeHandler = {
-  surface: "auto-mode",
-  check: async (toolName, args, baseDecision, ctx) => {
-    if (baseDecision === "deny") {
-      return { outcome: "deny", reason: "denied by permission config" };
-    }
-    const reason = hardDenyReason(toolName, args);
-    if (reason) {
-      return {
-        outcome: "deny",
-        silent: false,
-        reason,
-        tailNotification: `auto-mode: refused ${toolName} \u2014 ${reason}`
-      };
-    }
-    if (toolName === "shell" && typeof args.command === "string") {
-      const pending = async () => {
-        const cls = classifyBashCommand(args.command);
-        if (cls.category === "destructive") {
-          return {
-            outcome: "deny",
-            silent: false,
-            reason: `classifier flagged destructive command: ${cls.matchedPattern}`,
-            tailNotification: `auto-mode: refused destructive shell command (${cls.head ?? "shell"})`
-          };
-        }
-        return baseDecision === "allow" ? { outcome: "allow", silent: true } : { outcome: "allow", silent: true, reason: "auto-mode implicit approval" };
-      };
-      if (baseDecision === "allow") return { outcome: "allow", pendingClassifierCheck: pending };
-      return { outcome: "allow", silent: true, pendingClassifierCheck: pending };
-    }
-    if (baseDecision === "allow") return { outcome: "allow" };
-    if (WRITE_TOOLS.has(toolName)) {
-      const writes = (ctx.denialCounter.get(AUTO_IMPLICIT_WRITE_KEY) ?? 0) + 1;
-      ctx.denialCounter.set(AUTO_IMPLICIT_WRITE_KEY, writes);
-      if (writes === AUTO_WRITE_NOTIFY_THRESHOLD) {
-        return {
-          outcome: "allow",
-          silent: true,
-          reason: "auto-mode implicit approval",
-          tailNotification: `auto-mode: ${writes} unattended writes this session \u2014 consider reviewing`
-        };
-      }
-      if (writes > AUTO_WRITE_NOTIFY_THRESHOLD && writes % 10 === 0) {
-        return {
-          outcome: "allow",
-          silent: true,
-          reason: "auto-mode implicit approval",
-          tailNotification: `auto-mode: ${writes} unattended writes this session`
-        };
-      }
-    }
-    return { outcome: "allow", silent: true, reason: "auto-mode implicit approval" };
-  }
-};
-
-// vendor/notch-cli/src/permissions/handlers/json-mode.ts
-var jsonModeHandler = {
-  surface: "json-mode",
-  check: async (toolName, _args, baseDecision, ctx) => {
-    if (baseDecision === "allow") return { outcome: "allow" };
-    if (baseDecision === "deny") {
-      return { outcome: "deny", reason: "denied by permission config" };
-    }
-    const count = (ctx.denialCounter.get(toolName) ?? 0) + 1;
-    ctx.denialCounter.set(toolName, count);
-    const payload = JSON.stringify({
-      type: "permission_denied",
-      tool: toolName,
-      reason: "json mode requires explicit allowlist"
-    });
-    return {
-      outcome: "deny",
-      silent: true,
-      reason: "json mode requires explicit allowlist",
-      tailNotification: payload
-    };
-  }
-};
-
-// vendor/notch-cli/src/permissions/dispatcher.ts
-var HANDLERS = {
-  interactive: interactiveHandler,
-  "one-shot": oneShotHandler,
-  coordinator: coordinatorHandler,
-  subagent: subagentHandler,
-  "auto-mode": autoModeHandler,
-  "json-mode": jsonModeHandler
-};
-function getActiveHandler(surface) {
-  return HANDLERS[surface];
-}
-async function runPermissionCheck(toolName, args, baseDecision, surface, ctx) {
-  const handler = getActiveHandler(surface);
-  const initial = await handler.check(toolName, args, baseDecision, ctx);
-  if (initial.tailNotification) {
-    pushTailNotification(initial.tailNotification);
-  }
-  if (!initial.pendingClassifierCheck) return initial;
-  try {
-    const refined = await initial.pendingClassifierCheck();
-    if (refined.tailNotification) pushTailNotification(refined.tailNotification);
-    return {
-      outcome: refined.outcome,
-      reason: refined.reason ?? initial.reason,
-      silent: refined.silent ?? initial.silent,
-      tailNotification: refined.tailNotification ?? initial.tailNotification
-    };
-  } catch {
-    return {
-      outcome: initial.outcome,
-      reason: initial.reason,
-      silent: initial.silent,
-      tailNotification: initial.tailNotification
-    };
-  }
-}
-var tailQueue = [];
-function pushTailNotification(message) {
-  tailQueue.push(message);
-}
-function recordAutoModeDenial(decision) {
-  if (decision.outcome !== "deny") return;
-  const msg = decision.tailNotification ?? decision.reason ?? "auto-mode: tool denied";
-  pushTailNotification(msg);
-}
-function createHandlerContext(options) {
-  return {
-    cwd: options.cwd,
-    sessionId: options.sessionId,
-    denialCounter: /* @__PURE__ */ new Map(),
-    log: options.log,
-    autoConfirm: options.autoConfirm,
-    guardianEnabled: options.guardianEnabled,
-    subagentId: options.subagentId
-  };
-}
-
-// vendor/notch-cli/src/permissions/index.ts
-var DEFAULT_DENY_READ_GLOBS = Object.freeze([
-  "**/.env",
-  "**/.env.*",
-  "!**/.env.example",
-  "!**/.env.sample",
-  "**/*.key",
-  "**/*.pem",
-  "**/id_rsa",
-  "**/id_rsa.*",
-  "**/id_ed25519",
-  "**/id_ed25519.*",
-  "**/id_ecdsa",
-  "**/id_ecdsa.*",
-  "**/.ssh/**",
-  "**/.aws/credentials",
-  "**/.aws/config",
-  "**/.gcp/**",
-  "**/credentials.json",
-  "**/secrets.json",
-  "**/*.keystore",
-  "**/*.jks",
-  "**/*.p12",
-  "**/*.pfx",
-  "**/.git/config",
-  "**/.git/hooks/**"
-]);
-var DEFAULT_DENY_WRITE_GLOBS = Object.freeze([
-  "**/.git/**",
-  "!**/.git/info/exclude"
-  // a file users legitimately edit
-]);
-var DEFAULT_PERMISSIONS = {
-  default: "prompt",
-  rules: [
-    // Safe read-only tools auto-allowed
-    { tool: "read", level: "allow" },
-    { tool: "task_changes", level: "allow" },
-    { tool: "grep", level: "allow" },
-    { tool: "glob", level: "allow" },
-    { tool: "web_fetch", level: "allow" },
-    { tool: "web_search", level: "allow" },
-    { tool: "browser_read", level: "allow" },
-    { tool: "browser_interact", level: "prompt" },
-    // Write tools prompt by default
-    { tool: "write", level: "prompt" },
-    { tool: "edit", level: "prompt" },
-    { tool: "shell", level: "prompt" },
-    { tool: "git", level: "prompt" }
-  ],
-  denyReadGlobs: [...DEFAULT_DENY_READ_GLOBS],
-  denyWriteGlobs: [...DEFAULT_DENY_WRITE_GLOBS]
-};
-async function loadPermissions(projectRoot) {
-  const projectPath = path2.join(projectRoot, ".notch.json");
-  const globalPath = path2.join(os.homedir(), ".notch", "permissions.json");
-  let config = { ...DEFAULT_PERMISSIONS };
-  try {
-    const raw = await fs2.readFile(globalPath, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (parsed.permissions) {
-      config = mergePermissions(config, parsed.permissions);
-    }
-  } catch {
-  }
-  try {
-    const raw = await fs2.readFile(projectPath, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (parsed.permissions) {
-      config = mergePermissions(config, parsed.permissions);
-    }
-  } catch {
-  }
-  return config;
-}
-var TOOL_PATH_ACCESS = {
-  task_changes: "read",
-  read: "read",
-  grep: "read",
-  glob: "read",
-  notebook: "both",
-  write: "write",
-  edit: "both",
-  apply_patch: "both",
-  applypatch: "both",
-  diff_preview: "read",
-  diffpreview: "read",
-  // Shell-like tools can read or write — check both deny sets. Path
-  // extraction below scrapes literal tokens from the command string.
-  shell: "both",
-  bash: "both",
-  git: "both"
-};
-function extractPathsFromArgs(toolName, args) {
-  const out = [];
-  const t = toolName.toLowerCase().replace(/-/g, "_");
-  const COMMON_PATH_KEYS = ["path", "file", "file_path", "filePath", "target", "input", "output"];
-  for (const k of COMMON_PATH_KEYS) {
-    const v = args[k];
-    if (typeof v === "string" && v.length > 0) out.push(v);
-  }
-  if ((t === "shell" || t === "bash" || t === "git") && typeof args.command === "string") {
-    const cmd = args.command;
-    const tokens = cmd.split(/\s+/).filter((tok) => {
-      if (tok.startsWith("-")) return false;
-      if (tok.startsWith('"') || tok.startsWith("'")) tok = tok.slice(1);
-      return /[./]/.test(tok);
-    });
-    out.push(...tokens);
-  }
-  if (typeof args.patch === "string") {
-    for (const line of args.patch.split("\n")) {
-      const m = line.match(/^(?:---|\+\+\+)\s+(?:[ab]\/)?(\S+)/);
-      if (m && m[1] !== "/dev/null") out.push(m[1]);
-    }
-  }
-  return out;
-}
-function matchesAnyGlob(candidate, patterns) {
-  let normalized = candidate.replace(/\\/g, "/");
-  if (normalized.startsWith("./")) normalized = normalized.slice(2);
-  const basename = normalized.split("/").pop() ?? normalized;
-  let matched = false;
-  for (const raw of patterns) {
-    const negate = raw.startsWith("!");
-    const pat = negate ? raw.slice(1) : raw;
-    const hasSlash = pat.includes("/");
-    let hit = false;
-    if (minimatch(normalized, pat, { dot: true, matchBase: !hasSlash })) hit = true;
-    if (!hit && pat.startsWith("**/")) {
-      if (minimatch(basename, pat.slice(3), { dot: true })) hit = true;
-    }
-    if (!hit && minimatch(basename, pat, { dot: true })) hit = true;
-    if (hit) matched = !negate;
-  }
-  return matched;
-}
-function checkPermission(config, toolName, args) {
-  const access = TOOL_PATH_ACCESS[toolName.toLowerCase().replace(/-/g, "_")];
-  if (access && args) {
-    const paths = extractPathsFromArgs(toolName, args);
-    if (paths.length > 0) {
-      const denyRead = config.denyReadGlobs ?? [];
-      const denyWrite = config.denyWriteGlobs ?? [];
-      const checkRead = access === "read" || access === "both";
-      const checkWrite = access === "write" || access === "both";
-      for (const p of paths) {
-        if (checkRead && denyRead.length > 0 && matchesAnyGlob(p, denyRead)) {
-          return "deny";
-        }
-        if (checkWrite && denyWrite.length > 0 && matchesAnyGlob(p, denyWrite)) {
-          return "deny";
-        }
-      }
-    }
-  }
-  const rule = config.rules.find((r) => {
-    if (r.tool !== toolName) return false;
-    if (r.pattern && args) {
-      const pat = new RegExp(r.pattern);
-      return Object.values(args).some((v) => pat.test(String(v)));
-    }
-    return true;
-  });
-  return rule?.level ?? config.default;
-}
-function mergePermissions(base, override) {
-  const merged = {
-    ...base,
-    denyReadGlobs: base.denyReadGlobs ? [...base.denyReadGlobs] : void 0,
-    denyWriteGlobs: base.denyWriteGlobs ? [...base.denyWriteGlobs] : void 0
-  };
-  if (override.default) merged.default = override.default;
-  if (override.rules) {
-    for (const rule of override.rules) {
-      const idx = merged.rules.findIndex((r) => r.tool === rule.tool && r.pattern === rule.pattern);
-      if (idx >= 0) {
-        merged.rules[idx] = rule;
-      } else {
-        merged.rules.push(rule);
-      }
-    }
-  }
-  if (override.denyReadGlobs) {
-    const existing = new Set(merged.denyReadGlobs ?? []);
-    for (const g of override.denyReadGlobs) existing.add(g);
-    merged.denyReadGlobs = [...existing];
-  }
-  if (override.denyWriteGlobs) {
-    const existing = new Set(merged.denyWriteGlobs ?? []);
-    for (const g of override.denyWriteGlobs) existing.add(g);
-    merged.denyWriteGlobs = [...existing];
-  }
-  return merged;
-}
-
-// vendor/notch-cli/src/permissions/access.ts
-var ACCESS_MODES = ["approve", "read-only", "full-access"];
-var READ_TOOLS = /* @__PURE__ */ new Set(["read", "task_changes", "grep", "glob", "web_fetch", "web_search", "browser_read"]);
-function parseAccessMode(value) {
-  if (typeof value !== "string" || !ACCESS_MODES.includes(value)) {
-    throw new Error(`Invalid access mode ${JSON.stringify(value)}. Choose ${ACCESS_MODES.join(", ")}.`);
-  }
-  return value;
-}
-function checkAccess(mode, permissions, tool3, args) {
-  if (mode === "full-access") return "allow";
-  const base = checkPermission(permissions, tool3, args);
-  if (base === "deny") return "deny";
-  if (mode === "read-only") return READ_TOOLS.has(tool3) ? "allow" : "deny";
-  return base;
-}
-function isBuiltInReadTool(tool3, builtin) {
-  return builtin && READ_TOOLS.has(tool3);
-}
-
-// vendor/notch-cli/src/concurrency/task-workspace.ts
-import fs3 from "fs/promises";
-import path3 from "path";
-import os2 from "os";
-import { createHash, randomUUID } from "crypto";
-import { execFile } from "child_process";
-import { promisify } from "util";
-function openRouterTaskContext(ctx, model) {
-  const cloud = typeof model === "string" ? /^openrouter[/:]/.test(model) : /^openrouter(?:\.|$)/.test(model.provider);
-  return { ...ctx, isolateTasks: () => !ctx.remoteWorkspace && cloud && (ctx.workspaceMode?.() === "isolated" || !ctx.workspaceMode && !!ctx.isolateTasks?.()) };
-}
-function parseWorkspaceMode(value) {
-  if (value !== "shared" && value !== "isolated") throw new Error("Workspace mode must be shared or isolated.");
-  return value;
-}
-async function projectKey(cwd) {
-  cwd = await fs3.realpath(cwd);
-  try {
-    cwd = (await git(cwd, ["rev-parse", "--show-toplevel"])).trim();
-  } catch {
-  }
-  return "project-task:" + (process.platform === "win32" ? path3.resolve(cwd).toLowerCase() : cwd);
-}
-var sharedWorkers = /* @__PURE__ */ new Map();
-async function acquireProjectLease(cwd, signal, onWait) {
-  return acquireLease(await projectKey(cwd), signal, onWait);
-}
-async function withSharedWorker(ctx, run) {
-  if (ctx.taskWorkspace || ctx.accessMode === "read-only" || ctx.dryRun) return run(ctx);
-  return withTaskWorkspace(ctx, (owned) => {
-    const workers = sharedWorkers.get(owned.sharedTask);
-    const pending = (async () => {
-      const release = await acquireLease(
-        "shared-workers:" + owned.sharedTask + ":" + (owned.sharedWorker ?? "root"),
-        ctx.abortSignal,
-        (waiting) => ctx.onQueue?.(waiting ? "Waiting for another worker in this project\u2026" : null)
-      );
-      try {
-        return await run({ ...owned, sharedWorker: randomUUID() });
-      } finally {
-        await release();
-      }
-    })();
-    workers.add(pending);
-    void pending.finally(() => workers.delete(pending)).catch(() => {
-    });
-    return pending;
-  });
-}
-var exec = promisify(execFile);
-var hash = (data) => createHash("sha256").update(data).digest("hex");
-var home = () => path3.join(process.env.USERPROFILE || process.env.HOME || os2.homedir(), ".notch", "worktrees");
-async function git(cwd, args, env = {}) {
-  const inherited = { ...process.env };
-  for (const key of Object.keys(inherited)) if (/^GIT_(DIR|WORK_TREE|COMMON_DIR|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+|CONFIG_PARAMETERS)$/i.test(key)) delete inherited[key];
-  const result = await exec("git", ["-c", "core.hooksPath=" + path3.join(home(), "no-hooks"), "-c", "core.fsmonitor=false", "-c", "core.longpaths=true", ...args], {
-    cwd,
-    env: { ...inherited, GIT_TERMINAL_PROMPT: "0", ...env },
-    windowsHide: true,
-    maxBuffer: 64 * 1024 * 1024
-  });
-  return result.stdout;
-}
-async function revision(file2) {
-  try {
-    const stat = await fs3.lstat(file2);
-    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Task isolation requires regular files: ${file2}`);
-    return { hash: hash(await fs3.readFile(file2)), mode: stat.mode & 511 };
-  } catch (error) {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  }
-}
-function same(a, b) {
-  return a?.hash === b?.hash && (process.platform === "win32" || a?.mode === b?.mode);
-}
-function inside(root, file2) {
-  const relative = path3.relative(root, file2);
-  return relative !== ".." && !relative.startsWith(".." + path3.sep) && !path3.isAbsolute(relative);
-}
-async function safeFile(root, relative) {
-  const target = path3.resolve(root, relative);
-  if (!inside(root, target) || relative.split(/[\\/]/).some((part) => part.toLowerCase() === ".git")) throw new Error("Task path escapes the project.");
-  if (process.platform === "win32" && path3.relative(root, target).includes(":")) throw new Error("Windows alternate data streams are not task files.");
-  let parent = target;
-  while (parent !== root) {
-    try {
-      const stat = await fs3.lstat(parent);
-      if (stat.isSymbolicLink() || !inside(root, await fs3.realpath(parent))) throw new Error(`Task path crosses a symbolic link: ${relative}`);
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    parent = path3.dirname(parent);
-  }
-  return target;
-}
-async function save(file2, data) {
-  await fs3.mkdir(path3.dirname(file2), { recursive: true });
-  const temporary = file2 + "." + randomUUID() + ".tmp";
-  try {
-    await fs3.writeFile(temporary, JSON.stringify(data), { flag: "wx", mode: 384, flush: true });
-    await fs3.rename(temporary, file2);
-  } finally {
-    await fs3.unlink(temporary).catch(() => {
-    });
-  }
-}
-async function sourceLease(cwd, signal) {
-  const projectRelease = await acquireProjectLease(cwd, signal);
-  let release;
-  try {
-    release = await acquireLease("file-mutations", signal);
-    const taskRelease = await acquireLease("task-files:" + cwd, signal);
-    return async () => {
-      try {
-        await taskRelease();
-      } finally {
-        try {
-          await release();
-        } finally {
-          await projectRelease();
-        }
-      }
-    };
-  } catch (error) {
-    try {
-      await release?.();
-    } finally {
-      await projectRelease();
-    }
-    throw error;
-  }
-}
-async function files(repo, root, index) {
-  const result = await git(root, ["--git-dir", repo, "--work-tree", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z"], index ? { GIT_INDEX_FILE: index } : {});
-  return [...new Set(result.split("\0").filter(Boolean))];
-}
-var TaskWorkspace = class _TaskWorkspace {
-  constructor(file2, manifest) {
-    this.file = file2;
-    this.manifest = manifest;
-  }
-  file;
-  manifest;
-  get cwd() {
-    return this.manifest.cwd;
-  }
-  static async open(source, session) {
-    source = await fs3.realpath(source);
-    if (inside(source, home())) throw new Error("Choose a specific project folder: the selected folder contains notch\u2019s own task storage.");
-    const folder = path3.join(home(), hash(source).slice(0, 20), hash(session).slice(0, 20));
-    const file2 = path3.join(folder, "task.json");
-    await fs3.mkdir(folder, { recursive: true, mode: 448 });
-    let savedText;
-    try {
-      savedText = await fs3.readFile(file2, "utf8");
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-    if (savedText !== void 0) {
-      const saved = JSON.parse(savedText);
-      if (saved.version !== 1 || saved.source !== source || typeof saved.root !== "string" || typeof saved.cwd !== "string" || typeof saved.repo !== "string" || !saved.baseline || !["running", "pending", "applied"].includes(saved.state) || !inside(folder, saved.root) || saved.root === folder || !inside(saved.root, saved.cwd)) throw new Error("Invalid saved task workspace.");
-      if (saved.state !== "applied") {
-        if (await fs3.realpath(saved.root).catch(() => "") !== saved.root) throw new Error("Saved task checkout is missing or moved. Its recovery record was preserved.");
-        await safeFile(saved.root, path3.relative(saved.root, saved.cwd));
-        await fs3.mkdir(saved.cwd, { recursive: true });
-        if (await fs3.realpath(saved.cwd) !== saved.cwd) throw new Error("Saved task checkout moved.");
-        return new _TaskWorkspace(file2, saved);
-      }
-    }
-    let root, repo;
-    try {
-      root = (await git(source, ["rev-parse", "--show-toplevel"])).trim();
-      root = await fs3.realpath(root);
-      repo = (await git(root, ["rev-parse", "--absolute-git-dir"])).trim();
-    } catch (error) {
-      if (error.code === "ENOENT") throw new Error("Install Git to enable automatic task isolation.");
-      root = source;
-      repo = path3.join(folder, "repository.git");
-      await git(source, ["init", "--bare", repo]);
-      await fs3.writeFile(path3.join(repo, "info", "exclude"), "node_modules/\n.venv/\nvenv/\n__pycache__/\n");
-    }
-    if (inside(root, home())) throw new Error("Choose a project repository outside notch\u2019s task storage. Its parent repository contains that storage.");
-    const index = path3.join(folder, "index-" + randomUUID());
-    const env = { GIT_INDEX_FILE: index };
-    const args = ["--git-dir", repo, "--work-tree", root];
-    const checkout = path3.join(folder, "checkout-" + randomUUID());
-    try {
-      let filterNames = "";
-      try {
-        filterNames = await git(root, [...args, "config", "--name-only", "--get-regexp", "^filter\\..*\\.(clean|smudge|process|required)$"]);
-      } catch (error) {
-        if (error.code !== 1) throw error;
-      }
-      const filters = [...new Set(filterNames.trim().split(/\r?\n/).filter(Boolean).map((name) => name.replace(/\.[^.]+$/, "")))];
-      const noFilters = filters.flatMap((name) => ["-c", `${name}.clean=`, "-c", `${name}.smudge=`, "-c", `${name}.process=`, "-c", `${name}.required=false`]);
-      const sourceIndex = (await git(root, ["--git-dir", repo, "rev-parse", "--git-path", "index"])).trim();
-      try {
-        await fs3.copyFile(path3.resolve(root, sourceIndex), index);
-        await git(root, [...args, "update-index", "--no-split-index"], env);
-      } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-        try {
-          await git(root, [...args, "read-tree", "HEAD"], env);
-        } catch {
-          await git(root, [...args, "read-tree", "--empty"], env);
-        }
-      }
-      let commit;
-      try {
-        commit = (await git(root, [...args, "rev-parse", "--verify", "HEAD"])).trim();
-      } catch {
-      }
-      const headNames = commit ? (await git(root, [...args, "ls-tree", "-r", "--name-only", "-z", commit])).split("\0").filter(Boolean) : [];
-      const names = [.../* @__PURE__ */ new Set([...headNames, ...await files(repo, root, index)])];
-      const skipped = new Set((await git(root, [...args, "ls-files", "-v", "-z"], env)).split("\0").filter((line) => line[0]?.toUpperCase() === "S").map((line) => line.slice(2)));
-      const baseline = /* @__PURE__ */ Object.create(null);
-      for (const name of names) baseline[name] = { source: await revision(await safeFile(root, name)), task: null };
-      if (!commit) {
-        const empty = { GIT_INDEX_FILE: index + ".empty" };
-        try {
-          await git(root, [...args, "read-tree", "--empty"], empty);
-          const tree = (await git(root, [...args, "write-tree"], empty)).trim();
-          commit = (await git(root, [...args, "commit-tree", tree, "-m", "notch task workspace"], {
-            ...empty,
-            GIT_AUTHOR_NAME: "notch",
-            GIT_AUTHOR_EMAIL: "tasks@freesyntax.dev",
-            GIT_COMMITTER_NAME: "notch",
-            GIT_COMMITTER_EMAIL: "tasks@freesyntax.dev"
-          })).trim();
-        } finally {
-          await fs3.unlink(empty.GIT_INDEX_FILE).catch(() => {
-          });
-        }
-      }
-      await git(root, ["--git-dir", repo, ...noFilters, "-c", "core.autocrlf=false", "worktree", "add", "--detach", checkout, commit]);
-      for (const [name, entry] of Object.entries(baseline)) {
-        const target = await safeFile(checkout, name);
-        if (entry.source) {
-          await fs3.mkdir(path3.dirname(target), { recursive: true });
-          await fs3.copyFile(await safeFile(root, name), target);
-        } else if (!skipped.has(name)) await fs3.unlink(target).catch((error) => {
-          if (error.code !== "ENOENT") throw error;
-        });
-        entry.task = await revision(target);
-      }
-      for (const [name, entry] of Object.entries(baseline)) {
-        if (!same(entry.source, await revision(await safeFile(root, name)))) throw new Error("Project changed while preparing the task. Please retry.");
-      }
-      for (const name of await files(repo, checkout, index)) {
-        const entry = baseline[name];
-        if (!entry) throw new Error("Project changed while preparing the task. Please retry.");
-      }
-      const manifest = { version: 1, source, repo, root: checkout, cwd: path3.join(checkout, path3.relative(root, source)), baseline, state: "running" };
-      manifest.baseline = Object.fromEntries(Object.entries(baseline).map(([name, entry]) => [path3.relative(source, path3.join(root, name)), entry]));
-      await save(file2, manifest);
-      return new _TaskWorkspace(file2, manifest);
-    } catch (error) {
-      if (inside(folder, checkout) && path3.basename(checkout).startsWith("checkout-")) await git(root, ["--git-dir", repo, "worktree", "remove", "--force", checkout]).catch(() => {
-      });
-      throw error;
-    } finally {
-      await fs3.unlink(index).catch(() => {
-      });
-    }
-  }
-  /** Capture shell-created/deleted files too; plugins cannot bypass the delivery check. */
-  async changes() {
-    const m = this.manifest;
-    const taskRepo = (await git(m.root, ["rev-parse", "--absolute-git-dir"])).trim();
-    const names = /* @__PURE__ */ new Set([...Object.keys(m.baseline), ...(await files(taskRepo, m.root)).map((name) => path3.relative(m.cwd, path3.join(m.root, name)))]);
-    const changes = [];
-    for (const name of names) {
-      const current = await revision(await safeFile(m.root, path3.relative(m.root, path3.resolve(m.cwd, name))));
-      const entry = Object.hasOwn(m.baseline, name) ? m.baseline[name] : void 0;
-      if (!same(current, entry?.task ?? null)) changes.push({ name, current, entry: entry ?? { source: null, task: null } });
-    }
-    return changes;
-  }
-  async apply(checkpoints) {
-    const m = this.manifest, changes = await this.changes();
-    const release = await sourceLease(m.source);
-    try {
-      const conflicts = [], plan = [];
-      for (const change of changes) {
-        if (!inside(m.source, path3.resolve(m.source, change.name))) {
-          conflicts.push(`Outside the selected folder: ${change.name}`);
-          continue;
-        }
-        const source = await safeFile(m.source, change.name);
-        const current = await revision(source);
-        if (same(current, change.current)) continue;
-        if (Object.hasOwn(change.entry, "reconcile") && same(change.current, change.entry.reconcile)) {
-          conflicts.push(change.name);
-          continue;
-        }
-        if (!same(current, change.entry.source)) {
-          conflicts.push(change.name);
-          continue;
-        }
-        const bytes = change.current ? await fs3.readFile(await safeFile(m.cwd, change.name)) : null;
-        if (bytes && hash(bytes) !== change.current.hash) throw new Error("Task files changed during delivery. Please retry.");
-        if (checkpoints && bytes && !Buffer.from(bytes.toString("utf8")).equals(bytes)) throw new Error(`Binary task output needs review before applying: ${change.name}. The private checkout was preserved.`);
-        plan.push({ ...change, source, bytes });
-      }
-      if (conflicts.length) {
-        m.state = "pending";
-        await save(this.file, m);
-        return { applied: false, files: changes.map((c) => c.name), conflicts, cwd: this.cwd };
-      }
-      for (const item of plan) await checkpoints?.recordBefore(item.source);
-      for (const item of plan) {
-        if (item.bytes === null) await fs3.unlink(item.source);
-        else {
-          await fs3.mkdir(path3.dirname(item.source), { recursive: true });
-          const temporary = item.source + ".notch-" + randomUUID() + ".tmp";
-          try {
-            await fs3.writeFile(temporary, item.bytes, { mode: item.current.mode, flag: "wx", flush: true });
-            await fs3.rename(temporary, item.source);
-          } finally {
-            await fs3.unlink(temporary).catch(() => {
-            });
-          }
-        }
-        await checkpoints?.recordAfter(item.source);
-      }
-      await checkpoints?.finish?.();
-      m.state = "applied";
-      await save(this.file, m);
-      return { applied: true, files: changes.map((c) => c.name), conflicts, cwd: this.cwd };
-    } finally {
-      await release();
-    }
-  }
-  async readSource(name) {
-    const release = await sourceLease(this.manifest.source);
-    try {
-      const source = await safeFile(this.manifest.source, name);
-      const relative = path3.relative(this.manifest.source, source);
-      const key = (value) => process.platform === "win32" ? path3.normalize(value).toLowerCase() : path3.normalize(value);
-      name = Object.keys(this.manifest.baseline).find((existing) => key(existing) === key(relative)) ?? relative;
-      const current = await revision(source);
-      const bytes = current ? await fs3.readFile(source) : null;
-      if (bytes && hash(bytes) !== current.hash) throw new Error("Source changed while reading. Read it again.");
-      const entry = (Object.hasOwn(this.manifest.baseline, name) ? this.manifest.baseline[name] : void 0) ?? { source: null, task: null };
-      if (!same(entry.source, current)) entry.reconcile = await revision(await safeFile(this.manifest.cwd, name));
-      entry.source = current;
-      Object.defineProperty(this.manifest.baseline, name, { value: entry, enumerable: true, writable: true, configurable: true });
-      await save(this.file, this.manifest);
-      return bytes ? bytes.toString("utf8") : "[This source file does not exist.]";
-    } finally {
-      await release();
-    }
-  }
-  async retainForWorkers() {
-    this.manifest.retainForWorkers = true;
-    await save(this.file, this.manifest);
-  }
-  async dispose() {
-    if (this.manifest.state !== "applied" || this.manifest.retainForWorkers) return;
-    const root = path3.resolve(this.manifest.root), folder = path3.dirname(this.file);
-    if (!inside(folder, root) || !path3.basename(root).startsWith("checkout-")) throw new Error("Invalid managed checkout path.");
-    await git(this.manifest.source, ["--git-dir", this.manifest.repo, "worktree", "remove", "--force", root]);
-  }
-};
-async function withTaskWorkspace(ctx, run) {
-  if (ctx.remoteWorkspace) {
-    const release2 = await acquireLease(ctx.remoteWorkspace.leaseKey, ctx.abortSignal, (waiting) => ctx.onQueue?.(waiting ? "Waiting for another task in this SSH workspace\u2026" : null));
-    try {
-      return await run(ctx);
-    } finally {
-      try {
-        await ctx.workspaceCheckpoints?.finish?.();
-      } finally {
-        ctx.onQueue?.(null);
-        await release2();
-      }
-    }
-  }
-  if (ctx.accessMode === "read-only" || ctx.dryRun || ctx.taskWorkspace) return run(ctx);
-  if (!ctx.isolateTasks?.()) {
-    if (ctx.sharedTask && sharedWorkers.has(ctx.sharedTask)) return run(ctx);
-    const release2 = await acquireProjectLease(
-      ctx.cwd,
-      ctx.abortSignal,
-      (waiting) => ctx.onQueue?.(waiting ? "Waiting for another task in this project\u2026" : null)
-    );
-    const token = randomUUID(), workers = /* @__PURE__ */ new Set();
-    sharedWorkers.set(token, workers);
-    try {
-      ctx.abortSignal?.throwIfAborted();
-      return await run({ ...ctx, sharedTask: token, sharedWorker: void 0, _readCache: /* @__PURE__ */ new Map(), _fileVersions: /* @__PURE__ */ new Map() });
-    } finally {
-      try {
-        while (workers.size) await Promise.allSettled([...workers]);
-        await ctx.workspaceCheckpoints?.finish?.();
-      } finally {
-        sharedWorkers.delete(token);
-        await release2();
-      }
-    }
-  }
-  const session = ctx.permissionSessionId || randomUUID();
-  const release = await acquireLease("task-workspace:" + hash(ctx.cwd + "\0" + session), ctx.abortSignal);
-  let task;
-  try {
-    ctx.onQueue?.("Preparing a private task workspace\u2026");
-    const sourceLock = await sourceLease(ctx.cwd, ctx.abortSignal);
-    try {
-      task = await TaskWorkspace.open(ctx.cwd, session);
-    } finally {
-      await sourceLock();
-    }
-    ctx.abortSignal?.throwIfAborted();
-    ctx.onQueue?.(null);
-    ctx.log("Working in a private task workspace. Safe changes return automatically.");
-    const child = {
-      ...ctx,
-      cwd: task.cwd,
-      taskWorkspace: task,
-      _readCache: /* @__PURE__ */ new Map(),
-      _fileVersions: /* @__PURE__ */ new Map(),
-      runHook: ctx.runHook ? (event, payload) => ctx.runHook(event, { ...payload, isolatedWorkspace: true, cwd: task.cwd }) : void 0
-    };
-    const result = await run(child);
-    ctx.abortSignal?.throwIfAborted();
-    if (result && typeof result === "object" && ("error" in result && result.error || "status" in result && result.status === "max-iterations")) {
-      ctx.log(`Unfinished task files are safe in ${task.cwd}. Resume this chat to continue.`);
-      return result;
-    }
-    const delivery = await task.apply(ctx.workspaceCheckpoints);
-    ctx.onWorkspaceResult?.(delivery);
-    ctx.log(delivery.applied ? `Applied ${delivery.files.length} task file change(s).` : `Changes kept separate: ${delivery.conflicts.join(", ")} changed in the project. Ask notch to reconcile them. Saved workspace: ${task.cwd}`);
-    if (delivery.applied) await task.dispose().catch(() => ctx.log("Completed task checkout retained for cleanup."));
-    return result;
-  } catch (error) {
-    if (task) ctx.log(`Unfinished task files are safe in ${task.cwd}. Resume this chat to continue.`);
-    throw error;
-  } finally {
-    ctx.onQueue?.(null);
-    await release();
-  }
-}
-
-// vendor/notch-cli/src/config.ts
-var DEFAULT_MODEL = {
-  model: "openrouter/anthropic/claude-sonnet-4.6",
-  temperature: 0.3
-};
-var DEFAULTS = {
-  workspaceMode: "shared",
-  models: { chat: DEFAULT_MODEL },
-  projectRoot: process.cwd(),
-  autoConfirm: false,
-  maxIterations: 25,
-  useRepoMap: true,
-  renderMarkdown: true,
-  enableMemory: true,
-  enableHooks: true,
-  permissionMode: "auto",
-  theme: "default"
-};
-function selectModel(current, selection) {
-  const next = { ...current };
-  if (selection.provider || selection.model) {
-    if (selection.model && selection.model !== current.model) {
-      delete next.sourceRepo;
-      delete next.nativeContextWindow;
-      delete next.maxOutputTokens;
-    }
-    const oldProvider = current.byokProvider ?? (isByokRef(current.model) ? parseByokRef(current.model).provider : void 0);
-    const provider = selection.provider === "custom" ? "__custom__" : selection.provider;
-    const newProvider = provider ?? (selection.model && isByokRef(selection.model) ? parseByokRef(selection.model).provider : void 0);
-    if (newProvider !== oldProvider) {
-      delete next.baseUrl;
-      delete next.apiKey;
-      delete next.byokHeaders;
-      delete next.headers;
-      delete next.byokApiShape;
-      delete next.contextWindow;
-      delete next.colibriAutoContext;
-      delete next.strataAutoContext;
-      delete next.nativeContextWindow;
-      delete next.maxOutputTokens;
-      delete next.ollamaBatch;
-      delete next.sourceRepo;
-    }
-    if (provider) {
-      const info = findByokProvider(provider);
-      if (!info) throw new Error(`Unknown provider: ${selection.provider}. Run notch --list-providers.`);
-      next.byokProvider = provider;
-      next.model = selection.model || info.defaultModel;
-      if (isByokRef(next.model)) {
-        const ref = parseByokRef(next.model);
-        if (ref.provider !== provider) throw new Error("The --provider and --model provider must match.");
-        next.model = ref.model;
-      }
-    } else if (selection.model) {
-      if (!isValidModel(selection.model) && !isByokRef(selection.model)) {
-        throw new Error(`Unknown model: ${selection.model}. Use provider/model or pass --provider.`);
-      }
-      next.model = selection.model;
-      delete next.byokProvider;
-    }
-  }
-  if (selection.baseUrl) next.baseUrl = selection.baseUrl;
-  if (selection.apiKey) next.apiKey = selection.apiKey;
-  return next;
-}
-async function loadConfig(overrides = {}, selection = {}) {
-  const config = { ...DEFAULTS, projectRoot: path4.resolve(overrides.projectRoot ?? process.cwd()), models: { chat: { ...DEFAULT_MODEL } } };
-  let explicitModelConfig = false;
-  const configPath = path4.resolve(config.projectRoot, ".notch.json");
-  try {
-    const raw = await fs4.readFile(configPath, "utf-8");
-    const fileConfig = JSON.parse(raw);
-    if (fileConfig.model && (isValidModel(fileConfig.model) || isByokRef(fileConfig.model))) {
-      config.models.chat.model = fileConfig.model;
-      explicitModelConfig = true;
-    }
-    if (fileConfig.baseUrl) config.models.chat.baseUrl = fileConfig.baseUrl;
-    if (fileConfig.apiKey) config.models.chat.apiKey = fileConfig.apiKey;
-    const providerBlock = fileConfig.provider && typeof fileConfig.provider === "object" ? fileConfig.provider : fileConfig.byok;
-    if (providerBlock && typeof providerBlock === "object") {
-      const byok = providerBlock;
-      config.byok = { ...byok };
-      if (byok.provider && findByokProvider(byok.provider === "custom" ? "__custom__" : byok.provider)) {
-        config.models.chat.byokProvider = byok.provider === "custom" ? "__custom__" : byok.provider;
-        config.models.chat.model = byok.model || findByokProvider(config.models.chat.byokProvider).defaultModel;
-        if (byok.baseUrl) config.models.chat.baseUrl = byok.baseUrl;
-        if (typeof byok.sourceRepo === "string") config.models.chat.sourceRepo = byok.sourceRepo;
-        if (byok.contextWindow !== void 0) {
-          const maximum = ["ollama", "ollama-anthropic", "mlx"].includes(byok.provider || "") ? 262144 : 16777216;
-          if (!Number.isInteger(byok.contextWindow) || byok.contextWindow < 2048 || byok.contextWindow > maximum) throw new Error(`provider.contextWindow must be an integer between 2048 and ${maximum}.`);
-          config.models.chat.contextWindow = byok.contextWindow;
-        }
-        if (byok.ollamaBatch !== void 0) {
-          if (!Number.isInteger(byok.ollamaBatch) || byok.ollamaBatch < 1 || byok.ollamaBatch > 2048) throw new Error("provider.ollamaBatch must be an integer between 1 and 2048.");
-          config.models.chat.ollamaBatch = byok.ollamaBatch;
-        }
-        if (byok.headers) {
-          config.models.chat.byokHeaders = { ...config.models.chat.byokHeaders, ...byok.headers };
-        }
-        if (byok.apiShape === "openai" || byok.apiShape === "anthropic") {
-          config.models.chat.byokApiShape = byok.apiShape;
-        }
-        explicitModelConfig = true;
-      }
-    }
-    if (fileConfig.hybrid && typeof fileConfig.hybrid === "object") {
-      const hybrid = fileConfig.hybrid;
-      config.hybrid = hybrid;
-    }
-    if (fileConfig.maxIterations) config.maxIterations = fileConfig.maxIterations;
-    if (fileConfig.useRepoMap !== void 0) config.useRepoMap = fileConfig.useRepoMap;
-    if (fileConfig.temperature !== void 0) config.models.chat.temperature = fileConfig.temperature;
-    if (fileConfig.renderMarkdown !== void 0) config.renderMarkdown = fileConfig.renderMarkdown;
-    if (fileConfig.enableMemory !== void 0) config.enableMemory = fileConfig.enableMemory;
-    if (fileConfig.enableHooks !== void 0) config.enableHooks = fileConfig.enableHooks;
-    if (fileConfig.permissionMode) config.permissionMode = fileConfig.permissionMode;
-    if (fileConfig.accessMode !== void 0) config.accessMode = parseAccessMode(fileConfig.accessMode);
-    if (fileConfig.workspaceMode !== void 0) config.workspaceMode = parseWorkspaceMode(fileConfig.workspaceMode);
-    if (fileConfig.shellTimeout) config.shellTimeout = fileConfig.shellTimeout;
-    if (fileConfig.theme) config.theme = fileConfig.theme;
-  } catch (error) {
-    if (error.code !== "ENOENT") {
-      throw new Error(`Cannot read ${configPath}: ${error.message}`);
-    }
-  }
-  if (process.env.NOTCH_ACCESS_MODE) config.accessMode = parseAccessMode(process.env.NOTCH_ACCESS_MODE);
-  if (process.env.NOTCH_PROVIDER || process.env.NOTCH_MODEL) {
-    config.models.chat = selectModel(config.models.chat, { provider: process.env.NOTCH_PROVIDER, model: process.env.NOTCH_MODEL });
-    explicitModelConfig = true;
-  }
-  if (selection.provider || selection.model) {
-    config.models.chat = selectModel(config.models.chat, selection);
-    explicitModelConfig = true;
-  }
-  if (!explicitModelConfig) {
-    const inferred = await inferDefaultProviderConfig();
-    config.models.chat.model = inferred.modelRef;
-    config.models.chat.byokProvider = void 0;
-    if (inferred.baseUrl) config.models.chat.baseUrl = inferred.baseUrl;
-    if (inferred.apiShape) config.models.chat.byokApiShape = inferred.apiShape;
-  }
-  const activeProviderId = config.models.chat.byokProvider ?? (typeof config.models.chat.model === "string" && isByokRef(config.models.chat.model) ? parseByokRef(config.models.chat.model).provider : void 0);
-  const isOllamaProvider = activeProviderId === "ollama" || activeProviderId === "ollama-cloud" || activeProviderId === "ollama-anthropic";
-  if (isOllamaProvider) {
-    if (!config.models.chat.apiKey && !process.env.OLLAMA_API_KEY) {
-      const ollamaCreds = await readOllamaCreds();
-      if (ollamaCreds?.apiKey) {
-        config.models.chat.apiKey = ollamaCreds.apiKey;
-      }
-    }
-  }
-  if (process.env.NOTCH_BASE_URL) {
-    config.models.chat.baseUrl = process.env.NOTCH_BASE_URL;
-  }
-  if (process.env.NOTCH_API_KEY && !activeProviderId) {
-    config.models.chat.apiKey = process.env.NOTCH_API_KEY;
-  }
-  if (config.models.chat.temperature !== void 0) {
-    config.models.chat.temperature = Math.max(0, Math.min(2, config.models.chat.temperature));
-  }
-  config.maxIterations = Math.max(1, Math.min(100, config.maxIterations));
-  config.models.chat = selectModel(config.models.chat, { baseUrl: selection.baseUrl, apiKey: selection.apiKey });
-  return { ...config, ...overrides, workspaceMode: parseWorkspaceMode(overrides.workspaceMode ?? config.workspaceMode), projectRoot: config.projectRoot };
-}
-async function inferDefaultProviderConfig() {
-  const providers = listByokProviders();
-  const envMatch = providers.find((p) => p.apiKeyEnv && process.env[p.apiKeyEnv]);
-  if (envMatch) return { modelRef: `${envMatch.id}/${envMatch.defaultModel}` };
-  const synced = await loadSyncedByokKeys();
-  if (synced) {
-    const syncedMatch = providers.find((p) => {
-      const key = synced.keys[p.id];
-      return typeof key === "string" && key.length > 0;
-    });
-    if (syncedMatch) return { modelRef: `${syncedMatch.id}/${syncedMatch.defaultModel}` };
-    if (synced.localEndpoint) {
-      return {
-        modelRef: "custom/local-model",
-        baseUrl: synced.localEndpoint,
-        apiShape: "openai"
-      };
-    }
-  }
-  const localOllama = await inferLocalOllamaModel();
-  if (localOllama) return localOllama;
-  const openrouter = findByokProvider("openrouter");
-  if (openrouter) return { modelRef: `${openrouter.id}/${openrouter.defaultModel}` };
-  const first = providers[0];
-  return { modelRef: first ? `${first.id}/${first.defaultModel}` : DEFAULT_MODEL.model };
-}
-async function inferLocalOllamaModel() {
-  try {
-    const baseUrl = ollamaRoot();
-    const rows = await listModels(baseUrl, { timeoutMs: 300 });
-    const capabilities = await Promise.all(rows.map((row) => showModel(row.name, baseUrl, { timeoutMs: 500 }).catch(() => null)));
-    const modelName = rows.find((_, index) => capabilities[index]?.capabilities?.includes("tools"))?.name;
-    if (!modelName) return null;
-    return {
-      modelRef: `ollama/${modelName}`,
-      baseUrl: ollamaChatUrl(baseUrl)
-    };
-  } catch {
-    return null;
-  }
-}
+import path22 from "path";
+import fs18 from "fs/promises";
+import os5 from "os";
 
 // vendor/notch-cli/src/messages.ts
 import { modelMessageSchema } from "ai";
@@ -1793,7 +214,7 @@ var ExecutionGuard = class {
 // vendor/notch-cli/src/agent/loop.ts
 import { isStepCount as isStepCount2, asSchema, jsonSchema } from "ai";
 import { streamText as streamText2 } from "ai";
-import { promises as fs20 } from "fs";
+import { promises as fs16 } from "fs";
 import { execSync } from "child_process";
 
 // vendor/notch-cli/src/tools/index.ts
@@ -1801,8 +222,8 @@ import { tool as tool2 } from "ai";
 import { zodToJsonSchema } from "zod-to-json-schema";
 
 // vendor/notch-cli/src/tools/read.ts
-import fs5 from "fs/promises";
-import path5 from "path";
+import fs from "fs/promises";
+import path from "path";
 import { z } from "zod";
 var IMAGE_EXTENSIONS = /* @__PURE__ */ new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".ico"]);
 var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([".pdf", ".zip", ".tar", ".gz", ".wasm", ".exe", ".dll", ".so", ".dylib"]);
@@ -1815,8 +236,8 @@ var parameters = z.object({
 });
 async function readImage(filePath, ext) {
   try {
-    const stat = await fs5.stat(filePath);
-    const buf = await fs5.readFile(filePath);
+    const stat = await fs.stat(filePath);
+    const buf = await fs.readFile(filePath);
     const mimeType = ext === ".svg" ? "image/svg+xml" : ext === ".png" ? "image/png" : ext === ".gif" ? "image/gif" : ext === ".webp" ? "image/webp" : ext === ".bmp" ? "image/bmp" : ext === ".ico" ? "image/x-icon" : "image/jpeg";
     if (ext === ".svg") {
       const svgText = buf.toString("utf-8");
@@ -1839,8 +260,8 @@ data:${mimeType};base64,${base64.slice(0, 200)}... [${base64.length} chars total
 }
 async function readPDF(filePath) {
   try {
-    const stat = await fs5.stat(filePath);
-    const buf = await fs5.readFile(filePath);
+    const stat = await fs.stat(filePath);
+    const buf = await fs.readFile(filePath);
     const text2 = buf.toString("latin1");
     const textChunks = [];
     const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
@@ -1881,10 +302,10 @@ var readTool = {
   description: 'Read file contents with line numbers. Use offset/limit for large files. Supports text files, images (returns metadata + base64), and PDFs (basic text extraction). Returns numbered lines like "  1\\tline content".',
   parameters,
   async execute(params, ctx) {
-    const filePath = path5.isAbsolute(params.path) ? params.path : path5.resolve(ctx.cwd, params.path);
-    const ext = path5.extname(filePath).toLowerCase();
+    const filePath = path.isAbsolute(params.path) ? params.path : path.resolve(ctx.cwd, params.path);
+    const ext = path.extname(filePath).toLowerCase();
     try {
-      await fs5.access(filePath);
+      await fs.access(filePath);
       if (IMAGE_EXTENSIONS.has(ext)) {
         return await readImage(filePath, ext);
       }
@@ -1892,12 +313,12 @@ var readTool = {
         return await readPDF(filePath);
       }
       if (BINARY_EXTENSIONS.has(ext)) {
-        const stat2 = await fs5.stat(filePath);
+        const stat2 = await fs.stat(filePath);
         return {
           content: `Binary file: ${filePath} (${(stat2.size / 1024).toFixed(1)} KB, ${ext})`
         };
       }
-      const stat = await fs5.stat(filePath);
+      const stat = await fs.stat(filePath);
       if (stat.size > MAX_FILE_SIZE) {
         return {
           content: `File too large: ${filePath} (${(stat.size / 1024 / 1024).toFixed(1)} MB). Use offset/limit to read portions.`,
@@ -1908,7 +329,7 @@ var readTool = {
       if (ctx._readCache?.has(cacheKey2)) {
         return { content: ctx._readCache.get(cacheKey2) };
       }
-      const raw = await fs5.readFile(filePath, "utf-8");
+      const raw = await fs.readFile(filePath, "utf-8");
       const allLines = raw.split("\n");
       const offset = Math.max(0, (params.offset ?? 1) - 1);
       const limit = params.limit ?? MAX_LINES;
@@ -1932,8 +353,8 @@ var readTool = {
 };
 
 // vendor/notch-cli/src/tools/write.ts
-import fs6 from "fs/promises";
-import path6 from "path";
+import fs2 from "fs/promises";
+import path2 from "path";
 import { z as z2 } from "zod";
 var parameters2 = z2.object({
   path: z2.string().describe("Relative or absolute path to write"),
@@ -1944,16 +365,16 @@ var writeTool = {
   description: "Write a file (create or overwrite). Creates parent directories if needed. Always provide the COMPLETE file content.",
   parameters: parameters2,
   async execute(params, ctx) {
-    const filePath = path6.isAbsolute(params.path) ? params.path : path6.resolve(ctx.cwd, params.path);
+    const filePath = path2.isAbsolute(params.path) ? params.path : path2.resolve(ctx.cwd, params.path);
     try {
-      await fs6.mkdir(path6.dirname(filePath), { recursive: true });
+      await fs2.mkdir(path2.dirname(filePath), { recursive: true });
       let existed = false;
       try {
-        await fs6.access(filePath);
+        await fs2.access(filePath);
         existed = true;
       } catch {
       }
-      await fs6.writeFile(filePath, params.content, "utf-8");
+      await fs2.writeFile(filePath, params.content, "utf-8");
       const lines = params.content.split("\n").length;
       const action = existed ? "Updated" : "Created";
       return { content: `${action} ${filePath} (${lines} lines)` };
@@ -1964,8 +385,8 @@ var writeTool = {
 };
 
 // vendor/notch-cli/src/tools/edit.ts
-import fs7 from "fs/promises";
-import path7 from "path";
+import fs3 from "fs/promises";
+import path3 from "path";
 import { z as z3 } from "zod";
 var parameters3 = z3.object({
   path: z3.string().describe("Relative or absolute path to the file"),
@@ -1978,9 +399,9 @@ var editTool = {
   description: "Perform exact string replacement in a file. old_string must match exactly and be unique unless replace_all is true. Use small exact matches, without read-output line numbers. Use actual newlines for multiple lines; literal backslash sequences are preserved.",
   parameters: parameters3,
   async execute(params, ctx) {
-    const filePath = path7.isAbsolute(params.path) ? params.path : path7.resolve(ctx.cwd, params.path);
+    const filePath = path3.isAbsolute(params.path) ? params.path : path3.resolve(ctx.cwd, params.path);
     try {
-      const content = await fs7.readFile(filePath, "utf-8");
+      const content = await fs3.readFile(filePath, "utf-8");
       if (!content.includes(params.old_string)) {
         return {
           content: `old_string not found in ${filePath}. No files changed. Read the file again and use a smaller exact match, including whitespace and indentation.` + (params.old_string.includes("\\n") ? " Your match contains literal backslash-n characters; use actual newlines when matching line breaks." : ""),
@@ -1998,7 +419,7 @@ var editTool = {
         }
       }
       const newContent = params.replace_all ? content.replaceAll(params.old_string, () => params.new_string) : content.replace(params.old_string, () => params.new_string);
-      await fs7.writeFile(filePath, newContent, "utf-8");
+      await fs3.writeFile(filePath, newContent, "utf-8");
       const oldLines = params.old_string.split("\n").length;
       const newLines = params.new_string.split("\n").length;
       return {
@@ -2014,8 +435,8 @@ var editTool = {
 };
 
 // vendor/notch-cli/src/tools/apply-patch.ts
-import fs8 from "fs/promises";
-import path8 from "path";
+import fs4 from "fs/promises";
+import path4 from "path";
 import { z as z4 } from "zod";
 var PatchParseError = class extends Error {
 };
@@ -2203,21 +624,21 @@ var applyPatchTool = {
     const summary = [];
     try {
       for (const action of actions) {
-        const abs = path8.isAbsolute(action.target) ? action.target : path8.resolve(ctx.cwd, action.target);
+        const abs = path4.isAbsolute(action.target) ? action.target : path4.resolve(ctx.cwd, action.target);
         if (action.kind === "add") {
           try {
-            await fs8.access(abs);
+            await fs4.access(abs);
             return { content: `Add File failed: ${action.target} already exists`, isError: true };
           } catch {
           }
-          await fs8.mkdir(path8.dirname(abs), { recursive: true });
-          await fs8.writeFile(abs, action.content, "utf-8");
+          await fs4.mkdir(path4.dirname(abs), { recursive: true });
+          await fs4.writeFile(abs, action.content, "utf-8");
           summary.push(`A ${action.target}`);
         } else if (action.kind === "delete") {
-          await fs8.unlink(abs);
+          await fs4.unlink(abs);
           summary.push(`D ${action.target}`);
         } else {
-          const original = await fs8.readFile(abs, "utf-8");
+          const original = await fs4.readFile(abs, "utf-8");
           const hasCrlf = original.includes("\r\n");
           const eol = hasCrlf ? "\r\n" : "\n";
           const hadTrailingNewline = original.endsWith("\n") || original.endsWith("\r\n");
@@ -2228,14 +649,14 @@ var applyPatchTool = {
           }
           const joined = lines.join(eol);
           const next = hadTrailingNewline ? joined + eol : joined;
-          const destAbs = action.moveTo ? path8.isAbsolute(action.moveTo) ? action.moveTo : path8.resolve(ctx.cwd, action.moveTo) : abs;
+          const destAbs = action.moveTo ? path4.isAbsolute(action.moveTo) ? action.moveTo : path4.resolve(ctx.cwd, action.moveTo) : abs;
           if (action.moveTo) {
-            await fs8.mkdir(path8.dirname(destAbs), { recursive: true });
-            await fs8.writeFile(destAbs, next, "utf-8");
-            await fs8.unlink(abs);
+            await fs4.mkdir(path4.dirname(destAbs), { recursive: true });
+            await fs4.writeFile(destAbs, next, "utf-8");
+            await fs4.unlink(abs);
             summary.push(`R ${action.target} -> ${action.moveTo}`);
           } else {
-            await fs8.writeFile(abs, next, "utf-8");
+            await fs4.writeFile(abs, next, "utf-8");
             summary.push(`M ${action.target}`);
           }
         }
@@ -2253,14 +674,14 @@ ${summary.join("\n")}` };
 };
 
 // vendor/notch-cli/src/tools/shell.ts
-import path10 from "path";
+import path6 from "path";
 import { z as z5 } from "zod";
 
 // vendor/notch-cli/src/terminal/local.ts
 import { spawn } from "child_process";
-import { promises as fs9 } from "fs";
-import path9 from "path";
-import { randomUUID as randomUUID2 } from "crypto";
+import { promises as fs5 } from "fs";
+import path5 from "path";
+import { randomUUID } from "crypto";
 var DEFAULT_MAX_OUTPUT = 32e3;
 var DEFAULT_TIMEOUT_MS = 6e4;
 function stopTree(child) {
@@ -2283,11 +704,11 @@ var LocalTerminal = class {
   }
   async start(req) {
     req.signal?.throwIfAborted();
-    const started = Date.now(), directory = path9.join(req.cwd ?? process.cwd(), ".notch", "processes");
-    await fs9.mkdir(directory, { recursive: true });
-    const id = randomUUID2(), stdoutFile = path9.join(directory, id + ".out.log"), stderrFile = path9.join(directory, id + ".err.log");
-    await fs9.writeFile(stdoutFile, "", { flag: "wx" });
-    await fs9.writeFile(stderrFile, "", { flag: "wx" });
+    const started = Date.now(), directory = path5.join(req.cwd ?? process.cwd(), ".notch", "processes");
+    await fs5.mkdir(directory, { recursive: true });
+    const id = randomUUID(), stdoutFile = path5.join(directory, id + ".out.log"), stderrFile = path5.join(directory, id + ".err.log");
+    await fs5.writeFile(stdoutFile, "", { flag: "wx" });
+    await fs5.writeFile(stderrFile, "", { flag: "wx" });
     let child;
     const abort = () => {
       if (child) stopTree(child);
@@ -2311,7 +732,7 @@ child.on('close',code=>{process.exitCode=code??1;});
         cwd: req.cwd,
         env: { ...env, ...process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {} },
         windowsHide: true,
-        detached: true,
+        detached: process.platform !== "win32",
         stdio: ["ignore", "ignore", "ignore", "ipc"]
       });
       req.signal?.addEventListener("abort", abort, { once: true });
@@ -2337,7 +758,7 @@ child.on('close',code=>{process.exitCode=code??1;});
       });
       req.signal?.throwIfAborted();
       child.unref();
-      if (early !== void 0) return { exitCode: early, stdout: (await fs9.readFile(stdoutFile, "utf8")).slice(0, DEFAULT_MAX_OUTPUT), stderr: (await fs9.readFile(stderrFile, "utf8")).slice(0, DEFAULT_MAX_OUTPUT), durationMs: Date.now() - started };
+      if (early !== void 0) return { exitCode: early, stdout: (await fs5.readFile(stdoutFile, "utf8")).slice(0, DEFAULT_MAX_OUTPUT), stderr: (await fs5.readFile(stderrFile, "utf8")).slice(0, DEFAULT_MAX_OUTPUT), durationMs: Date.now() - started };
       return { exitCode: 0, stdout: "", stderr: "", durationMs: Date.now() - started, diagnostics: { background: true, pid: child.pid, stdoutFile, stderrFile } };
     } finally {
       req.signal?.removeEventListener("abort", abort);
@@ -2461,7 +882,7 @@ var BLOCKED_PATTERNS = [
   /rm\s+-rf\s+~\//
   // rm -rf ~/
 ];
-var DESTRUCTIVE_PATTERNS2 = [
+var DESTRUCTIVE_PATTERNS = [
   /rm\s+-rf/,
   /rm\s+-r\s/,
   /git\s+push\s+--force(?!\s+--with-lease)/,
@@ -2492,7 +913,7 @@ var parameters5 = z5.object({
   timeout: z5.number().optional().describe("Timeout in ms (default 30s, max 10m)"),
   background: z5.boolean().optional().describe("Start a long-running server without waiting for it to exit; returns PID and log paths. Then verify readiness separately. Never use for tests.")
 });
-function validateCommand(command, cwd, paths = path10) {
+function validateCommand(command, cwd, paths = path6) {
   for (const pattern of BLOCKED_PATTERNS) {
     if (pattern.test(command)) {
       return `Blocked: this command is too dangerous to execute.`;
@@ -2538,7 +959,7 @@ function validateCommand(command, cwd, paths = path10) {
 function isDestructive(command) {
   const segments = [command, ...command.split(/\s*\|\s*/)];
   for (const segment of segments) {
-    for (const pattern of DESTRUCTIVE_PATTERNS2) {
+    for (const pattern of DESTRUCTIVE_PATTERNS) {
       if (pattern.test(segment)) return true;
     }
   }
@@ -2596,24 +1017,24 @@ ${trimmed || "(no output)"}${suffix}${/\[timeout\]/.test(result.stderr) ? "\nIf 
 };
 
 // vendor/notch-cli/src/tools/index.ts
-import path22 from "path";
+import path18 from "path";
 
 // vendor/notch-cli/src/tools/git.ts
-import { execFile as execFile3 } from "child_process";
+import { execFile as execFile2 } from "child_process";
 import { simpleGit } from "simple-git";
 
 // vendor/notch-cli/src/github/gh.ts
-import { execFile as execFile2, spawn as spawn2 } from "child_process";
-import fs10 from "fs/promises";
-import path12 from "path";
+import { execFile, spawn as spawn2 } from "child_process";
+import fs6 from "fs/promises";
+import path8 from "path";
 
 // vendor/notch-cli/src/origin/git-env.ts
 import { existsSync } from "fs";
-import os3 from "os";
-import path11 from "path";
+import os from "os";
+import path7 from "path";
 import { fileURLToPath } from "url";
 function originAuthPath(env = process.env) {
-  return path11.join(env.LOCALAPPDATA || path11.join(env.HOME || env.USERPROFILE || os3.homedir(), ".config"), "notch", "origin", "auth.json");
+  return path7.join(env.LOCALAPPDATA || path7.join(env.HOME || env.USERPROFILE || os.homedir(), ".config"), "notch", "origin", "auth.json");
 }
 function originGitEnv(env = process.env, helper = fileURLToPath(new URL(existsSync(new URL("./origin-credential.js", import.meta.url)) ? "./origin-credential.js" : "../../node_modules/@freesyntax/notch-cli/dist/origin-credential.js", import.meta.url))) {
   if (!env.CURSOR_API_KEY && !env.CURSOR_AUTH_TOKEN && !existsSync(originAuthPath(env))) return { ...env };
@@ -2655,11 +1076,11 @@ function executableName(platform) {
   return platform === "win32" ? "gh.exe" : "gh";
 }
 function acceptGitHubExecutable(file2, platform = process.platform) {
-  return path12.basename(file2).toLowerCase() === executableName(platform);
+  return path8.basename(file2).toLowerCase() === executableName(platform);
 }
 function runFile(file2, args, env, timeout, signal) {
   return new Promise((resolve, reject) => {
-    execFile2(file2, args, { windowsHide: true, timeout, maxBuffer: 4 * 1024 * 1024, env, signal }, (error, stdout, stderr) => {
+    execFile(file2, args, { windowsHide: true, timeout, maxBuffer: 4 * 1024 * 1024, env, signal }, (error, stdout, stderr) => {
       const result = { stdout: String(stdout ?? ""), stderr: String(stderr ?? "") };
       if (error) {
         error.stdout = result.stdout;
@@ -2673,7 +1094,7 @@ function runFile(file2, args, env, timeout, signal) {
 }
 async function exists(file2) {
   try {
-    await fs10.access(file2);
+    await fs6.access(file2);
     return true;
   } catch {
     return false;
@@ -2683,8 +1104,8 @@ async function locateGitHubCli(env = process.env) {
   const platform = process.platform;
   const candidates = [];
   if (platform === "win32") {
-    for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA]) if (root) candidates.push(path12.join(root, "GitHub CLI", "gh.exe"));
-    const where = env.SystemRoot ? path12.join(env.SystemRoot, "System32", "where.exe") : "where.exe";
+    for (const root of [env.ProgramFiles, env["ProgramFiles(x86)"], env.LOCALAPPDATA]) if (root) candidates.push(path8.join(root, "GitHub CLI", "gh.exe"));
+    const where = env.SystemRoot ? path8.join(env.SystemRoot, "System32", "where.exe") : "where.exe";
     try {
       candidates.unshift(...(await runFile(where, ["gh.exe"], env, 5e3)).stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean));
     } catch {
@@ -2752,7 +1173,7 @@ function isSecretPath(file2) {
 }
 function gitExec(cwd, args, signal) {
   return new Promise((resolve, reject) => {
-    execFile3("git", args, { cwd, timeout: 12e4, maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal, env: gitProcessEnv() }, (error, stdout, stderr) => {
+    execFile2("git", args, { cwd, timeout: 12e4, maxBuffer: 4 * 1024 * 1024, windowsHide: true, signal, env: gitProcessEnv() }, (error, stdout, stderr) => {
       if (error) {
         const failure = error;
         failure.message = [stderr, failure.message].filter(Boolean).join("\n");
@@ -2769,10 +1190,10 @@ function changedFiles(porcelain) {
   const secrets = /* @__PURE__ */ new Set();
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
-    const files2 = [entry.slice(3)];
-    if (/[RC]/.test(entry.slice(0, 2))) files2.push(entries[++index]);
-    const target = files2.some(isSecretPath) ? secrets : safe;
-    for (const file2 of files2) target.add(file2);
+    const files = [entry.slice(3)];
+    if (/[RC]/.test(entry.slice(0, 2))) files.push(entries[++index]);
+    const target = files.some(isSecretPath) ? secrets : safe;
+    for (const file2 of files) target.add(file2);
   }
   return { safe: [...safe].filter((file2) => !secrets.has(file2)), secrets: [...secrets] };
 }
@@ -2839,11 +1260,11 @@ var gitTool = {
   description: "Perform git operations with built-in safety. Always prefer this over shell for git commands. When the user asks to commit, push, or commit and push, use commit_and_push and put the commit message in args. That stages the open folder, leaves secret files unstaged, asks before publishing, and pushes the current branch without force. Blocks force-push to protected branches. Operations: status, diff, log, commit, commit_and_push, branch, checkout, push, pull, stash, add, show.",
   parameters: parameters6,
   async execute(params, ctx) {
-    const git2 = simpleGit(ctx.cwd);
+    const git = simpleGit(ctx.cwd);
     try {
       switch (params.operation) {
         case "status": {
-          const status = await git2.status();
+          const status = await git.status();
           const lines = [
             `Branch: ${status.current}`,
             `Ahead: ${status.ahead} Behind: ${status.behind}`,
@@ -2855,11 +1276,11 @@ var gitTool = {
           return { content: lines.join("\n") };
         }
         case "diff": {
-          const diff = await git2.diff(params.args?.split(" ") ?? []);
+          const diff = await git.diff(params.args?.split(" ") ?? []);
           return { content: diff || "(no changes)" };
         }
         case "log": {
-          const log = await git2.log({ maxCount: 10, ...params.args ? {} : {} });
+          const log = await git.log({ maxCount: 10, ...params.args ? {} : {} });
           const entries = log.all.map(
             (c) => `${c.hash.slice(0, 8)} ${c.date} ${c.message}`
           );
@@ -2869,14 +1290,14 @@ var gitTool = {
           if (!params.args) {
             return { content: 'Commit requires a message. Use args: "your commit message"', isError: true };
           }
-          const result = await git2.commit(params.args);
+          const result = await git.commit(params.args);
           return {
             content: `Committed: ${result.commit} (${result.summary.changes} changes, ${result.summary.insertions} insertions, ${result.summary.deletions} deletions)`
           };
         }
         case "add": {
-          const files2 = params.args?.split(" ") ?? ["."];
-          const sensitive = files2.filter(
+          const files = params.args?.split(" ") ?? ["."];
+          const sensitive = files.filter(
             (f) => /\.(env|pem|key|credentials|secret)/i.test(f)
           );
           if (sensitive.length > 0) {
@@ -2888,26 +1309,26 @@ Proceed?`
               return { content: "Staging cancelled.", isError: true };
             }
           }
-          await git2.add(files2);
-          return { content: `Staged: ${files2.join(", ")}` };
+          await git.add(files);
+          return { content: `Staged: ${files.join(", ")}` };
         }
         case "branch": {
           if (params.args) {
-            await git2.branch(params.args.split(" "));
+            await git.branch(params.args.split(" "));
             return { content: `Branch operation completed: ${params.args}` };
           }
-          const branches = await git2.branch();
+          const branches = await git.branch();
           return { content: branches.all.map((b) => `${b === branches.current ? "* " : "  "}${b}`).join("\n") };
         }
         case "checkout": {
           if (!params.args) {
             return { content: "Checkout requires a branch or file path.", isError: true };
           }
-          await git2.checkout(params.args.split(" "));
+          await git.checkout(params.args.split(" "));
           return { content: `Checked out: ${params.args}` };
         }
         case "push": {
-          const currentBranch = (await git2.status()).current ?? "";
+          const currentBranch = (await git.status()).current ?? "";
           const args = params.args?.split(" ") ?? [];
           const blocked = forcePushError(args, currentBranch);
           if (blocked) return { content: blocked, isError: true, notExecuted: true };
@@ -2922,18 +1343,18 @@ Proceed?`
         }
         case "stash": {
           if (params.args === "pop") {
-            await git2.stash(["pop"]);
+            await git.stash(["pop"]);
             return { content: "Stash popped" };
           }
           if (params.args === "list") {
-            const list = await git2.stashList();
+            const list = await git.stashList();
             return { content: list.all.map((s) => `${s.hash} ${s.message}`).join("\n") || "(no stashes)" };
           }
-          await git2.stash(params.args?.split(" "));
+          await git.stash(params.args?.split(" "));
           return { content: "Changes stashed" };
         }
         case "show": {
-          const raw = await git2.show(params.args?.split(" ") ?? []);
+          const raw = await git.show(params.args?.split(" ") ?? []);
           return { content: raw };
         }
         case "commit_and_push":
@@ -2948,15 +1369,15 @@ Proceed?`
 };
 
 // vendor/notch-cli/src/tools/grep.ts
-import { execFile as execFile4 } from "child_process";
+import { execFile as execFile3 } from "child_process";
 import { once } from "events";
-import fs11 from "fs/promises";
-import path13 from "path";
-import { promisify as promisify2 } from "util";
+import fs7 from "fs/promises";
+import path9 from "path";
+import { promisify } from "util";
 import ignore from "ignore";
-import { minimatch as minimatch2 } from "minimatch";
+import { minimatch } from "minimatch";
 import { z as z7 } from "zod";
-var execFileAsync = promisify2(execFile4);
+var execFileAsync = promisify(execFile3);
 var parameters7 = z7.object({
   pattern: z7.string().describe("Regex pattern to search for"),
   path: z7.string().optional().describe("File or directory to search (defaults to project root)"),
@@ -2969,7 +1390,7 @@ var grepTool = {
   description: "Search file contents by regex pattern. Returns matching lines with file paths and line numbers. Supports glob filtering and context lines.",
   parameters: parameters7,
   async execute(params, ctx) {
-    const searchPath = params.path ? path13.isAbsolute(params.path) ? params.path : path13.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchPath = params.path ? path9.isAbsolute(params.path) ? params.path : path9.resolve(ctx.cwd, params.path) : ctx.cwd;
     let child;
     try {
       ctx.abortSignal?.throwIfAborted();
@@ -3021,30 +1442,30 @@ var grepTool = {
         const rules = ignore();
         for (const name of [".gitignore", ".ignore"]) {
           try {
-            rules.add(await fs11.readFile(path13.join(dir, name), "utf8"));
+            rules.add(await fs7.readFile(path9.join(dir, name), "utf8"));
           } catch (error) {
             if (error.code !== "ENOENT") throw error;
           }
         }
         const filters = [...inherited, { base: dir, rules }];
-        const entries = await fs11.readdir(dir, { withFileTypes: true });
+        const entries = await fs7.readdir(dir, { withFileTypes: true });
         for (const entry of entries) {
           ctx.abortSignal?.throwIfAborted();
           if (results.length >= (params.max_results ?? 50)) return;
           if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
-          const full = path13.join(dir, entry.name);
-          if (filters.some(({ base, rules: rules2 }) => rules2.ignores(path13.relative(base, full).replaceAll("\\", "/") + (entry.isDirectory() ? "/" : "")))) continue;
+          const full = path9.join(dir, entry.name);
+          if (filters.some(({ base, rules: rules2 }) => rules2.ignores(path9.relative(base, full).replaceAll("\\", "/") + (entry.isDirectory() ? "/" : "")))) continue;
           if (entry.isDirectory()) {
             await searchDir(full, filters);
           } else if (entry.isFile()) {
-            if (params.glob && !minimatch2(path13.relative(searchPath, full).replaceAll("\\", "/"), params.glob, { matchBase: !params.glob.includes("/") })) continue;
+            if (params.glob && !minimatch(path9.relative(searchPath, full).replaceAll("\\", "/"), params.glob, { matchBase: !params.glob.includes("/") })) continue;
             try {
-              const content = await fs11.readFile(full, "utf-8");
+              const content = await fs7.readFile(full, "utf-8");
               ctx.abortSignal?.throwIfAborted();
               const lines = content.split("\n");
               for (let i = 0; i < lines.length; i++) {
                 if (regex.test(lines[i])) {
-                  const rel = path13.relative(ctx.cwd, full);
+                  const rel = path9.relative(ctx.cwd, full);
                   results.push(`${rel}:${i + 1}:${lines[i]}`);
                   if (results.length >= (params.max_results ?? 50)) return;
                 }
@@ -3055,12 +1476,12 @@ var grepTool = {
           }
         }
       }
-      const stat = await fs11.stat(searchPath);
+      const stat = await fs7.stat(searchPath);
       if (stat.isFile()) {
-        const content = await fs11.readFile(searchPath, "utf-8");
+        const content = await fs7.readFile(searchPath, "utf-8");
         ctx.abortSignal?.throwIfAborted();
         const lines = content.split("\n");
-        const rel = path13.relative(ctx.cwd, searchPath);
+        const rel = path9.relative(ctx.cwd, searchPath);
         for (let i = 0; i < lines.length; i++) {
           if (regex.test(lines[i])) {
             results.push(`${rel}:${i + 1}:${lines[i]}`);
@@ -3079,7 +1500,7 @@ var grepTool = {
 
 // vendor/notch-cli/src/tools/glob.ts
 import { glob as globFn } from "glob";
-import path14 from "path";
+import path10 from "path";
 import { z as z8 } from "zod";
 var parameters8 = z8.object({
   pattern: z8.string().describe('Glob pattern, e.g. "**/*.ts" or "src/**/*.tsx"'),
@@ -3090,7 +1511,7 @@ var globTool = {
   description: "Find files matching a glob pattern. Returns relative paths sorted by modification time. Ignores node_modules and .git by default.",
   parameters: parameters8,
   async execute(params, ctx) {
-    const searchDir = params.path ? path14.isAbsolute(params.path) ? params.path : path14.resolve(ctx.cwd, params.path) : ctx.cwd;
+    const searchDir = params.path ? path10.isAbsolute(params.path) ? params.path : path10.resolve(ctx.cwd, params.path) : ctx.cwd;
     try {
       ctx.abortSignal?.throwIfAborted();
       if (ctx.workspaceSearch) {
@@ -3104,9 +1525,9 @@ var globTool = {
         dot: false
       });
       if (matches.length === 0) {
-        return { content: `No files matching "${params.pattern}" in ${path14.relative(ctx.cwd, searchDir) || "."}` };
+        return { content: `No files matching "${params.pattern}" in ${path10.relative(ctx.cwd, searchDir) || "."}` };
       }
-      const relative = matches.map((m) => path14.relative(ctx.cwd, path14.resolve(searchDir, m)));
+      const relative = matches.map((m) => path10.relative(ctx.cwd, path10.resolve(searchDir, m)));
       return {
         content: `Found ${relative.length} file(s):
 ${relative.join("\n")}`
@@ -3121,9 +1542,9 @@ ${relative.join("\n")}`
 import { z as z10 } from "zod";
 
 // vendor/notch-cli/src/web/settings.ts
-import fs12 from "fs/promises";
-import path15 from "path";
-import { randomUUID as randomUUID3 } from "crypto";
+import fs8 from "fs/promises";
+import path11 from "path";
+import { randomUUID as randomUUID2 } from "crypto";
 import { createRequire } from "module";
 import { spawn as spawn3 } from "child_process";
 import { z as z9 } from "zod";
@@ -3132,12 +1553,12 @@ var webSettingsSchema = z9.object({
   searchProvider: z9.enum(["duckduckgo", "tavily"]).default("duckduckgo"),
   browser: z9.enum(["auto", "msedge", "chrome", "chromium"]).default("auto")
 });
-var file = () => path15.join(getConfigDir(), "web-research.json");
+var file = () => path11.join(getConfigDir(), "web-research.json");
 var validSearchKey = (key) => /^[\x21-\x7e]{12,4096}$/.test(key);
 async function loadWebSettings() {
   let stored = {};
   try {
-    stored = JSON.parse(await fs12.readFile(file(), "utf8"));
+    stored = JSON.parse(await fs8.readFile(file(), "utf8"));
   } catch (error) {
     if (error.code !== "ENOENT") throw new Error("Cannot read web settings. Check web-research.json in your notch configuration folder.");
   }
@@ -3148,7 +1569,7 @@ async function loadWebSettings() {
 async function installResearchBrowser(onOutput = () => {
 }, signal) {
   const require2 = createRequire(import.meta.url);
-  const cli = path15.join(path15.dirname(require2.resolve("playwright-core/package.json")), "cli.js");
+  const cli = path11.join(path11.dirname(require2.resolve("playwright-core/package.json")), "cli.js");
   const interrupted = new AbortController();
   const activeSignal = AbortSignal.any([...signal ? [signal] : [], interrupted.signal, AbortSignal.timeout(15 * 6e4)]);
   const interrupt = () => interrupted.abort();
@@ -3802,13 +2223,13 @@ var githubTool = {
 };
 
 // vendor/notch-cli/src/tools/lsp.ts
-import { execFile as execFile5 } from "child_process";
+import { execFile as execFile4 } from "child_process";
 import { createRequire as createRequire2 } from "module";
-import { promisify as promisify3 } from "util";
-import fs13 from "fs/promises";
-import path16 from "path";
+import { promisify as promisify2 } from "util";
+import fs9 from "fs/promises";
+import path12 from "path";
 import { z as z14 } from "zod";
-var execFileAsync2 = promisify3(execFile5);
+var execFileAsync2 = promisify2(execFile4);
 var parameters12 = z14.object({
   action: z14.enum(["definition", "references", "diagnostics", "hover"]).describe("LSP action: definition (go-to-def), references (find usages), diagnostics (type errors), hover (type info)"),
   file: z14.string().describe("File path (relative or absolute)"),
@@ -3817,7 +2238,7 @@ var parameters12 = z14.object({
   symbol: z14.string().optional().describe("Symbol name to search for (alternative to line/character)")
 });
 function detectLanguage(filePath) {
-  const ext = path16.extname(filePath).toLowerCase();
+  const ext = path12.extname(filePath).toLowerCase();
   switch (ext) {
     case ".ts":
     case ".tsx":
@@ -3849,11 +2270,11 @@ async function isAvailable(cmd, signal) {
 async function tsDiagnostics(filePath, cwd, signal) {
   let compiler;
   try {
-    compiler = createRequire2(path16.join(cwd, "package.json")).resolve("typescript/bin/tsc");
+    compiler = createRequire2(path12.join(cwd, "package.json")).resolve("typescript/bin/tsc");
   } catch {
     throw new Error("TypeScript is not installed in this project. Install its development dependencies before checking diagnostics.");
   }
-  const project = await fs13.stat(path16.join(cwd, "tsconfig.json")).then((s) => s.isFile(), (error) => {
+  const project = await fs9.stat(path12.join(cwd, "tsconfig.json")).then((s) => s.isFile(), (error) => {
     if (error.code === "ENOENT") return false;
     throw error;
   });
@@ -3988,8 +2409,8 @@ ${lines.join("\n")}`;
 }
 async function getHoverInfo(symbol, filePath, line, cwd, signal, ripgrep = "rg") {
   try {
-    const absPath = path16.isAbsolute(filePath) ? filePath : path16.resolve(cwd, filePath);
-    const content = await fs13.readFile(absPath, "utf-8");
+    const absPath = path12.isAbsolute(filePath) ? filePath : path12.resolve(cwd, filePath);
+    const content = await fs9.readFile(absPath, "utf-8");
     const lines = content.split("\n");
     const startLine = Math.max(0, line - 3);
     const endLine = Math.min(lines.length, line + 2);
@@ -4008,7 +2429,7 @@ ${def}`;
   }
 }
 async function getDiagnostics(filePath, cwd, signal) {
-  const absPath = path16.isAbsolute(filePath) ? filePath : path16.resolve(cwd, filePath);
+  const absPath = path12.isAbsolute(filePath) ? filePath : path12.resolve(cwd, filePath);
   const { lang } = detectLanguage(absPath);
   switch (lang) {
     case "typescript":
@@ -4088,7 +2509,7 @@ var lspTool = {
   parameters: parameters12,
   async execute(params, ctx) {
     const filePath = params.file;
-    const absPath = path16.isAbsolute(filePath) ? filePath : path16.resolve(ctx.cwd, filePath);
+    const absPath = path12.isAbsolute(filePath) ? filePath : path12.resolve(ctx.cwd, filePath);
     try {
       ctx.abortSignal?.throwIfAborted();
       switch (params.action) {
@@ -4131,7 +2552,7 @@ var lspTool = {
 async function extractSymbol(filePath, line, character) {
   if (!line) return null;
   try {
-    const content = await fs13.readFile(filePath, "utf-8");
+    const content = await fs9.readFile(filePath, "utf-8");
     const lines = content.split("\n");
     const lineText = lines[line - 1];
     if (!lineText) return null;
@@ -4153,8 +2574,8 @@ async function extractSymbol(filePath, line, character) {
 }
 
 // vendor/notch-cli/src/tools/notebook.ts
-import fs14 from "fs/promises";
-import path17 from "path";
+import fs10 from "fs/promises";
+import path13 from "path";
 import { z as z15 } from "zod";
 var parameters13 = z15.object({
   action: z15.enum(["read", "edit", "add", "remove"]).describe("Action: read (view cells), edit (modify cell source), add (insert new cell), remove (delete cell)"),
@@ -4166,7 +2587,7 @@ var parameters13 = z15.object({
 });
 function formatNotebook(nb, filePath) {
   const parts = [
-    `# ${path17.basename(filePath)}`,
+    `# ${path13.basename(filePath)}`,
     `# ${nb.cells.length} cells | nbformat ${nb.nbformat}.${nb.nbformat_minor}`,
     ""
   ];
@@ -4197,11 +2618,11 @@ var notebookTool = {
   description: "Read and edit Jupyter .ipynb notebook files. Actions: read (view all cells with outputs), edit (modify a cell), add (insert a new cell), remove (delete a cell).",
   parameters: parameters13,
   async execute(params, ctx) {
-    const filePath = path17.isAbsolute(params.path) ? params.path : path17.resolve(ctx.cwd, params.path);
+    const filePath = path13.isAbsolute(params.path) ? params.path : path13.resolve(ctx.cwd, params.path);
     try {
       switch (params.action) {
         case "read": {
-          const raw = await fs14.readFile(filePath, "utf-8");
+          const raw = await fs10.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           return { content: formatNotebook(nb, filePath) };
         }
@@ -4212,7 +2633,7 @@ var notebookTool = {
           if (params.content === void 0) {
             return { content: "content is required for edit action.", isError: true };
           }
-          const raw = await fs14.readFile(filePath, "utf-8");
+          const raw = await fs10.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           if (params.cell_index < 0 || params.cell_index >= nb.cells.length) {
             return { content: `Cell index ${params.cell_index} out of range (0-${nb.cells.length - 1}).`, isError: true };
@@ -4221,14 +2642,14 @@ var notebookTool = {
             (l, i, arr) => i < arr.length - 1 ? l + "\n" : l
           );
           nb.cells[params.cell_index].source = lines;
-          await fs14.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Cell [${params.cell_index}] updated in ${path17.basename(filePath)}.` };
+          await fs10.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Cell [${params.cell_index}] updated in ${path13.basename(filePath)}.` };
         }
         case "add": {
           if (params.content === void 0) {
             return { content: "content is required for add action.", isError: true };
           }
-          const raw = await fs14.readFile(filePath, "utf-8");
+          const raw = await fs10.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           const cellType = params.cell_type ?? "code";
           const lines = params.content.split("\n").map(
@@ -4242,21 +2663,21 @@ var notebookTool = {
           };
           const insertIdx = params.insert_after !== void 0 ? params.insert_after + 1 : nb.cells.length;
           nb.cells.splice(insertIdx, 0, newCell);
-          await fs14.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path17.basename(filePath)}.` };
+          await fs10.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Added ${cellType} cell at index [${insertIdx}] in ${path13.basename(filePath)}.` };
         }
         case "remove": {
           if (params.cell_index === void 0) {
             return { content: "cell_index is required for remove action.", isError: true };
           }
-          const raw = await fs14.readFile(filePath, "utf-8");
+          const raw = await fs10.readFile(filePath, "utf-8");
           const nb = JSON.parse(raw);
           if (params.cell_index < 0 || params.cell_index >= nb.cells.length) {
             return { content: `Cell index ${params.cell_index} out of range (0-${nb.cells.length - 1}).`, isError: true };
           }
           const removed = nb.cells.splice(params.cell_index, 1)[0];
-          await fs14.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
-          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path17.basename(filePath)}. ${nb.cells.length} cells remaining.` };
+          await fs10.writeFile(filePath, JSON.stringify(nb, null, 1) + "\n");
+          return { content: `Removed ${removed.cell_type} cell [${params.cell_index}] from ${path13.basename(filePath)}. ${nb.cells.length} cells remaining.` };
         }
         default:
           return { content: `Unknown action: ${params.action}`, isError: true };
@@ -4406,10 +2827,10 @@ function buildContext(args) {
   for (const [name, tool3] of Object.entries(realTools)) {
     if (EXCLUDED_TOOLS.has(name)) continue;
     const jsName = toJsIdentifier(name);
-    const exec2 = tool3.execute;
+    const exec = tool3.execute;
     wrappedTools[jsName] = async (params) => {
       try {
-        const result = await exec2(params ?? {});
+        const result = await exec(params ?? {});
         if (!result) return "";
         if (typeof result === "string") return result;
         return result.content ?? "";
@@ -4956,12 +3377,12 @@ import { z as z19 } from "zod";
 import { spawn as spawn4 } from "child_process";
 
 // vendor/notch-cli/src/plugins/discovery.ts
-import fs15 from "fs/promises";
-import path18 from "path";
-import os4 from "os";
+import fs11 from "fs/promises";
+import path14 from "path";
+import os2 from "os";
 async function discoverPlugins(projectRoot) {
-  const globalDir = path18.join(os4.homedir(), ".notch", "plugins");
-  const projectDir = path18.join(projectRoot, ".notch", "plugins");
+  const globalDir = path14.join(os2.homedir(), ".notch", "plugins");
+  const projectDir = path14.join(projectRoot, ".notch", "plugins");
   const plugins = /* @__PURE__ */ new Map();
   for (const plugin of await scanDirectory(globalDir)) {
     plugins.set(plugin.name, plugin);
@@ -4974,13 +3395,13 @@ async function discoverPlugins(projectRoot) {
 async function scanDirectory(dir) {
   const results = [];
   try {
-    const entries = await fs15.readdir(dir, { withFileTypes: true });
+    const entries = await fs11.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const pluginDir = path18.join(dir, entry.name);
-      const pkgPath = path18.join(pluginDir, "package.json");
+      const pluginDir = path14.join(dir, entry.name);
+      const pkgPath = path14.join(pluginDir, "package.json");
       try {
-        const raw = await fs15.readFile(pkgPath, "utf-8");
+        const raw = await fs11.readFile(pkgPath, "utf-8");
         const pkg = JSON.parse(raw);
         if (pkg["notch-plugin"] && pkg.name) {
           results.push({
@@ -5000,7 +3421,7 @@ async function scanDirectory(dir) {
 }
 
 // vendor/notch-cli/src/plugins/loader.ts
-import path19 from "path";
+import path15 from "path";
 import { pathToFileURL } from "url";
 
 // vendor/notch-cli/src/commands/registry.ts
@@ -5011,7 +3432,7 @@ function registerCommand(name, handler) {
 
 // vendor/notch-cli/src/plugins/loader.ts
 async function loadPlugin(discovered, projectRoot, log) {
-  const entryPath = path19.resolve(discovered.path, discovered.manifest.main);
+  const entryPath = path15.resolve(discovered.path, discovered.manifest.main);
   const tools = [];
   const hooks = [];
   const ctx = {
@@ -5103,9 +3524,9 @@ var PluginManager = class {
 var pluginManager = new PluginManager();
 
 // vendor/notch-cli/src/safety/guardian.ts
-import fs16 from "fs/promises";
+import fs12 from "fs/promises";
 import { fileURLToPath as fileURLToPath2 } from "url";
-import path20 from "path";
+import path16 from "path";
 import { generateText } from "ai";
 import { z as z20 } from "zod";
 
@@ -5301,8 +3722,8 @@ async function loadPolicy() {
   if (cachedPolicy) return cachedPolicy;
   try {
     const here = fileURLToPath2(import.meta.url);
-    const mdPath = path20.join(path20.dirname(here), "guardian-policy.md");
-    const raw = await fs16.readFile(mdPath, "utf-8");
+    const mdPath = path16.join(path16.dirname(here), "guardian-policy.md");
+    const raw = await fs12.readFile(mdPath, "utf-8");
     if (raw.length > 200) {
       cachedPolicy = raw;
       return raw;
@@ -6350,28 +4771,28 @@ var COORDINATOR_ALLOWED_TOOL_NAMES = /* @__PURE__ */ new Set([
 ]);
 
 // vendor/notch-cli/src/concurrency/file-access.ts
-import fs17 from "fs/promises";
-import path21 from "path";
-import { createHash as createHash2 } from "crypto";
+import fs13 from "fs/promises";
+import path17 from "path";
+import { createHash } from "crypto";
 import { createReadStream } from "fs";
 async function canonical2(file2) {
   let resolved;
   try {
-    resolved = await fs17.realpath(file2);
+    resolved = await fs13.realpath(file2);
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-    const parent = path21.dirname(file2);
+    const parent = path17.dirname(file2);
     if (parent === file2) throw error;
-    resolved = path21.join(await canonical2(parent), path21.basename(file2));
+    resolved = path17.join(await canonical2(parent), path17.basename(file2));
   }
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 async function fingerprint(file2, signal) {
   try {
-    if (!(await fs17.stat(file2)).isFile()) throw new Error(`Not a regular file: ${file2}`);
-    const hash2 = createHash2("sha256");
-    for await (const chunk of createReadStream(file2, { signal })) hash2.update(chunk);
-    return hash2.digest("hex");
+    if (!(await fs13.stat(file2)).isFile()) throw new Error(`Not a regular file: ${file2}`);
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(file2, { signal })) hash.update(chunk);
+    return hash.digest("hex");
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
@@ -6387,33 +4808,33 @@ async function guardedFileAccess(name, params, ctx, execute2) {
     let targets = [];
     if (["read", "write", "edit", "notebook"].includes(name)) targets = [params.path];
     if (name === "apply_patch") targets = parsePatch(params.input).flatMap((action) => action.kind === "update" && action.moveTo ? [action.target, action.moveTo] : [action.target]);
-    const files2 = await Promise.all(targets.map((file2) => canonical2(path21.resolve(ctx.cwd, file2))));
-    if (ctx.taskWorkspace) for (const file2 of files2) {
-      const relative = path21.relative(await canonical2(ctx.cwd), file2);
-      if (path21.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path21.sep) || relative.split(path21.sep).some((part) => part.toLowerCase() === ".git")) return { isError: true, content: "Use a path inside this task workspace. Use task_changes to inspect the original project." };
+    const files = await Promise.all(targets.map((file2) => canonical2(path17.resolve(ctx.cwd, file2))));
+    if (ctx.taskWorkspace) for (const file2 of files) {
+      const relative = path17.relative(await canonical2(ctx.cwd), file2);
+      if (path17.isAbsolute(relative) || relative === ".." || relative.startsWith(".." + path17.sep) || relative.split(path17.sep).some((part) => part.toLowerCase() === ".git")) return { isError: true, content: "Use a path inside this task workspace. Use task_changes to inspect the original project." };
     }
-    const before = await Promise.all(files2.map((file2) => fingerprint(file2, ctx.abortSignal)));
+    const before = await Promise.all(files.map((file2) => fingerprint(file2, ctx.abortSignal)));
     const reading = name === "read" || name === "notebook" && params.action === "read";
-    if (!files2.length) for (const [file2, observed] of versions) {
+    if (!files.length) for (const [file2, observed] of versions) {
       if (await fingerprint(file2, ctx.abortSignal) !== observed) return { isError: true, content: `File conflict: ${file2} changed since this task read it. Read it again before running ${name}.` };
     }
-    for (let i = 0; i < files2.length; i++) {
+    for (let i = 0; i < files.length; i++) {
       if (reading) {
-        if (versions.get(files2[i]) !== before[i]) ctx._readCache?.clear();
-      } else if (before[i] !== null && !versions.has(files2[i])) {
-        return { isError: true, content: `File conflict: read ${files2[i]} before changing it. Existing contents were preserved.` };
-      } else if (versions.has(files2[i]) && versions.get(files2[i]) !== before[i]) {
-        return { isError: true, content: `File conflict: ${files2[i]} changed since this task read it. Read it again and reconcile the changes before retrying. Existing contents were preserved.` };
+        if (versions.get(files[i]) !== before[i]) ctx._readCache?.clear();
+      } else if (before[i] !== null && !versions.has(files[i])) {
+        return { isError: true, content: `File conflict: read ${files[i]} before changing it. Existing contents were preserved.` };
+      } else if (versions.has(files[i]) && versions.get(files[i]) !== before[i]) {
+        return { isError: true, content: `File conflict: ${files[i]} changed since this task read it. Read it again and reconcile the changes before retrying. Existing contents were preserved.` };
       }
     }
     const result = await execute2();
-    const after = reading ? before : await Promise.all(files2.map((file2) => fingerprint(file2, ctx.abortSignal)));
-    for (let i = 0; i < files2.length; i++) {
+    const after = reading ? before : await Promise.all(files.map((file2) => fingerprint(file2, ctx.abortSignal)));
+    for (let i = 0; i < files.length; i++) {
       if (result.isError) {
-        if (reading || after[i] !== before[i]) versions.delete(files2[i]);
-      } else versions.set(files2[i], after[i]);
+        if (reading || after[i] !== before[i]) versions.delete(files[i]);
+      } else versions.set(files[i], after[i]);
     }
-    if (!reading && files2.length && !result.isError) {
+    if (!reading && files.length && !result.isError) {
       const changed = before.some((value, index) => value !== after[index]);
       return { ...result, changed, ...changed ? {} : { content: `No file contents changed: ${targets.join(", ")}. Do not repeat the same write. Inspect the current file and any failed checks before changing the approach.` } };
     }
@@ -6516,7 +4937,7 @@ ${JSON.stringify(params, null, 2).slice(0, 500)}`, notExecuted: true };
       }
       params = validated.data;
       if (ctx.remoteWorkspace && t.name === "shell") {
-        const problem = validateCommand(params.command, ctx.cwd, path22.posix);
+        const problem = validateCommand(params.command, ctx.cwd, path18.posix);
         if (problem) return { content: problem, isError: true };
       }
       if (ctx.checkPermission) {
@@ -6709,7 +5130,7 @@ function fitContextWindow(window, overhead, outputLimit, choices = []) {
 }
 
 // vendor/notch-cli/src/agent/compression.ts
-import { createHash as createHash3 } from "crypto";
+import { createHash as createHash2 } from "crypto";
 function estimateTokens(messages) {
   return estimateTextTokens(messages.map((message) => JSON.stringify(message)).join("\n"));
 }
@@ -6728,7 +5149,7 @@ var InMemoryArtifactStore = class {
 var globalArtifactStore = new InMemoryArtifactStore();
 var ARTIFACT_URI_PREFIX = "notch-artifact://";
 function artifactKey(content) {
-  return createHash3("sha1").update(content).digest("hex").slice(0, 16);
+  return createHash2("sha1").update(content).digest("hex").slice(0, 16);
 }
 function makeArtifactUri(key) {
   return `${ARTIFACT_URI_PREFIX}${key}`;
@@ -6998,15 +5419,15 @@ async function autoCompressWithStats(messages, model, contextWindow, signal, his
 }
 
 // vendor/notch-cli/src/context/project-instructions.ts
-import fs18 from "fs/promises";
-import path23 from "path";
-import os5 from "os";
+import fs14 from "fs/promises";
+import path19 from "path";
+import os3 from "os";
 var INSTRUCTION_FILES = [".notch.md", "NOTCH.md", ".notch/instructions.md"];
 async function loadProjectInstructions(projectRoot) {
   const sources = [];
-  const homeDir = os5.homedir();
+  const homeDir = os3.homedir();
   for (const file2 of INSTRUCTION_FILES) {
-    const globalPath = path23.join(homeDir, file2);
+    const globalPath = path19.join(homeDir, file2);
     const content = await safeRead(globalPath);
     if (content) {
       sources.push({ path: globalPath, content, scope: "global" });
@@ -7014,7 +5435,7 @@ async function loadProjectInstructions(projectRoot) {
     }
   }
   for (const file2 of INSTRUCTION_FILES) {
-    const projectPath = path23.join(projectRoot, file2);
+    const projectPath = path19.join(projectRoot, file2);
     const content = await safeRead(projectPath);
     if (content) {
       sources.push({ path: projectPath, content, scope: "project" });
@@ -7036,7 +5457,7 @@ ${sections.join("\n\n")}`;
 }
 async function safeRead(filePath) {
   try {
-    const content = await fs18.readFile(filePath, "utf-8");
+    const content = await fs14.readFile(filePath, "utf-8");
     return content.trim() || null;
   } catch {
     return null;
@@ -7044,28 +5465,28 @@ async function safeRead(filePath) {
 }
 
 // vendor/notch-cli/src/memory/store.ts
-import fs19 from "fs/promises";
-import path24 from "path";
-import os6 from "os";
+import fs15 from "fs/promises";
+import path20 from "path";
+import os4 from "os";
 import { generateText as generateText4 } from "ai";
-var MEMORY_DIR = path24.join(os6.homedir(), ".notch", "memory");
-var INDEX_FILE = path24.join(MEMORY_DIR, "MEMORY.md");
-var SUMMARY_FILE = path24.join(MEMORY_DIR, "SUMMARY.md");
-var SUMMARY_FILENAME = path24.basename(SUMMARY_FILE);
+var MEMORY_DIR = path20.join(os4.homedir(), ".notch", "memory");
+var INDEX_FILE = path20.join(MEMORY_DIR, "MEMORY.md");
+var SUMMARY_FILE = path20.join(MEMORY_DIR, "SUMMARY.md");
+var SUMMARY_FILENAME = path20.basename(SUMMARY_FILE);
 var DEFAULT_PROMPT_CHAR_BUDGET = Number(process.env.NOTCH_MEMORY_PROMPT_CHARS ?? 6e3);
 var MAX_SINGLE_MEMORY_CHARS = Number(process.env.NOTCH_MEMORY_ITEM_CHARS ?? 4e3);
 var MAX_COMPACTION_INPUT_CHARS = Number(process.env.NOTCH_MEMORY_COMPACT_INPUT_CHARS ?? 3e4);
 async function ensureDir() {
-  await fs19.mkdir(MEMORY_DIR, { recursive: true });
+  await fs15.mkdir(MEMORY_DIR, { recursive: true });
 }
 async function loadMemories() {
   await ensureDir();
-  const files2 = await fs19.readdir(MEMORY_DIR);
+  const files = await fs15.readdir(MEMORY_DIR);
   const memories = [];
-  for (const file2 of files2) {
+  for (const file2 of files) {
     if (!file2.endsWith(".md") || file2 === "MEMORY.md" || file2 === SUMMARY_FILENAME) continue;
     try {
-      const content = await fs19.readFile(path24.join(MEMORY_DIR, file2), "utf-8");
+      const content = await fs15.readFile(path20.join(MEMORY_DIR, file2), "utf-8");
       const memory = parseMemoryFile(content, file2);
       if (memory) memories.push(memory);
     } catch {
@@ -7136,7 +5557,7 @@ function extractField(frontmatter, field) {
 }
 async function loadMemorySummary() {
   try {
-    const raw = await fs19.readFile(SUMMARY_FILE, "utf-8");
+    const raw = await fs15.readFile(SUMMARY_FILE, "utf-8");
     return raw.replace(/^# Notch Memory Summary\s*/i, "").replace(/^_Updated:.*?_\s*/im, "").trim();
   } catch {
     return "";
@@ -7681,7 +6102,7 @@ async function runAgentLoopInternal(messages, config) {
   const outputLimit = config.maxOutputTokens ?? (/^(?:ollama(?:-anthropic)?|mlx|colibri|strata)\//.test(config.modelId ?? "") ? 16384 : void 0);
   const colibriModelId = config.colibriModelId ?? (/^colibri[/:]/.test(config.modelId ?? "") ? config.modelId.slice(8) : void 0);
   if (colibriModelId) {
-    const { startColibri: startColibri2, colibriStatus: colibriStatus2 } = await import("./colibri-HJ73IUNT.js");
+    const { startColibri: startColibri2, colibriStatus: colibriStatus2 } = await import("./colibri-5XF3S45A.js");
     const automatic = config.colibriAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 12288, 16384, 32768, 65536, 131072, 262144].find((value) => {
       try {
@@ -7694,12 +6115,12 @@ async function runAgentLoopInternal(messages, config) {
     if (!automatic) contextBudget(contextWindow, overhead, outputLimit);
     await startColibri2(colibriModelId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, config.toolContext.log, useful);
     contextWindow = (await colibriStatus2()).contextWindow;
-    const { resolveByokModel: resolveByokModel2 } = await import("./byok-K67UOA6W.js");
-    config.model = resolveByokModel2({ provider: "colibri", model: colibriModelId, contextWindow }).model;
+    const { resolveByokModel } = await import("./byok-EFKPWFAB.js");
+    config.model = resolveByokModel({ provider: "colibri", model: colibriModelId, contextWindow }).model;
   }
   const strataId = config.strataModelId ?? (/^strata[/:]/.test(config.modelId ?? "") ? config.modelId.slice(7) : void 0);
   if (strataId) {
-    const { startStrata: startStrata2 } = await import("./strata-J4RL2VBU.js");
+    const { startStrata: startStrata2 } = await import("./strata-MCKIJEPT.js");
     const automatic = config.strataAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 16384, 32768, 65536, 131072, 262144, 524288].find((n) => {
       try {
@@ -7711,8 +6132,8 @@ async function runAgentLoopInternal(messages, config) {
     if (!useful) throw new Error("Instructions and tools exceed the Strata context limit.");
     const ready = await startStrata2(strataId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, useful);
     contextWindow = ready.contextWindow;
-    const { resolveByokModel: resolveByokModel2 } = await import("./byok-K67UOA6W.js");
-    config.model = resolveByokModel2({ provider: "strata", model: strataId, contextWindow }).model;
+    const { resolveByokModel } = await import("./byok-EFKPWFAB.js");
+    config.model = resolveByokModel({ provider: "strata", model: strataId, contextWindow }).model;
   }
   const fittedContext = fitContextWindow(contextWindow, overhead, outputLimit, config.contextWindows);
   if (fittedContext !== contextWindow) {
@@ -8080,7 +6501,7 @@ async function buildSystemPrompt(projectRoot, _modelId, toolContext, contextWind
         if (process.platform === "win32") lines.push("- The shell tool currently uses cmd.exe. Use portable Node commands or invoke PowerShell explicitly; Unix commands such as cat are not available by default.");
         lines.push(`- Current date (UTC): ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}`);
         try {
-          const entries = await fs20.readdir(projectRoot);
+          const entries = await fs16.readdir(projectRoot);
           const preview = entries.filter((e) => !e.startsWith(".")).slice(0, 30).join(", ");
           if (preview) lines.push(`- Top-level entries: ${preview}`);
         } catch {
@@ -8139,13 +6560,13 @@ ${memoryStr}`, {
 }
 
 // vendor/notch-cli/src/agent/checkpoints.ts
-import fs21 from "fs/promises";
-import path25 from "path";
-import { randomUUID as randomUUID4 } from "crypto";
+import fs17 from "fs/promises";
+import path21 from "path";
+import { randomUUID as randomUUID3 } from "crypto";
 var CheckpointManager = class _CheckpointManager {
   remote;
   get paths() {
-    return this.remote ? path25.posix : path25;
+    return this.remote ? path21.posix : path21;
   }
   checkpoints = [];
   nextId = 1;
@@ -8159,12 +6580,12 @@ var CheckpointManager = class _CheckpointManager {
   static async open(cwd, file2, remote) {
     const manager = new _CheckpointManager();
     manager.remote = remote;
-    const realCwd = remote ? path25.posix.normalize(cwd) : await fs21.realpath(cwd);
-    const stat = remote ? void 0 : await fs21.stat(realCwd, { bigint: true });
-    manager.storage = { cwd: realCwd, file: path25.resolve(file2), identity: remote ? remote.identity : `${stat.dev}:${stat.ino}` };
+    const realCwd = remote ? path21.posix.normalize(cwd) : await fs17.realpath(cwd);
+    const stat = remote ? void 0 : await fs17.stat(realCwd, { bigint: true });
+    manager.storage = { cwd: realCwd, file: path21.resolve(file2), identity: remote ? remote.identity : `${stat.dev}:${stat.ino}` };
     let raw;
     try {
-      raw = await fs21.readFile(file2, "utf8");
+      raw = await fs17.readFile(file2, "utf8");
     } catch (error) {
       if (error.code === "ENOENT") return manager;
       throw error;
@@ -8200,12 +6621,12 @@ var CheckpointManager = class _CheckpointManager {
       manager.restoring = state.restoring;
     }
     if (manager.pendingFiles.size) {
-      const files2 = [];
+      const files = [];
       for (const [filePath, before] of manager.pendingFiles) {
         const current = await manager.read(filePath);
-        if (current !== before) files2.push({ path: filePath, before, after: manager.pendingAfter.get(filePath) ?? null, uncertain: !manager.pendingAfter.has(filePath) });
+        if (current !== before) files.push({ path: filePath, before, after: manager.pendingAfter.get(filePath) ?? null, uncertain: !manager.pendingAfter.has(filePath) });
       }
-      manager.checkpoints.push({ id: manager.nextId++, timestamp: Date.now(), files: files2, description: "Interrupted turn", messageId: manager.messageId });
+      manager.checkpoints.push({ id: manager.nextId++, timestamp: Date.now(), files, description: "Interrupted turn", messageId: manager.messageId });
       manager.pendingFiles.clear();
       manager.pendingAfter.clear();
       manager.messageId = void 0;
@@ -8225,26 +6646,26 @@ var CheckpointManager = class _CheckpointManager {
     if (!this.isWithin(file2)) throw new Error("Undo path is outside this workspace.");
     if (this.remote) return this.remote.safePath(file2);
     if (this.storage) {
-      const relative = path25.relative(path25.dirname(this.storage.file), file2);
-      if (path25.resolve(file2) === this.storage.file || this.isWithin(path25.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path25.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
+      const relative = path21.relative(path21.dirname(this.storage.file), file2);
+      if (path21.resolve(file2) === this.storage.file || this.isWithin(path21.dirname(this.storage.file)) && (!relative || !relative.startsWith("..") && !path21.isAbsolute(relative))) throw new Error("Agent changes cannot overwrite undo history.");
     }
     let cursor = file2;
     while (true) {
       try {
-        const stat = await fs21.lstat(cursor);
+        const stat = await fs17.lstat(cursor);
         if (stat.isSymbolicLink() || cursor === file2 && stat.nlink > 1) throw new Error("Undo refuses symbolic links and shared hard links.");
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
       }
-      if (cursor === this.storage?.cwd || path25.dirname(cursor) === cursor) break;
-      cursor = path25.dirname(cursor);
+      if (cursor === this.storage?.cwd || path21.dirname(cursor) === cursor) break;
+      cursor = path21.dirname(cursor);
     }
   }
   async read(file2) {
     await this.safePath(file2);
     if (this.remote) return this.remote.read(file2);
     try {
-      const bytes = await fs21.readFile(file2), content = bytes.toString("utf8");
+      const bytes = await fs17.readFile(file2), content = bytes.toString("utf8");
       if (!Buffer.from(content).equals(bytes)) throw new Error(`Cannot safely snapshot binary file: ${file2}`);
       return content;
     } catch (error) {
@@ -8260,26 +6681,26 @@ var CheckpointManager = class _CheckpointManager {
       identity: this.storage.identity,
       nextId: this.nextId,
       checkpoints: this.checkpoints,
-      pending: [...this.pendingFiles].map(([path27, before]) => ({ path: path27, before, after: this.pendingAfter.get(path27) })),
+      pending: [...this.pendingFiles].map(([path23, before]) => ({ path: path23, before, after: this.pendingAfter.get(path23) })),
       messageId: this.messageId,
       restoring: this.restoring
     });
     if (Buffer.byteLength(data) > 64 * 2 ** 20) throw new Error("Undo history exceeds 64 MiB; no further writes are allowed.");
     const file2 = this.storage.file;
-    const save2 = this.saving.then(async () => {
-      await fs21.mkdir(path25.dirname(file2), { recursive: true });
-      const temporary = `${file2}.${randomUUID4()}.tmp`;
+    const save = this.saving.then(async () => {
+      await fs17.mkdir(path21.dirname(file2), { recursive: true });
+      const temporary = `${file2}.${randomUUID3()}.tmp`;
       try {
-        await fs21.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
-        await fs21.rename(temporary, file2);
+        await fs17.writeFile(temporary, data, { mode: 384, flag: "wx", flush: true });
+        await fs17.rename(temporary, file2);
       } finally {
-        await fs21.unlink(temporary).catch(() => {
+        await fs17.unlink(temporary).catch(() => {
         });
       }
     });
-    this.saving = save2.catch(() => {
+    this.saving = save.catch(() => {
     });
-    await save2;
+    await save;
   }
   async beginTurn(messageId) {
     this.validateMessageId(messageId);
@@ -8323,20 +6744,20 @@ var CheckpointManager = class _CheckpointManager {
   /** Commit all pending file changes as a checkpoint */
   async commit(description) {
     await this.recordAfter();
-    const files2 = [];
+    const files = [];
     for (const [filePath, before] of this.pendingFiles) {
       const after = this.pendingAfter.get(filePath);
       if (await this.read(filePath) !== after) throw new Error(`File changed since tool completion: ${filePath}`);
-      if (before !== after) files2.push({ path: filePath, before, after });
+      if (before !== after) files.push({ path: filePath, before, after });
     }
     const checkpoint = {
       id: this.nextId++,
       timestamp: Date.now(),
-      files: files2,
+      files,
       description,
       messageId: this.messageId
     };
-    if (files2.length || this.messageId) this.checkpoints.push(checkpoint);
+    if (files.length || this.messageId) this.checkpoints.push(checkpoint);
     this.pendingFiles.clear();
     this.pendingAfter.clear();
     this.messageId = void 0;
@@ -8354,12 +6775,12 @@ var CheckpointManager = class _CheckpointManager {
       if (messageId) throw new Error("No saved file checkpoint for this turn.");
       return null;
     }
-    const files2 = /* @__PURE__ */ new Map();
+    const files = /* @__PURE__ */ new Map();
     for (const checkpoint of this.checkpoints.slice(index)) for (const snapshot2 of checkpoint.files) {
-      const old = files2.get(snapshot2.path);
-      files2.set(snapshot2.path, { ...snapshot2, before: old ? old.before : snapshot2.before, uncertain: !!(old?.uncertain || snapshot2.uncertain) });
+      const old = files.get(snapshot2.path);
+      files.set(snapshot2.path, { ...snapshot2, before: old ? old.before : snapshot2.before, uncertain: !!(old?.uncertain || snapshot2.uncertain) });
     }
-    return { index, files: [...files2.values()] };
+    return { index, files: [...files.values()] };
   }
   async preview(messageId) {
     const selected = this.selection(messageId);
@@ -8405,19 +6826,19 @@ var CheckpointManager = class _CheckpointManager {
       }
       if (snap.before === null) {
         try {
-          await fs21.unlink(snap.path);
+          await fs17.unlink(snap.path);
         } catch (error) {
           if (error.code !== "ENOENT") throw error;
         }
       } else {
-        await fs21.mkdir(path25.dirname(snap.path), { recursive: true });
-        const temporary = `${snap.path}.${randomUUID4()}.undo-tmp`;
-        const mode = current === null ? 384 : (await fs21.stat(snap.path)).mode & 511;
+        await fs17.mkdir(path21.dirname(snap.path), { recursive: true });
+        const temporary = `${snap.path}.${randomUUID3()}.undo-tmp`;
+        const mode = current === null ? 384 : (await fs17.stat(snap.path)).mode & 511;
         try {
-          await fs21.writeFile(temporary, snap.before, { mode, flag: "wx", flush: true });
-          await fs21.rename(temporary, snap.path);
+          await fs17.writeFile(temporary, snap.before, { mode, flag: "wx", flush: true });
+          await fs17.rename(temporary, snap.path);
         } finally {
-          await fs21.unlink(temporary).catch(() => {
+          await fs17.unlink(temporary).catch(() => {
           });
         }
       }
@@ -8456,8 +6877,8 @@ var CheckpointManager = class _CheckpointManager {
         }
       }
     }
-    return Array.from(fileMap.entries()).map(([path27, { before, after }]) => ({
-      path: path27,
+    return Array.from(fileMap.entries()).map(([path23, { before, after }]) => ({
+      path: path23,
       before,
       after
     }));
@@ -8478,11 +6899,11 @@ function definitionRules(values = [], level) {
   });
 }
 async function runDesktopTurn(turn) {
-  const cwd = turn.remoteWorkspace ? turn.cwd : await fs22.realpath(turn.cwd);
-  if (!turn.remoteWorkspace && !(await fs22.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
+  const cwd = turn.remoteWorkspace ? turn.cwd : await fs18.realpath(turn.cwd);
+  if (!turn.remoteWorkspace && !(await fs18.stat(cwd)).isDirectory()) throw new Error("Choose a workspace directory.");
   if (!["approve", "read-only", "full-access"].includes(turn.accessMode)) throw new Error("Invalid desktop access mode.");
   turn.signal.throwIfAborted();
-  const configRoot = turn.remoteWorkspace ? os7.homedir() : cwd;
+  const configRoot = turn.remoteWorkspace ? os5.homedir() : cwd;
   const config = await loadConfig({ projectRoot: configRoot });
   const selection = {
     ...turn.model && turn.model !== "auto" ? selectModel(config.models.chat, { model: turn.model }) : config.models.chat,
@@ -8502,7 +6923,7 @@ async function runDesktopTurn(turn) {
     delete selection.byokApiShape;
   }
   if (provider === "ollama" && selection.baseUrl?.replace(/\/v1\/?$/, "") === "http://127.0.0.1:11436") {
-    const { managedOllama: managedOllama2 } = await import("./ollama-runtime-ASVPSEWA.js");
+    const { managedOllama: managedOllama2 } = await import("./ollama-runtime-X53IPCAE.js");
     await managedOllama2("0.40.3", turn.signal);
   }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
@@ -8555,10 +6976,10 @@ async function runDesktopTurn(turn) {
       if (event === "post-tool") await turn.checkpoints.recordAfter();
       if (event !== "pre-tool") return;
       const args = payload.args;
-      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path26.posix : path26).resolve(cwd, args.path));
+      if ((payload.tool === "write" || payload.tool === "edit") && typeof args.path === "string") await turn.checkpoints.recordBefore((turn.remoteWorkspace ? path22.posix : path22).resolve(cwd, args.path));
       if (payload.tool === "apply_patch" && typeof args.input === "string") for (const action of parsePatch(args.input)) {
-        await turn.checkpoints.recordBefore(path26.resolve(cwd, action.target));
-        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path26.resolve(cwd, action.moveTo));
+        await turn.checkpoints.recordBefore(path22.resolve(cwd, action.target));
+        if (action.kind === "update" && action.moveTo) await turn.checkpoints.recordBefore(path22.resolve(cwd, action.moveTo));
       }
     }
   };

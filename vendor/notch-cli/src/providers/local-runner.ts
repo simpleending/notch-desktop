@@ -40,7 +40,7 @@ export async function ensureOllama(host?: string, signal?: AbortSignal): Promise
   for (const executable of candidates) {
     try {
       await exec(executable, ['--version'], { timeout: 5000, windowsHide: true, signal });
-      const child = spawn(executable, ['serve'], { detached: true, stdio: 'ignore', windowsHide: true });
+      const child = spawn(executable, ['serve'], { detached: process.platform !== 'win32', stdio: 'ignore', windowsHide: true });
       child.on('error', () => {}); child.unref();
       for (let attempt = 0; attempt < 30; attempt++) {
         signal?.throwIfAborted();

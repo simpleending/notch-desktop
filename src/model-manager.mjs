@@ -158,8 +158,8 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
     async hubCatalog(runner, options={}) { await ready; if (runner !== undefined && !['ollama','mlx'].includes(runner)) throw new Error('Choose Ollama or MLX.'); if(!options || typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(key=>!['query','page','force'].includes(key)))throw new Error('Invalid model search.'); return (recommendModels || (args=>hub.list(args)))({ ...options,runner,token:keys.get('huggingface') }); },
     async startInstall(repo, runner) {
       await ready; if (job?.public.state==='running') throw new Error('A model download is already running.');
-      const row=recommendModels?(await service.hubCatalog(runner)).models.find(row=>row.repo===repo && row.fits):await hub.selected(repo,runner,keys.get('huggingface'));
-      if (!row?.fits) throw new Error('Choose a compatible model that fits current memory.');
+      const row=recommendModels?(await service.hubCatalog(runner)).models.find(row=>row.repo===repo):await hub.selected(repo,runner,keys.get('huggingface'));
+      if (!row) throw new Error('Choose a compatible model from the catalog.');
       const cwd = path.join(directory,'model-installs'); await fs.mkdir(cwd,{recursive:true});
       if (job?.public.state==='running') throw new Error('A model download is already running.');
       const controller = new AbortController(); job = { controller, public: { id: randomUUID(), repo, runner, state: 'running', message: 'Preparing download…' } }; const current = job;
@@ -168,7 +168,7 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
         current.public.message=line.replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);
         const percent=line.match(/^(\d{1,3})% - /);current.public.percent=percent?Math.min(100,Number(percent[1])):undefined;
       } })
-        .then(async()=>{if(runner==='mlx'){installedMlx=[...installedMlx.filter(item=>item.repo!==repo),{repo,bytes:row.bytes,...(Number.isSafeInteger(row.contextLength) && row.contextLength>=2048 ? {contextLength:row.contextLength} : {})}];await atomic(mlxFile,installedMlx);}current.public.state='complete';current.public.message='Ready. Open Installed to select this model. It loads when you send a message.';})
+        .then(async()=>{controller.signal.throwIfAborted();if(runner==='mlx'){installedMlx=[...installedMlx.filter(item=>item.repo!==repo),{repo,bytes:row.bytes,...(Number.isSafeInteger(row.contextLength) && row.contextLength>=2048 ? {contextLength:row.contextLength} : {})}];await atomic(mlxFile,installedMlx);}current.public.state='complete';current.public.message='Downloaded. Open Installed to select this model. Memory is checked when loading.';})
         .catch(error=>{current.public.state=controller.signal.aborted?'cancelled':'failed';current.public.message=controller.signal.aborted?'Download cancelled; cached files are retained.':String(error.message).replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);});
       return service.status();
     },

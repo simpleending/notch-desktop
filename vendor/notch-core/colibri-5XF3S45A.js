@@ -17,7 +17,7 @@ import {
   startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-B7FVLX4V.js";
+} from "./chunk-HMKNUDLS.js";
 import "./chunk-S2VC66HG.js";
 import "./chunk-LUGHZTHG.js";
 export {

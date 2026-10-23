@@ -86,7 +86,9 @@ else:
     from strata_cli.launch.runner import Runner
     from strata_control import runtime
     if op=='stop':
-        print(json.dumps(runtime.stop(request['profile'],timeout=120,expected_instance_id=request.get('instanceId'))))
+        result=runtime.stop(request['profile'],timeout=120,expected_instance_id=request.get('instanceId'))
+        if not result.get('ok') or result.get('state')!='stopped': raise ValueError('Strata could not release the previous model: '+str(result))
+        print(json.dumps(result))
     elif op=='status':
         print(json.dumps(runtime.status(request['profile'])))
     else:
@@ -135,7 +137,7 @@ async function bridge(op, request = {}, signal, output = () => {
     const timer = setTimeout(() => {
       failure = new Error("Strata timed out. Downloaded model files are retained.");
       terminate();
-    }, op === "install" ? 24 * 36e5 : op === "start" ? 66e4 : 6e4);
+    }, op === "install" ? 24 * 36e5 : op === "start" ? 66e4 : op === "stop" ? 15e4 : 6e4);
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (text) => {

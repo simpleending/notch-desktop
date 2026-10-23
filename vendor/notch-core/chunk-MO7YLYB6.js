@@ -63,6 +63,7 @@ async function showModel(modelName, baseUrl = OLLAMA_LOCAL_BASE_URL, opts = {}) 
     }
   }
   return {
+    template: body.template,
     capabilities: body.capabilities,
     contextLength,
     parameterSize: body.details?.parameter_size,

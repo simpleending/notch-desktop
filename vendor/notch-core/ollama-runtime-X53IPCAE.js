@@ -4,7 +4,7 @@ import {
   managedOllama,
   runtimeAssetName,
   versionAtLeast
-} from "./chunk-3C22YZAZ.js";
+} from "./chunk-EOHGS2EF.js";
 export {
   MANAGED_OLLAMA_HOST,
   daemonVersion,

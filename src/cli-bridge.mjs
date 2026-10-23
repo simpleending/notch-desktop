@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import {fileURLToPath} from 'node:url';
 const require = createRequire(import.meta.url);
 export const cliEntry = path.join(path.dirname(require.resolve('@freesyntax/notch-cli/package.json')), 'dist/index.js');
 
@@ -41,7 +42,7 @@ export function installLocalModel(repo, runner, options) {
   if (!/^[\w](?:[\w.-]*[\w])?\/[\w](?:[\w.-]*[\w])?$/.test(repo)) throw new Error('Choose a public owner/model repository.');
   if (!['ollama', 'mlx'].includes(runner)) throw new Error('Choose ollama or mlx.');
   // Invoke only after the UI confirms the selected model/runtime download.
-  return runCli(['models', 'install', '--model', repo, '--runner', runner, '--yes', '--no-launch'], options);
+  return runCli(['install', '--model', repo, '--runner', runner, '--yes', '--no-launch'], {...options,entry:options?.entry || fileURLToPath(new URL('../vendor/notch-core/desktop-model-download.js',import.meta.url))});
 }
 
 export function unloadLocalModel(options) { return runCli(['models', 'unload'], options); }

@@ -92,6 +92,7 @@ html[data-notch-workbench=true] :is(button,input,select,[role=menu],[role=listbo
 .notch-model-trigger{display:inline-flex;align-items:center;gap:8px;max-width:300px;overflow:hidden;border:0;background:transparent;color:var(--notch-secondary);font:12px var(--font-sans);padding:6px 8px;border-radius:7px}.notch-model-trigger>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.notch-model-trigger small{color:var(--notch-muted);white-space:nowrap}.notch-model-trigger:hover{background:var(--notch-elevated)}
 .notch-model-picker{width:min(440px,calc(100vw - 40px));max-height:min(calc(100vh - 70px),var(--radix-popover-content-available-height,100vh));overflow:auto!important;padding:0!important;border-radius:12px!important;background:var(--notch-panel)!important;color:var(--notch-ink)!important;box-shadow:0 12px 42px #0004!important;backdrop-filter:none!important;font:12px/1.5 var(--font-sans)}
 .notch-model-picker{-webkit-app-region:no-drag}
+.notch-model-runtime-status{padding:10px 12px;margin:0;border-bottom:1px solid var(--notch-line);font-size:12px;color:var(--notch-ink)}
 .notch-model-manager-header{display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--notch-line)}
 .notch-model-title{display:flex;align-items:center;justify-content:space-between;gap:10px}.notch-model-source{display:flex;align-items:center;gap:6px}.notch-model-source :is(img,svg){flex-shrink:0;object-fit:contain}
 .notch-voice-model-list[hidden]{display:none}

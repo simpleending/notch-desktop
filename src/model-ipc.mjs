@@ -42,7 +42,8 @@ export function registerModelIpc(ipcMain, host) {
     runtime: async (action,key) => {
       if(!['mount','toggle','eject'].includes(action))throw Error('Choose a supported local model action.');
       const result=await host.localModelChange(action,key);
-      return {...await state(false,true),...result};
+      const current=await state(false,true);
+      return {...current,...result,loaded:result.loaded&&current.models.some(row=>row.key===key&&row.running)};
     },
     connect: async (provider,key) => { await manager.connect(provider,key); return state(false,true); },
     disconnect: async provider => { await manager.disconnect(provider); return state(false,true); },

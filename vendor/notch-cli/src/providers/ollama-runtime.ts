@@ -127,7 +127,7 @@ export async function managedOllama(minimum = '0.30.0', signal?: AbortSignal, al
   signal?.throwIfAborted();
   const log = await open(path.join(root(), 'server.log'), 'a', 0o600);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api_key/i.test(key)));
-  const child = spawn(installed.executable, ['serve'], { detached: true, stdio: ['ignore', log.fd, log.fd], windowsHide: true,
+  const child = spawn(installed.executable, ['serve'], { detached: process.platform !== 'win32', stdio: ['ignore', log.fd, log.fd], windowsHide: true,
     env: { ...env, OLLAMA_HOST: '127.0.0.1:11436', OLLAMA_NO_CLOUD: '1' } });
   await log.close(); let failure: Error | undefined; child.on('error', error => { failure = error; }); child.unref();
   for (let attempt = 0; attempt < 60; attempt++) {

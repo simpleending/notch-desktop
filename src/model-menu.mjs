@@ -45,6 +45,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const [error,setError] = React.useState(''), [confirm,setConfirm] = React.useState(null), [optional,setOptional] = React.useState(()=>{try{return localStorage.getItem('notch.models.hideHfToken')!=='1';}catch{return true;}});
     const [hubLoading,setHubLoading] = React.useState(false);
     const [runtimeMessage,setRuntimeMessage]=React.useState('');
+    const [runtimeKey,setRuntimeKey]=React.useState('');
     const [colibri,setColibri]=React.useState(null);
     const [strata,setStrata]=React.useState(null);
     const [cloud,setCloud]=React.useState([]),[cloudLoading,setCloudLoading]=React.useState(false),cloudRequest=React.useRef(0);
@@ -124,11 +125,12 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const chain = current?.provider==='openrouter' ? normalizeOpenRouterFallbacks(current.key, state?.fallbacks?.[current.key]) : [];
     const loaded=all.filter(row=>row.key!=='auto'&&row.provider!=='openrouter'&&row.running);
     const changeRuntime=(row,action)=>act(async()=>{
-      setRuntimeMessage(action==='eject'||row.running?'Ejecting local model…':'Loading local model…');
+      setRuntimeKey(row.key);
+      setRuntimeMessage(`${action==='eject'||row.running?'Ejecting':'Loading'} ${row.displayName}…`);
       try{
         const data=await api.runtime(action,row.key);setState(data);
         if(data.loaded){await props.onSelect(row.key);if(!props.manageOnly){const next=[row.key,...recent.filter(key=>key!==row.key)].slice(0,5);setRecent(next);try{localStorage.setItem('notch.models.recent',JSON.stringify(next));}catch{}changeOpen(false);}}
-      }finally{setRuntimeMessage('');}
+      }finally{setRuntimeMessage('');setRuntimeKey('');}
     });
     const saveFallbacks = ids => act(async()=>{ const data=await api.fallbacks(current.key, ids); setState(data); });
     const select = row => {
@@ -156,11 +158,11 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
     const sourceIcon = row => row.provider==='openrouter'?h('img',{src:logo(resolvedTheme?.endsWith('-dark')?'openrouter-dark':'openrouter-light'),alt:'',width:14,height:14}):h('svg',{'aria-hidden':true,width:14,height:14,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round'},h('path',{d:row.provider==='colibri'?'M8 3v3m8-3v3M8 18v3m8-3v3M3 8h3m12 0h3M3 16h3m12 0h3M6 6h12v12H6zM10 10h4v4h-4z':'M3 4h18v13H3zM8 21h8m-4-4v4'}));
     return h(Popover,{open,onOpenChange:changeOpen},
       h(PopoverTrigger,{asChild:true},h('button',{id:props.triggerId,type:'button',disabled:props.disabled || !api,title:api?undefined:'Manage models in the main notch window','aria-label':props.ariaLabel || 'Model',className:`notch-model-trigger ${props.triggerClassName || ''}`},
-        h('span',null,label),current?h('small',null,`${formatContext(current.defaultContextWindow)}${current.running?' · Loaded':''}${chain.length?` · ${chain.length} fallback${chain.length===1?'':'s'}`:''}`):null,h('span',{'aria-hidden':true},'⌄'))),
+        h('span',{'aria-live':'polite'},runtimeMessage||label),current?h('small',null,`${formatContext(current.defaultContextWindow)}${current.running?' · Loaded':''}${chain.length?` · ${chain.length} fallback${chain.length===1?'':'s'}`:''}`):null,h('span',{'aria-hidden':true},'⌄'))),
       h(PopoverContent,{side:props.side || 'top',align:props.align || 'end',collisionPadding:{top:56,right:16,bottom:16,left:16},forceDark:false,surface:'solid',className:'notch-model-picker','aria-label':'Choose a model',onInteractOutside:()=>{interactedOutside.current=true;},onCloseAutoFocus:event=>{if(!interactedOutside.current && props.onRestoreFocus){event.preventDefault();props.onRestoreFocus();}}},
         tab!=='ready'?h('div',{className:'notch-model-manager-header'},!props.manageOnly?h('button',{type:'button',className:'notch-model-link',onClick:()=>switchTab('ready')},'← Back to models'):null,h('strong',null,'Manage models')):null,
         ['ready','installed'].includes(tab)&&loaded.length?h('div',{className:'notch-loaded-models',role:'group','aria-label':'Loaded local models'},...loaded.map(row=>h('div',{key:row.key},h('span',null,h('strong',null,row.displayName),h('small',null,'Loaded')),h('button',{type:'button',title:'Eject from memory; keep downloaded files','aria-label':`Eject ${row.displayName}`,disabled:busy||props.disabled,onClick:()=>void changeRuntime(row,'eject')},h('svg',{'aria-hidden':true,width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7},h('path',{d:'m5 14 7-9 7 9H5Zm0 4h14v3H5z'})))))):null,
-        runtimeMessage?h('p',{role:'status',className:'notch-model-note'},runtimeMessage):null,
+        runtimeMessage?h('p',{role:'status',className:'notch-model-runtime-status'},runtimeMessage):null,
         tab!=='ready'?h('div',{className:'notch-model-tabs',role:'tablist','aria-label':'Model source'},...tabs.map(([name,title],index)=>h('button',{
           key:name,id:`${id}-${name}`,type:'button',role:'tab','aria-selected':tab===name,'aria-controls':`${id}-panel`,tabIndex:tab===name?0:-1,
           onClick:()=>switchTab(name),onKeyDown:focusModelTab},
@@ -179,8 +181,8 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
           h('input',{ref:searchInput,className:'notch-model-search',type:'search','aria-label':pickingFallback?'Search fallback models':tab==='ready'?'Search ready models':'Search models',maxLength:120,placeholder:tab==='hub'?'Search the Hub, e.g. Gemma or DeepSeek…':pickingFallback?'Search a fallback model…':tab==='ready'?'Search ready models…':'Search models…',value:search,onChange:event=>{setSearch(event.target.value);setConfirm(null);},onKeyDown:keyboard}),
           tab==='hub' && confirm?h('div',{ref:confirmation,tabIndex:-1,className:'notch-model-confirm',role:'group','aria-label':'Confirm model download'},
             h('strong',null,confirm.repo),h('p',null,`${formatSize(confirm.bytes)} download · ${formatSize(confirm.required)} estimated memory. License: ${confirm.license || 'see model card'}.`),
-            h('p',null,confirm.fits?`${hub.runner==='mlx'?'MLX':'Ollama'} downloads the model and required files, then checks loading and coding tools. Select it from Installed when ready.`:'This model exceeds available memory. Close other applications or choose a smaller model.'),
-            h('button',{type:'button',disabled:busy || !confirm.fits,onClick:()=>void act(async()=>{const status=await api.install(confirm.repo,hub.runner);setState(previous=>({...previous,...status}));setConfirm(null);})},busy?'Preparing download…':'Download model'),h('button',{type:'button',disabled:busy,onClick:()=>setConfirm(null)},'Back to models')):null,
+            h('p',null,`${hub.runner==='mlx'?'MLX':'Ollama'} downloads the model files without loading them. Memory and context are checked when you load it.${confirm.fits?'':' This model exceeds currently available memory; you can download it now and free memory before loading.'}`),
+            h('button',{type:'button',disabled:busy || job?.state==='running',onClick:()=>void act(async()=>{const status=await api.install(confirm.repo,hub.runner);setState(previous=>({...previous,...status}));setConfirm(null);})},busy?'Preparing download…':'Download model'),h('button',{type:'button',disabled:busy,onClick:()=>setConfirm(null)},'Back to models')):null,
           job && tab==='hub'?h('div',{className:'notch-model-job',role:job.state==='failed'?'alert':'status'},
             h('div',null,h('strong',null,job.repo),h('p',null,uiMessage(job.message, 'Model status details are unavailable. Refresh to check again.')),job.state==='running'?h('progress',{'aria-label':'Model download progress',max:100,...(Number.isFinite(job.percent)?{value:job.percent}:{})}):null),
             job.state==='running'?h('button',{type:'button',disabled:busy,onClick:()=>void act(async()=>{const status=await api.cancel();setState(previous=>({...previous,...status}));})},'Cancel download'):job.state==='complete'?h('button',{type:'button',disabled:busy,onClick:()=>void act(async()=>{await reload(true);props.onOpenChange?.(true);switchTab('installed');})},'Show installed models'):null):null,
@@ -188,7 +190,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
             ...filtered.map(row=>tab==='hub'?h('button',{type:'button',key:row.repo,role:'option',tabIndex:row===firstOption?0:-1,'aria-label':`Download ${row.repo}`,title:row.fits?'Review download and runtime requirements':'Review memory requirements',className:'notch-hub-model','aria-selected':confirm?.repo===row.repo,disabled:disabledRow(row),onClick:event=>{returnFocus.current=event.currentTarget;setConfirm(row);}},
               h('span',{className:'notch-hub-model-info'},h('strong',null,row.repo),h('small',{className:'notch-model-source'},h('img',{src:logo('huggingface'),alt:'',width:14,height:14}),'Hugging Face · Local download'),h('small',null,`${formatSize(row.bytes)} download · ${formatSize(row.required)} estimated memory${row.fits?'':' · exceeds available memory'}`)),
               h('svg',{'aria-hidden':true,width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.7,strokeLinecap:'round',strokeLinejoin:'round',className:'notch-model-download-icon'},h('path',{d:'M12 3v12m-4-4 4 4 4-4M5 17v4h14v-4'}))):
-              h('button',{type:'button',key:row.key,title:row.key,role:'option',tabIndex:row===firstOption?0:-1,'aria-selected':!pickingFallback && row.key===current?.key,disabled:disabledRow(row),onClick:()=>select(row)},
+              h('button',{type:'button',key:row.key,title:row.key,role:'option',tabIndex:row===firstOption?0:-1,'aria-selected':!pickingFallback && row.key===current?.key,'aria-busy':row.key===runtimeKey,disabled:disabledRow(row),onClick:()=>select(row)},
                 h('span',{className:'notch-model-title'},h('strong',null,row.displayName),row.running?h('small',null,'Loaded · click to eject'):null,!pickingFallback && row.key===current?.key?h('span',{'aria-hidden':true},'✓'):null),
                 h('small',{className:'notch-model-source'},sourceIcon(row),modelSource(row)),
                 h('small',null,tab==='cloud'?`${formatContext(row.defaultContextWindow)} context · ${Number.isFinite(row.pricing?.input)&&Number.isFinite(row.pricing?.output)?`$${row.pricing.input.toFixed(2)} in / $${row.pricing.output.toFixed(2)} out per 1M tokens`:'see provider pricing'}${row.enabled?'':` · ${row.description}`}`:`${formatContext(row.defaultContextWindow)} context${Number.isFinite(row.bytes)?` · ${formatSize(row.bytes)} weights`:''}${row.enabled?'':` · ${row.description}`}`)))),

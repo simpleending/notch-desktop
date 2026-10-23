@@ -7,7 +7,7 @@ import {
 import {
   detectDaemon,
   showModel
-} from "./chunk-WPRAVALI.js";
+} from "./chunk-MO7YLYB6.js";
 import {
   ollamaRoot
 } from "./chunk-RKXQ4ULC.js";
@@ -57,7 +57,7 @@ async function ensureOllama(host, signal) {
   for (const executable of candidates) {
     try {
       await exec(executable, ["--version"], { timeout: 5e3, windowsHide: true, signal });
-      const child = spawn(executable, ["serve"], { detached: true, stdio: "ignore", windowsHide: true });
+      const child = spawn(executable, ["serve"], { detached: process.platform !== "win32", stdio: "ignore", windowsHide: true });
       child.on("error", () => {
       });
       child.unref();
@@ -71,7 +71,7 @@ async function ensureOllama(host, signal) {
       if (error.code !== "ENOENT") throw error;
     }
   }
-  const { managedOllama } = await import("./ollama-runtime-ASVPSEWA.js");
+  const { managedOllama } = await import("./ollama-runtime-X53IPCAE.js");
   return managedOllama("0.30.0", signal);
 }
 async function runPython(executable, args, signal) {

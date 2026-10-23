@@ -29,6 +29,7 @@ function sessionFile(directory, id) {
 export function createHost(dataDirectory, { hardware: detectHardware = detectLocalHardware, fetcher = fetch, runTurn = runDesktopTurn, runtime = localRuntime } = {}) {
   const sessions = path.join(dataDirectory, 'notch-sessions');
   let models = [], fetchedAt = 0, pending, defaultModel, discoveryWarning;
+  let modelRevision=0,cachedRevision=0;
   let endpoints = new Map(), profiles = new Map(), unverifiedModels = new Set();
   const queries = new Map();
   const rewinding = new Set();
@@ -38,7 +39,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     workspaceSearch: createWorkspaceSearch(),
     identity: localIdentity,
     validatePlugin: validateLocalPlugin,
-    assertTurnAvailable(id) { if (rewinding.has(id)) throw new Error('Finish undo before starting another turn.'); },
+    assertTurnAvailable(id) { if (rewinding.has(id)) throw new Error('Finish undo before starting another turn.'); if(lifecycle.busy&&!queries.get(id)?.model?.startsWith('openrouter/'))throw Error('Wait for the local model to finish loading or ejecting.'); },
     getCachedModels: () => models,
     getDefaultModel: () => defaultModel,
     getModelDiscoveryWarning: () => discoveryWarning,
@@ -51,7 +52,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     },
     async listModels(force = false) {
       if (host.modelManager) await host.modelManager.status();
-      if (!force && Date.now() - fetchedAt < 30000) {
+      if (!force && cachedRevision===modelRevision && Date.now() - fetchedAt < 30000) {
         for (const row of models) {
           const key = row.key==='auto' ? defaultModel : row.key;
           row.defaultContextWindow=host.modelManager?.context(key,row.availableContextWindows,row.recommendedContextWindow || row.defaultContextWindow) || row.defaultContextWindow;
@@ -60,8 +61,9 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
         }
         return models;
       }
-      if (pending) return pending;
+      if (pending) { const rows=await pending;return cachedRevision===modelRevision?rows:host.listModels(true); }
       pending = (async () => {
+        const revision=modelRevision;
         await host.runtimeReady;
         const roots=['http://127.0.0.1:11436','http://127.0.0.1:11434'];
         const results = await Promise.allSettled(roots.map(async root => {
@@ -120,9 +122,9 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
         if(nextDefault)nextModels.unshift({...nextModels.find(row=>row.key===nextDefault),key:'auto',displayName:'local model',isDefault:true});
         models=nextModels;defaultModel=nextDefault;endpoints=nextEndpoints;profiles=nextProfiles;unverifiedModels=unverified;
         discoveryWarning=unverified.size?'Could not refresh Ollama. Showing cached models; start Ollama or refresh to retry.':undefined;
-        fetchedAt=unverified.size?0:Date.now();return models;
+        cachedRevision=revision;fetchedAt=unverified.size?0:Date.now();return models;
       })().finally(() => { pending = undefined; });
-      return pending;
+      const rows=await pending;return cachedRevision===modelRevision?rows:host.listModels(true);
     },
     async loadSession(id, cwd, executionTarget) {
       await fs.mkdir(sessions, { recursive: true });
@@ -220,6 +222,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     async prepare(request) { host.phone?.note(request); let attached = false; return { attach(prompt) { if (attached) throw new Error('Prepared session already attached.'); attached = true; return host.query({ ...request, prompt }); }, async close() { attached = true; } }; },
   };
   lifecycle=createLocalModelLifecycle({fetcher,runtime,catalog:()=>host.listModels(true),endpoint:key=>endpoints.get(key),
+    invalidate:()=>{modelRevision++;fetchedAt=0;},
     context:(key,row)=>key.startsWith('ollama/')||host.modelManager?.requestedContext?.(key)?row.defaultContextWindow:undefined,
     assertIdle:()=>{if([...queries.values()].some(query=>query.active&&!query.model?.startsWith('openrouter/')))throw Error('Finish or interrupt the current local response before loading or ejecting a model.');}});
   return host;

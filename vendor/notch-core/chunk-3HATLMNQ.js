@@ -579,17 +579,17 @@ function resolveByokModel(spec) {
   }
   const provider = createOpenAI({
     ...providerInfo.id === "ollama" ? { fetch: queuedLocalFetch(ollamaFetch(baseUrl, spec)) } : providerInfo.id === "strata" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startStrata } = await import("./strata-J4RL2VBU.js");
+      const { startStrata } = await import("./strata-MCKIJEPT.js");
       const ready = await startStrata(modelId, spec.contextWindow, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready.baseUrl + url.pathname.replace(/^\/v1/, "") + url.search, init);
     }) } : providerInfo.id === "colibri" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startColibri } = await import("./colibri-HJ73IUNT.js");
+      const { startColibri } = await import("./colibri-5XF3S45A.js");
       const ready = await startColibri(modelId, spec.contextWindow, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
     }) } : providerInfo.id === "mlx" ? { fetch: queuedLocalFetch(async (input, init) => {
-      const { startMlx } = await import("./local-runner-JIFOAN2R.js");
+      const { startMlx } = await import("./local-runner-A6NBFQLU.js");
       const ready = await startMlx(modelId, init?.signal ?? void 0);
       const url = new URL(input instanceof Request ? input.url : String(input));
       return fetch(ready + url.pathname.replace(/^\/v1/, "") + url.search, init);
@@ -628,18 +628,18 @@ async function validateByokConfig(spec) {
   }
   try {
     if (providerInfo.id === "ollama" || providerInfo.id === "ollama-anthropic") {
-      const { showModel } = await import("./ollama-H5HZK5N6.js");
+      const { showModel } = await import("./ollama-7FNJWRKC.js");
       const info = await showModel(spec.model || providerInfo.defaultModel, ollamaRoot(spec.baseUrl), { apiKey });
       if (info.capabilities && !info.capabilities.includes("tools")) {
         return { ok: false, error: "This Ollama model does not advertise tool calling. Choose a tool-capable model with notch setup." };
       }
     } else if (providerInfo.id === "strata") {
-      const { strataStatus } = await import("./strata-J4RL2VBU.js");
+      const { strataStatus } = await import("./strata-MCKIJEPT.js");
       const { selected } = await strataStatus();
       if (!selected || selected.id !== spec.model) return { ok: false, error: "Install this Strata model in Manage models first." };
       return { ok: true, contextWindow: selected.nativeContext, maxOutputTokens: 2048 };
     } else if (providerInfo.id === "colibri") {
-      const { colibriStatus } = await import("./colibri-HJ73IUNT.js");
+      const { colibriStatus } = await import("./colibri-5XF3S45A.js");
       const status = await colibriStatus();
       if (!status.verified || status.modelId !== spec.model) return { ok: false, error: "Set up and validate a Colibri model with notch models install --runner colibri." };
       return { ok: true, contextWindow: status.nativeContext, maxOutputTokens: 2048 };

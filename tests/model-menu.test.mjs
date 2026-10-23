@@ -150,10 +150,32 @@ test('a failed load keeps the previous selection and makes the error and retry c
  assert.equal(selected,undefined);assert.equal(button(ui,'Refresh').props.disabled,false);assert(ui.find(node=>node.props.role==='alert').length);
 });
 
+test('local loading status names the model in its selector and clears after failure or dismissal',async t=>{
+ let fail;const {ui}=menu(t,{runtime:()=>new Promise((_resolve,reject)=>fail=reject)});
+ await ui.settle();ui.find(node=>node.props.role==='option'&&node.props.title===colibri.key)[0].props.onClick();await ui.settle();
+ assert.equal(content(ui.find(node=>node.props['aria-label']==='Model')[0]).includes('Loading Disk coder…'),true);
+ assert.equal(ui.find(node=>node.props.role==='status'&&content(node)==='Loading Disk coder…').length,1);
+ assert.equal(ui.find(node=>node.props.role==='option'&&node.props.title===colibri.key)[0].props['aria-busy'],true);
+ ui.find(node=>node.type==='popover')[0].props.onOpenChange(false);await ui.settle();
+ fail(Error('Engine unavailable'));await ui.settle();
+ assert(!content(ui.find(node=>node.props['aria-label']==='Model')[0]).includes('Loading'));
+ assert.equal(ui.find(node=>node.props.role==='status').length,0);
+});
+
 test('management settings still open directly on the existing tabs',async t=>{
   const {ui}=menu(t,{}, {manageOnly:true});await ui.settle();
   assert.equal(ui.find(node=>node.props.role==='tab').length,5);
   assert.equal(button(ui,'← Back to models'),undefined);
+});
+
+test('a model can be downloaded while RAM is low without claiming it can be loaded',async t=>{
+ const row={repo:'Nimbus-Labs/Nimbus-4B-GGUF',bytes:3*2**30,required:5*2**30,fits:false};let installed;
+ const {ui}=menu(t,{hub:async()=>({runner:'ollama',query:'',models:[row]}),install:async repo=>{installed=repo;return{job:{state:'running'}};}});
+ await ui.settle();button(ui,'Manage models…').props.onClick();await ui.settle();button(ui,'Hugging Face').props.onClick();await ui.settle();await new Promise(resolve=>setTimeout(resolve,10));await ui.settle();
+ ui.find(node=>node.props['aria-label']==='Download '+row.repo)[0].props.onClick({currentTarget:{}});await ui.settle();
+ assert.equal(button(ui,'Download model').props.disabled,false);
+ assert(content(ui.find(node=>node.props['aria-label']==='Confirm model download')[0]).includes('exceeds currently available memory'));
+ button(ui,'Download model').props.onClick();await ui.settle();assert.equal(installed,row.repo);
 });
 
 test('initial failure removes skeletons and keeps Refresh and management available',async t=>{

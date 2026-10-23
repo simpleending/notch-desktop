@@ -15,6 +15,12 @@ import { execFile, spawn } from "child_process";
 import { promisify } from "util";
 
 // vendor/notch-cli/src/providers/colibri-selection.ts
+function colibriLaunchPid(report) {
+  const state = JSON.parse(report);
+  if (!["loading", "ready"].includes(state?.state) || !Number.isSafeInteger(state.pid) || state.pid <= 0)
+    throw new Error("The Colibri engine stopped during initialization. Trying another backend.");
+  return state.pid;
+}
 function colibriBackendReady(backend, log) {
   if (backend === "cpu") return true;
   if (backend === "vulkan") return /\[VK\] (?:ready:|.*device ready, dense matrices)/i.test(log);
@@ -508,10 +514,16 @@ async function launchColibri(candidate, cfg, modelId, signal) {
   else cfg.args.push("--gpu", "none");
   if (cfg.model?.id?.startsWith("local-")) cfg.args.push("--model-id", `notch-${cfg.model.id}`);
   await atomic(setupFile(), cfg);
-  await invoke(["start", "--background", "--no-browser", "--json"], { signal, timeout: 3e4 });
+  const pid = colibriLaunchPid(await invoke(["start", "--background", "--no-browser", "--json"], { signal, timeout: 6e4 }));
   if ((await json(setupFile()))?.port !== 11437) throw new Error("Port 11437 is in use. Stop the conflicting program before loading Colibri.");
   for (let attempt = 0; attempt < 360; attempt++) {
     signal?.throwIfAborted();
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error.code === "ESRCH") throw new Error("The Colibri engine exited during initialization. Trying another backend.");
+      throw error;
+    }
     const response = await fetch(`${COLIBRI_URL}/models`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(1e3)]) : AbortSignal.timeout(1e3) }).catch((error) => {
       signal?.throwIfAborted();
       return null;

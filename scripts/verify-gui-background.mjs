@@ -26,7 +26,9 @@ try{
   const result=await app.evaluate(async(_electron,{cwd,cases})=>{
     if(!process.versions.electron||process.env.ELECTRON_RUN_AS_NODE!==undefined)throw Error('This regression must run in GUI Electron, without Node-mode inheritance');
     const host=globalThis.__notchHost,catalog=await host.modelManager.cloudCatalog(false,true),fetcher=globalThis.fetch;
-    const trace=globalThis.__backgroundQa={pids:[],checks:[]};
+    const trace=globalThis.__backgroundQa={pids:[],checks:[],launches:[]};
+    const cp=process.getBuiltinModule('child_process'),spawn=cp.ChildProcess.prototype.spawn;
+    cp.ChildProcess.prototype.spawn=function(options){trace.launches.push({file:options.file,windowsHide:options.windowsHide,detached:options.detached});return spawn.call(this,options);};
     host.modelManager.cloudCatalog=async()=>catalog.map(row=>({...row,enabled:true}));host.modelManager.key=async()=> 'fixture-only';
     await host.listModels(true);
     try{
@@ -56,9 +58,13 @@ try{
         trace.checks.push({...value,pid:trace.pids.at(-1),receipt:receipt.content});
       }
       return {electron:process.versions.electron,guiRunAsNode:null,...trace};
-    }finally{delete process.env.ELECTRON_RUN_AS_NODE;globalThis.fetch=fetcher;}
+    }finally{delete process.env.ELECTRON_RUN_AS_NODE;globalThis.fetch=fetcher;cp.ChildProcess.prototype.spawn=spawn;}
   },{cwd,cases});
   pids=result.pids;owned=await processSnapshot();assert.equal(pids.length,2);
+  if(process.platform==='win32'){
+    const supervisors=result.launches.filter(row=>path.resolve(row.file)===executable);
+    assert.equal(supervisors.length,2);assert(supervisors.every(row=>row.windowsHide&&!row.detached),'Background supervisors must not allocate detached Windows consoles.');
+  }
   for(const value of result.checks){
     assert.deepEqual(await(await fetch(`http://127.0.0.1:${value.port}`)).json(),{proof:value.proof,runAsNode:value.flag});
     const stdout=value.receipt.match(/stdout: (.+)/)[1].trim(),stderr=value.receipt.match(/stderr: (.+)/)[1].trim();

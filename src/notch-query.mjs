@@ -75,6 +75,10 @@ export class NotchQuery {
   async setModel(model) {
     if (typeof model !== 'string' || !model.trim() || model.length > 512) throw new Error('Invalid model choice.');
     if (this.active) throw new Error('Finish or interrupt the current turn before changing models.');
+    if(this.changingModel)throw new Error('Wait for the previous model selection to finish.');
+    this.changingModel=true;
+    let finishSelection;this.modelChangeFinished=new Promise(resolve=>{finishSelection=resolve;});
+    try{
     await this.ready;
     const models = await this.host.listModels();
     if (this.active) throw new Error('Finish or interrupt the current turn before changing models.');
@@ -87,6 +91,7 @@ export class NotchQuery {
     this.model = this.host.resolveModelChoice ? this.host.resolveModelChoice(model) : model;
     this.state.contextUsage = null;
     await this.host.saveSession(this.id, this.state);
+    }finally{this.changingModel=false;finishSelection();}
   }
   async setPermissionMode(mode) { accessForMode(mode); if (this.active) await this.interrupt(); this.permissionMode = mode; }
   async setPlanMode(active) { if (typeof active !== 'boolean') throw new Error('Invalid plan mode.'); if (this.active) await this.interrupt(); this.planMode = active; return { active }; }
@@ -144,6 +149,8 @@ export class NotchQuery {
   }
   async turn(content, messageId = randomUUID()) {
     if (this.closed) return;
+    if(this.changingModel)await this.modelChangeFinished;
+    if(this.closed)return;
     this.host.assertTurnAvailable?.(this.id);
     const controller = new AbortController();
     const forwardAbort = () => controller.abort(this.request.abortController.signal.reason);

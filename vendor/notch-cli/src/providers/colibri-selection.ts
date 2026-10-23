@@ -7,6 +7,13 @@ export interface ColibriCandidate {
 }
 export interface ColibriMeasurement { backend: ColibriBackend; millisecondsPerToken: number }
 
+export function colibriLaunchPid(report: string): number {
+  const state = JSON.parse(report);
+  if (!['loading', 'ready'].includes(state?.state) || !Number.isSafeInteger(state.pid) || state.pid <= 0)
+    throw new Error('The Colibri engine stopped during initialization. Trying another backend.');
+  return state.pid;
+}
+
 /** A driver may silently fall back to CPU. Only label acceleration after the engine confirms it. */
 export function colibriBackendReady(backend: ColibriBackend, log: string): boolean {
   if (backend === 'cpu') return true;

@@ -8,7 +8,7 @@ import type { LocalHardware } from './local-models.js';
 import { withLocalInference } from '../concurrency/local-inference.js';
 import { acquireLease } from '../concurrency/lease.js';
 import { quietPython } from './python-console.js';
-import { COLIBRI_PLANNER, colibriContexts, colibriRank, colibriBackendReady, type ColibriCandidate, type ColibriMeasurement } from './colibri-selection.js';
+import { COLIBRI_PLANNER, colibriContexts, colibriRank, colibriBackendReady, colibriLaunchPid, type ColibriCandidate, type ColibriMeasurement } from './colibri-selection.js';
 
 const exec = promisify(execFile);
 export const COLIBRI_DEFAULT_CONTEXT = 16384;
@@ -302,10 +302,13 @@ async function launchColibri(candidate: ColibriCandidate, cfg: any, modelId?: st
   else cfg.args.push('--gpu', 'none');
   if(cfg.model?.id?.startsWith('local-'))cfg.args.push('--model-id',`notch-${cfg.model.id}`);
   await atomic(setupFile(), cfg);
-  await invoke(['start', '--background', '--no-browser', '--json'], { signal, timeout: 30000 });
+  // The official launcher can wait 35 seconds before returning a loading PID.
+  const pid = colibriLaunchPid(await invoke(['start', '--background', '--no-browser', '--json'], { signal, timeout: 60000 }));
   if ((await json(setupFile()))?.port !== 11437) throw new Error('Port 11437 is in use. Stop the conflicting program before loading Colibri.');
   for (let attempt = 0; attempt < 360; attempt++) {
     signal?.throwIfAborted();
+    try { process.kill(pid, 0); }
+    catch (error: any) { if (error.code === 'ESRCH') throw new Error('The Colibri engine exited during initialization. Trying another backend.'); throw error; }
     const response = await fetch(`${COLIBRI_URL}/models`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(1000)]) : AbortSignal.timeout(1000) }).catch(error => { signal?.throwIfAborted(); return null; });
     if (response?.ok) {
       const body = await response.json();

@@ -64,7 +64,9 @@ else:
     from strata_cli.launch.runner import Runner
     from strata_control import runtime
     if op=='stop':
-        print(json.dumps(runtime.stop(request['profile'],timeout=120,expected_instance_id=request.get('instanceId'))))
+        result=runtime.stop(request['profile'],timeout=120,expected_instance_id=request.get('instanceId'))
+        if not result.get('ok') or result.get('state')!='stopped': raise ValueError('Strata could not release the previous model: '+str(result))
+        print(json.dumps(result))
     elif op=='status':
         print(json.dumps(runtime.status(request['profile'])))
     else:
@@ -104,7 +106,7 @@ async function bridge(op:string,request:any={},signal?:AbortSignal,output:(s:str
     };
     const abort=()=>{failure=signal?.reason instanceof Error?signal.reason:new Error('Strata cancelled.');terminate();};
     signal?.addEventListener('abort',abort,{once:true});
-    const timer=setTimeout(()=>{failure=new Error('Strata timed out. Downloaded model files are retained.');terminate();},op==='install'?24*3600000:op==='start'?660000:60000);
+    const timer=setTimeout(()=>{failure=new Error('Strata timed out. Downloaded model files are retained.');terminate();},op==='install'?24*3600000:op==='start'?660000:op==='stop'?150000:60000);
     child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
     child.stdout.on('data',text=>{stdout+=text;if(stdout.length>4*2**20){failure=new Error('Strata output exceeded its limit.');child.kill();}});
     child.stderr.on('data',text=>{stderr=(stderr+text).slice(-16000);output(text);});

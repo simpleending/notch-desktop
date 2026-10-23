@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "files": ["vendor/notch-cli/src/desktop-harness.ts"]
+  "files": ["vendor/notch-cli/src/desktop-harness.ts", "vendor/notch-cli/src/desktop-model-download.ts"]
 }

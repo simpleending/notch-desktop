@@ -8,7 +8,7 @@ import type { ByokConfigBlock } from '../config.js';
 
 export interface LocalModelResult { code: number; selection?: ByokConfigBlock; launch?: string }
 export async function runLocalModelsCli(argv: string[], options: {
-  cwd?: string; ask?: (question: string) => Promise<string>; signal?: AbortSignal; embedded?: boolean;
+  cwd?: string; ask?: (question: string) => Promise<string>; signal?: AbortSignal; embedded?: boolean; downloadOnly?: boolean;
 } = {}): Promise<LocalModelResult> {
   const command = new Command('notch models')
     .description('Choose, download and run a Hugging Face model sized for this computer')
@@ -100,7 +100,7 @@ export async function runLocalModelsCli(argv: string[], options: {
       if (!selected) throw new Error('Choose one of the listed model numbers.');
     }
     const fit = modelFit(selected, hardware);
-    if (!fit.fits) throw new Error('This model exceeds the current memory estimate. Close applications or choose a smaller model; no download started.');
+    if (!fit.fits && !options.downloadOnly) throw new Error('This model exceeds the current memory estimate. Close applications or choose a smaller model; no download started.');
     if (action === 'recommend') { console.log(JSON.stringify({ hardware, ...selected, ...fit }, null, 2)); return { code: 0 }; }
     if (flags.model && !flags.yes && !/^(y|yes)$/i.test(await ask(`Download ${selected.repo} (${formatBytes(selected.bytes).trim()}) and use it for this project? [y/N] `))) return { code: 0 };
     console.log(`\nInstalling ${selected.repo}; model license: ${selected.license || 'see model card'}.`);
@@ -130,6 +130,11 @@ export async function runLocalModelsCli(argv: string[], options: {
       }
       await checkOllamaTools(selected.model, host);
     } else await downloadMlx(selected.repo, signal);
+    if (options.downloadOnly) {
+      signal.throwIfAborted();
+      console.log(`Downloaded: ${runner}/${selected.model}. Model files are ready; memory and context are checked when loading.`);
+      return { code: 0 };
+    }
     if (!modelFit(selected, await detectLocalHardware()).fits) throw new Error('Available memory fell during the download. Close other applications and retry; the download is retained.');
     const baseUrl = runner === 'mlx' ? await startMlx(selected.repo, signal) : ollamaChatUrl(host);
     loaded = true;

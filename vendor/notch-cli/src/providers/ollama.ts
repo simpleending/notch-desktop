@@ -43,6 +43,7 @@ export interface OllamaModelRow {
 
 /** Result of GET /api/show (we only pluck the context window). */
 export interface OllamaShowResult {
+  template?: string;
   capabilities?: string[];
   contextLength: number | undefined;
   parameterSize: string | undefined;
@@ -134,6 +135,7 @@ export async function showModel(
     throw new Error(`Ollama /api/show(${modelName}) returned ${res.status}`);
   }
   const body = (await res.json()) as {
+    template?: string;
     capabilities?: string[];
     model_info?: Record<string, unknown>;
     details?: { parameter_size?: string; family?: string };
@@ -147,6 +149,7 @@ export async function showModel(
     }
   }
   return {
+    template: body.template,
     capabilities: body.capabilities,
     contextLength,
     parameterSize: body.details?.parameter_size,

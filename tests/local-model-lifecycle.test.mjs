@@ -15,7 +15,7 @@ function fixture(){
   colibriStatus:async()=>({running:loaded.has('colibri/coder'),modelId:'coder'}),strataStatus:async()=>({running:loaded.has('strata/coder'),selected:{id:'coder'}})};
  for(const [provider,name] of [['colibri','Colibri'],['strata','Strata'],['mlx','Mlx']]){
   runtime['stop'+name]=async()=>{calls.push('eject '+provider);for(const key of loaded.keys())if(key.startsWith(provider+'/'))loaded.delete(key);};
-  runtime['start'+name]=async()=>{assert.equal(loaded.size,0,'Old engine must stop before another loads.');calls.push('load '+provider);loaded.set(provider+'/'+(provider==='mlx'?'lab/coder':'coder'),true);};
+  runtime['start'+name]=async(id,context)=>{assert.equal(loaded.size,0,'Old engine must stop before another loads.');if(provider!=='mlx'){assert.equal(id,'coder');assert.equal(context,8192);}calls.push('load '+provider);loaded.set(provider+'/'+(provider==='mlx'?'lab/coder':'coder'),true);};
  }
  const fetcher=async(url,init)=>{
   const root=new URL(url).origin;
@@ -27,7 +27,7 @@ function fixture(){
   return{ok:true,json:async()=>({done:true})};
  };
  const lifecycle=createLocalModelLifecycle({runtime,fetcher,catalog:async()=>keys.map(key=>({key,enabled:true,defaultContextWindow:8192})),endpoint:()=> 'http://127.0.0.1:11436/v1',context:()=>8192,assertIdle:()=>{if(busy)throw Error('Active response');}});
- return{loaded,calls,lifecycle,set busy(value){busy=value;},set failLoad(value){failLoad=value;},set failEject(value){failEject=value;}};
+ return{loaded,calls,lifecycle,runtime,set busy(value){busy=value;},set failLoad(value){failLoad=value;},set failEject(value){failEject=value;}};
 }
 test('switching releases the old Ollama model before mounting the next; toggle and eject keep installed inventory',async()=>{
  const f=fixture();assert.deepEqual(await f.lifecycle.change('mount','ollama/next'),{loaded:true});
@@ -40,6 +40,31 @@ test('switching across all local providers releases each preceding engine',async
   assert.deepEqual(await f.lifecycle.change('mount',key),{loaded:true});assert.deepEqual([...f.loaded.keys()],[key]);
  }
 });
+
+for(const provider of ['colibri','strata']){
+ test(`${provider} supports toggle, explicit eject, and switching in both directions without losing inventory`,async()=>{
+  const f=fixture(),key=provider+'/coder';
+  for(const action of ['toggle','eject']){
+   await f.lifecycle.change('mount',key);assert.deepEqual([...f.loaded.keys()],[key]);
+   assert.deepEqual(await f.lifecycle.change(action,key),{loaded:false});assert.equal(f.loaded.size,0);
+  }
+  await f.lifecycle.change('mount',key);await f.lifecycle.change('mount','ollama/next');
+  assert.deepEqual([...f.loaded.keys()],['ollama/next']);
+  await f.lifecycle.change('mount',key);assert.deepEqual([...f.loaded.keys()],[key]);
+  await f.lifecycle.prepare('ollama/next');assert.equal(f.loaded.size,0);
+  assert.equal(f.lifecycle.busy,false);
+ });
+ test(`${provider} stop verification prevents another engine from loading if memory was not released`,async()=>{
+  const f=fixture(),key=provider+'/coder';
+  await f.lifecycle.change('mount',key);
+  // Exercise the real status recheck, even when the control command claims success.
+  const original=f.loaded.delete.bind(f.loaded);f.loaded.delete=()=>false;
+  await assert.rejects(f.lifecycle.change('mount','ollama/next'),/still loaded/);
+  assert.deepEqual([...f.loaded.keys()],[key]);assert.equal(f.lifecycle.busy,false);
+  f.loaded.delete=original;
+  await f.lifecycle.change('eject',key);assert.equal(f.loaded.size,0);
+ });
+}
 test('active responses and overlapping actions cannot be interrupted; errors never claim a model loaded',async()=>{
  const f=fixture();f.busy=true;assert.throws(()=>f.lifecycle.change('eject','ollama/old'),/Active/);assert(f.loaded.has('ollama/old'));f.busy=false;
  const pending=f.lifecycle.change('mount','ollama/next');assert.throws(()=>f.lifecycle.change('mount','ollama/old'),/already loading/);await pending;
@@ -49,6 +74,44 @@ test('active responses and overlapping actions cannot be interrupted; errors nev
 });
 test('preparing a resumed local turn releases a different resident without warming or generating',async()=>{
  const f=fixture();await f.lifecycle.prepare('ollama/next');assert.equal(f.loaded.size,0);assert(!f.calls.some(call=>call.startsWith('load ')));
+});
+
+test('a queued eject rechecks active responses after taking the inference lease',async()=>{
+ const f=fixture();let release;const gate=new Promise(resolve=>release=resolve);
+ f.runtime.withLocalInference=async fn=>{await gate;return fn();};
+ const eject=f.lifecycle.change('eject','ollama/old');f.busy=true;release();
+ await assert.rejects(eject,/Active response/);assert(f.loaded.has('ollama/old'));assert.equal(f.lifecycle.busy,false);
+});
+
+test('repeated mount/eject/remount and rejected double-clicks leave exactly the intended resident',async()=>{
+ const f=fixture();
+ for(let i=0;i<12;i++)for(const key of ['colibri/coder','strata/coder','ollama/next']){
+  const mount=f.lifecycle.change('mount',key);
+  assert.throws(()=>f.lifecycle.change('toggle',key),/already loading/);await mount;
+  assert.deepEqual([...f.loaded.keys()],[key]);
+  await f.lifecycle.change('eject',key);assert.equal(f.loaded.size,0);
+  await f.lifecycle.change('mount',key);assert.deepEqual([...f.loaded.keys()],[key]);
+ }
+});
+
+test('an overlapping catalog refresh cannot put a stale Loaded label back after eject',async()=>{
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'notch-catalog-eject-'));
+ let loaded=true,pause=false,release,started;const gate=new Promise(resolve=>release=resolve),ready=new Promise(resolve=>started=resolve);
+ const runtime={withLocalInference:fn=>fn(),colibriStatus:async()=>({running:false}),strataStatus:async()=>({running:false}),loadedMlxModel:()=>undefined};
+ const host=createHost(directory,{runtime,hardware:async()=>({totalMemory:32*2**30,availableMemory:24*2**30,totalVram:0,availableVram:0}),fetcher:async(url,init)=>{
+  if(url.includes(':11434'))throw Error('No secondary daemon');
+  if(url.endsWith('/api/tags'))return Response.json({models:[{name:'old',size:2**30}]});
+  if(url.endsWith('/api/ps'))return Response.json({models:loaded?[{name:'old',size:2**30}]:[]});
+  if(url.endsWith('/api/generate')){assert.equal(JSON.parse(init.body).keep_alive,0);loaded=false;return Response.json({done:true});}
+  if(pause){pause=false;started();await gate;}
+  return Response.json({capabilities:['tools'],model_info:{'general.architecture':'fixture','fixture.context_length':8192}});
+ }});
+ try{
+  await host.listModels(true);pause=true;const refresh=host.listModels(true);await ready;
+  await host.localModelChange('eject','ollama/old');release();
+  assert.equal((await refresh).find(row=>row.key==='ollama/old').running,false);
+  assert.equal((await host.listModels()).find(row=>row.key==='ollama/old').running,false);
+ }finally{release();await host.workspaceSearch.shutdown();await fs.rm(directory,{recursive:true,force:true});}
 });
 test('the same model on a second Ollama daemon is released so only one copy remains resident',async()=>{
  const primary='http://127.0.0.1:11436',secondary='http://127.0.0.1:11434',active=new Set([primary,secondary]),ejected=[];
@@ -67,6 +130,14 @@ test('local runtime IPC stays in the primary window and the preload patch upgrad
  assert.equal(patchModelPreload(modelPreload),modelPreload);
  const previous=modelPreload.replace("\n  runtime:(action,key)=>ipcRenderer.invoke('notch-models:runtime',action,key),",'');assert.equal(patchModelPreload(previous),modelPreload);
  assert.deepEqual(calls,[]);
+});
+
+test('a delayed mount reply cannot select a model that a later action already ejected',async()=>{
+ const handlers=new Map();
+ registerModelIpc({handle:(key,fn)=>handlers.set(key,fn)},{modelManager:{status:async()=>({}),allFallbacks:()=>({})},listModels:async()=>[{key:'colibri/coder',running:false}],getDefaultModel:()=>null,getModelDiscoveryWarning:()=>null,localModelChange:async()=>({loaded:true})});
+ const sender={};sender.mainFrame={url:'notch-app://renderer/index.html'};
+ const state=await handlers.get('notch-models:runtime')({sender,senderFrame:sender.mainFrame},'mount','colibri/coder');
+ assert.equal(state.loaded,false);
 });
 test('the real desktop host rejects ejecting during a local response without losing its saved conversation',async()=>{
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'notch-active-eject-'));
