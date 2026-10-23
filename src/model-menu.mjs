@@ -4,6 +4,7 @@ import {createColibriPanel} from './colibri-panel.mjs';
 import { createLoadingSkeleton } from './loading-skeleton.mjs';
 import { OPENROUTER_FALLBACK_LIMIT, normalizeOpenRouterFallbacks } from './model-policy.mjs';
 import { focusModelOption, rovingModelOption, focusModelTab, syncModelOptions } from './model-navigation.mjs';
+import { withModelActivity } from './model-activity.mjs';
 const logo = name => new URL(`./providers/${name}.svg`,import.meta.url).href;
 const formatContext = tokens => `${Math.round(tokens/1024)}K`;
 const formatSize = bytes => `${(bytes/2**30).toFixed(1)} GiB`;
@@ -128,7 +129,7 @@ export function createModelMenu(React, { Popover, PopoverTrigger, PopoverContent
       setRuntimeKey(row.key);
       setRuntimeMessage(`${action==='eject'||row.running?'Ejecting':'Loading'} ${row.displayName}…`);
       try{
-        const data=await api.runtime(action,row.key);setState(data);
+        const data=await withModelActivity(()=>api.runtime(action,row.key));setState(data);
         if(data.loaded){await props.onSelect(row.key);if(!props.manageOnly){const next=[row.key,...recent.filter(key=>key!==row.key)].slice(0,5);setRecent(next);try{localStorage.setItem('notch.models.recent',JSON.stringify(next));}catch{}changeOpen(false);}}
       }finally{setRuntimeMessage('');setRuntimeKey('');}
     });

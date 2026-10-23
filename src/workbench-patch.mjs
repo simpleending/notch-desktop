@@ -8,12 +8,14 @@ import { patchEnglishRenderer } from './english-renderer-patch.mjs';
 import { patchWorkingStatus } from './working-status-patch.mjs';
 import { patchGitPublishDialog } from './git-publish-patch.mjs';
 import { patchUiMessages } from './ui-message-patch.mjs';
+import { patchModelLoading } from './model-loading-patch.mjs';
 
 const symbolMarkup = readFileSync(new URL('../assets/notch-symbol.svg',import.meta.url),'utf8').replace('<svg ','<svg width="48" height="48" style="max-width:48px;max-height:48px;margin:auto" ');
 const brandCardUrl = 'data:image/svg+xml;base64,' + readFileSync(new URL('../assets/notch-brand-card.svg',import.meta.url)).toString('base64');
 const symbolUrl = 'data:image/svg+xml;base64,' + Buffer.from(symbolMarkup).toString('base64');
 export const legacyBrandAsset = /^(?:duck|Qoduck|userCard|voice_|activeDays\d+Sticker|(?:automationFirstCreate|desktopPetFirstUse|forkFirstUse|goalFirstUse|mobileMessageFirstReceive|snakeFirstPlay|voiceFirstUse)Sticker|notch(?:Anniversary|Pioneer|-(?:loading-line|metal|mobile-download-visual))|profileStickerSparseState|quickNote(?:AddButton|EmptyState|OnboardingFirstNote|TitleQuick)|onboardingWallpaper|parchmentDoodle|(?:bird|crocodile|dog|gorilla)-|planAgentAvatar|agent(?:-team)?-creation-figure|Login_poster|update-notification-card|feedbackWatermark|(?:failed|idle|jumping|look|review|running|waiting|waving|glass)(?:-|_))/;
 export function patchSecondaryArtwork(source) {
+  source = patchModelLoading(source);
   const indicator='getSessionIndicatorKind(n1.runtimeState,n1.pendingInteractionCount,n1.unread,n1.latestTurnStatus,n1.sideChatAttentionState)';
   if(source.includes('const SidebarChatSessionLink=') && !source.includes('notchTaskAttention('+indicator)){
     if(source.split(indicator).length!==2)throw new Error('Task attention indicator anchor changed.');
@@ -310,7 +312,7 @@ export async function verifyWorkbenchImports(assets, checkExports = true) {
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
   await cp(path.join(root, 'src/ui-messages.mjs'), path.join(assets, 'ui-messages.mjs'));
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'loading-skeleton.mjs', 'task-attention.mjs', 'colibri-panel.mjs', 'strata-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-activity.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'loading-skeleton.mjs', 'task-attention.mjs', 'colibri-panel.mjs', 'strata-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
   await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root,'assets/github'),path.join(assets,'github'),{recursive:true});
