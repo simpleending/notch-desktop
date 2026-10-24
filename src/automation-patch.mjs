@@ -5,7 +5,10 @@ function once(source,before,after){if(source.includes(after))return source;if(so
 export function patchAutomationsMain(source){
   if(!source.includes('class QIr'))return source;
   source=patchFunction(source,'g$e',`function g$e(t){if(!cv(t))throw new Error("Automation execution strategy is invalid.");return globalThis.__notchHost.automations.policy({...t,permissionMode:BZr(t.permissionMode)});}`);
-  if(source.includes('/* notch automation reliability */'))return patchClassMethod(source,'hue','getCatalog',`return globalThis.__notchHost.automations.catalog();`);
+  if(source.includes('/* notch automation reliability */')){
+    source=patchClassMethod(source,'pue','listSessionRuns',body=>body.replace(' LIMIT 1000`','`'));
+    return patchClassMethod(source,'hue','getCatalog',`return globalThis.__notchHost.automations.catalog();`);
+  }
   source=patchClassMethod(source,'pue','enqueueRun',body=>body+`}
     enqueueScheduled(t,next,request,missed){return this.databaseService.transaction(db=>{
       const task=oN(db,t.id);if(!task||!task.enabled||task.pauseReason||task.nextRunAt!==t.nextRunAt)return null;
@@ -39,7 +42,6 @@ export function patchAutomationsMain(source){
   source=patchClassMethod(source,'hue','getCatalog',`return globalThis.__notchHost.automations.catalog();`);
   source=patchClassMethod(source,'ule','executeClaimed',body=>once(body,'this.fire([e.taskId],[e.id])','this.fire([e.taskId],[e.id]);await globalThis.__notchHost.automations.completed(t,e)'));
   source=patchFunction(source,'yTe',body=>once(body,'get(e.error)?.type==="capability-unavailable"','["capability-unavailable","resource-unavailable"].includes(get(e.error)?.type)'));
-  source=patchClassMethod(source,'pue','listSessionRuns',body=>once(body,'ORDER BY l.started_at DESC, l.run_log_id DESC`','ORDER BY l.started_at DESC, l.run_log_id DESC LIMIT 1000`'));
   return '/* notch automation reliability */\n'+source;
 }
 

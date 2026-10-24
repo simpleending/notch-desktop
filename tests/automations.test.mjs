@@ -52,6 +52,12 @@ test('native create and update IPC preserve run options before normalizing the t
   const input={...newAutomationPolicy,permissionMode:'bypassPermissions'};assert.deepEqual(parsePolicy(input),input);assert.throws(()=>parsePolicy({...input,maxTokens:-1}),/token/);assert.throws(()=>parsePolicy({...input,permissionMode:'unknown'}),/permission/);
 });
 
+test('paged run history preserves every automation conversation in the sidebar',()=>{
+  const db=new DatabaseSync(':memory:');db.exec('CREATE TABLE scheduled_tasks(task_id TEXT);CREATE TABLE scheduled_task_run_logs(run_log_id TEXT,task_id TEXT,execution_session_id TEXT,started_at INTEGER)');
+  const add=db.prepare('INSERT INTO scheduled_task_run_logs VALUES (?,?,?,?)');for(let i=0;i<1101;i++)add.run('run-'+i,'task','session-'+i,i);
+  const {Store}=native({policy:automationPolicy},{dF:'l.run_log_id,l.execution_session_id,l.started_at',uF:value=>value}),store=new Store({withConnection:callback=>callback(db)}),rows=store.listSessionRuns();assert.equal(rows.length,1101);assert.equal(rows.at(-1).execution_session_id,'session-0');db.close();
+});
+
 test('a stopped automation cannot dispatch after asynchronous setup finishes',async t=>{
   const runtime=await controller(t),{executor,state,options,run}=executorFixture(runtime);let release;const gate=new Promise(resolve=>release=resolve);
   executor.sendRequest=()=>gate;runtime.attach({chatSessionService:options.chatSessionService});
