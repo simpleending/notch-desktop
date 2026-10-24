@@ -21,6 +21,7 @@ import './build-updater.mjs';
 import { copyOriginRuntime } from './copy-origin-runtime.mjs';
 import { installBackgroundProcesses } from '../src/background-process-patch.mjs';
 import { applyWindowsIdentity } from './windows-identity.mjs';
+import { patchZodTree } from './patch-zod.mjs';
 
 const root=fileURLToPath(new URL('../',import.meta.url)), version=process.argv[2] || '0.1.0-preview.1';
 if(process.platform!=='win32' || process.arch!=='x64')throw new Error('Build this installer on Windows x64.');
@@ -58,6 +59,16 @@ extractAll(path.join(app,'resources/app.asar'),unpacked);
 const mainFile=path.join(unpacked,'out/main/index.js');
 await fs.writeFile(mainFile,patchWebSourceProjection(patchProfileIcons(patchRecapLanguage(patchLocalOnlyMain(patchStartupShutdown(patchPersistedContextUsage(patchUndoIntegration(patchWebToolCatalog(patchDirectStartup(await fs.readFile(mainFile,'utf8')))))))))));
 await fs.cp(path.join(root,'src'),path.join(unpacked,'notch/src'),{recursive:true});
+// Refresh the runtime dependency tree; the prototype may contain older, vulnerable packages.
+const dependenciesTarget=path.resolve(unpacked,'notch/node_modules');
+if(!dependenciesTarget.startsWith(path.resolve(staging)+path.sep))throw new Error('Invalid runtime dependency target.');
+await fs.rm(dependenciesTarget,{recursive:true,force:true});
+await fs.cp(path.join(root,'node_modules'),dependenciesTarget,{recursive:true,
+  filter:file=>!/[/\\](?:electron|electron-qa|@electron|typescript|tsup|esbuild|@esbuild)(?:[/\\]|$)/.test(file)});
+for(const name of ['fast-uri','undici','zod'])assert.equal(
+  JSON.parse(await fs.readFile(path.join(dependenciesTarget,name,'package.json'),'utf8')).version,
+  JSON.parse(await fs.readFile(path.join(root,'node_modules',name,'package.json'),'utf8')).version,
+  `Packaged ${name} must match the tested dependency lock.`);
 await installPhoneAssets(root, path.join(unpacked, 'notch/assets'));
 const coreTarget=path.join(unpacked,'notch/vendor/notch-core');
 if(!path.resolve(coreTarget).startsWith(path.resolve(staging)+path.sep))throw new Error('Invalid harness target.');
@@ -77,6 +88,8 @@ await fs.rm(cliTarget,{recursive:true,force:true});
 await fs.cp(cliSource,cliTarget,{recursive:true});
 await fs.access(path.join(cliTarget,'dist/origin-credential.js'));
 await copyOriginRuntime(root, path.join(unpacked, 'notch/node_modules'));
+console.log(JSON.stringify({zodCompatibilityPatches:await patchZodTree(path.join(unpacked,'node_modules'),path.join(root,'node_modules/zod-v4'))}));
+console.log(JSON.stringify({zodRuntimePatches:await patchZodTree(path.join(unpacked,'notch/node_modules'),path.join(root,'node_modules/zod-v4'))}));
 await fs.access(path.join(cliTarget,'dist/native/notch-hardware-win32-x64.exe'));
 await fs.access(path.join(cliTarget,'dist/native/THIRD-PARTY-NOTICES.txt'));
 assert.equal(JSON.parse(await fs.readFile(path.join(cliTarget,'package.json'),'utf8')).version,JSON.parse(await fs.readFile(path.join(root,'package.json'),'utf8')).dependencies['@freesyntax/notch-cli'],'The packaged CLI must match the pinned tested version.');

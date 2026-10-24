@@ -409,11 +409,12 @@ async function colibriStatus() {
     } catch (error) {
       if (error.code === "ESRCH") alive = false;
     }
-    if (!alive) {
-      await invoke(["stop"], { timeout: 12e4 }).catch(() => {
-      });
-      await restoreSelection(interrupted);
-    }
+    if (!alive) await withLocalInference(async () => {
+      if ((await json(transactionFile()))?.pid === interrupted.pid) {
+        await invoke(["stop"], { timeout: 12e4 });
+        await restoreSelection(interrupted);
+      }
+    });
   }
   let installed = false;
   try {
@@ -456,45 +457,49 @@ async function colibriStatus() {
 }
 async function installColibri(model, options = {}) {
   await prepareColibri(options.signal, options.output);
-  const release = await acquireLease("colibri-install", options.signal);
-  try {
-    let modelDir;
-    if (options.modelDir) {
-      modelDir = await realpath(options.modelDir);
-      if (!(await stat(modelDir)).isDirectory()) throw new Error("Choose a converted Colibri model directory.");
-    } else {
-      const selected = (await colibriCatalog(options.signal)).find((row) => row.id === model);
-      if (!selected || !selected.fits) throw new Error(selected?.reason || "Choose a supported Colibri coding model from the catalog.");
-    }
-    const current = await colibriStatus();
-    if (current.running) throw new Error("Unload Colibri before changing its installed model.");
-    const previous = { pid: process.pid, config: await json(setupFile()), verified: await json(receiptFile()) };
-    await atomic(transactionFile(), previous);
-    let validating = false;
+  return withLocalInference(async () => {
+    const release = await acquireLease("colibri-install", options.signal);
     try {
-      await invoke(["setup", ...modelDir ? ["--model-dir", modelDir] : ["--model", model], "--dir", path.join(root(), "models"), "--host", "127.0.0.1", "--port", "11437", "--yes", "--no-start"], { ...options, timeout: 24 * 36e5 });
-      if (modelDir) {
-        const cfg = await json(setupFile());
-        cfg.model = { ...cfg.model, name: path.basename(modelDir), id: `local-${createHash("sha256").update(modelDir).digest("hex").slice(0, 12)}` };
-        await atomic(setupFile(), cfg);
+      let modelDir;
+      if (options.modelDir) {
+        modelDir = await realpath(options.modelDir);
+        if (!(await stat(modelDir)).isDirectory()) throw new Error("Choose a converted Colibri model directory.");
+      } else {
+        const selected = (await colibriCatalog(options.signal)).find((row) => row.id === model);
+        if (!selected || !selected.fits) throw new Error(selected?.reason || "Choose a supported Colibri coding model from the catalog.");
       }
-      await unlink(receiptFile()).catch((error) => {
-        if (error.code !== "ENOENT") throw error;
-      });
-      options.output?.("Checking current memory, loading, and validating coding tools\u2026\n");
-      validating = true;
-      const ready = await validateColibri(void 0, options.signal, options.output);
-      await unlink(transactionFile());
-      return ready;
-    } catch (error) {
-      if (validating) await stopInternal().catch(() => {
-      });
-      await restoreSelection(previous);
-      throw error;
+      const current = await colibriStatus();
+      if (current.running) throw new Error("Unload Colibri before changing its installed model.");
+      const previous = { pid: process.pid, config: await json(setupFile()), verified: await json(receiptFile()) };
+      await atomic(transactionFile(), previous);
+      let validating = false;
+      try {
+        await invoke(["setup", ...modelDir ? ["--model-dir", modelDir] : ["--model", model], "--dir", path.join(root(), "models"), "--host", "127.0.0.1", "--port", "11437", "--yes", "--no-start"], { ...options, timeout: 24 * 36e5 });
+        if (modelDir) {
+          const cfg = await json(setupFile());
+          cfg.model = { ...cfg.model, name: path.basename(modelDir), id: `local-${createHash("sha256").update(modelDir).digest("hex").slice(0, 12)}` };
+          await atomic(setupFile(), cfg);
+        }
+        await unlink(receiptFile()).catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+        options.output?.("Checking current memory, loading, and validating coding tools\u2026\n");
+        validating = true;
+        const ready = await validateColibri(void 0, options.signal, options.output);
+        if (options.unloadAfterValidation) await stopInternal();
+        options.signal?.throwIfAborted();
+        await unlink(transactionFile());
+        return ready;
+      } catch (error) {
+        if (validating) await stopInternal().catch(() => {
+        });
+        await restoreSelection(previous);
+        throw error;
+      }
+    } finally {
+      await release();
     }
-  } finally {
-    await release();
-  }
+  }, options.signal);
 }
 async function stopInternal() {
   const state = await colibriStatus();

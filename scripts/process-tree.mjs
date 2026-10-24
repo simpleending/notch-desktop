@@ -10,7 +10,7 @@ export async function closeQaApp(app) {
 }
 
 export async function processSnapshot() {
-  const {stdout}=await promisify(execFile)('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,@{Name="CreationDate";Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress'],{windowsHide:true,timeout:15000,maxBuffer:2**20});
+  const {stdout}=await promisify(execFile)('powershell.exe',['-NoProfile','-NonInteractive','-Command','Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,@{Name="CreationDate";Expression={([DateTimeOffset]$_.CreationDate).ToUnixTimeMilliseconds()}} | ConvertTo-Json -Compress'],{windowsHide:true,timeout:45000,maxBuffer:2**20});
   return JSON.parse(stdout);
 }
 

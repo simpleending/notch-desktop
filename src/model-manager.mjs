@@ -7,10 +7,10 @@ import { installLocalModel } from './cli-bridge.mjs';
 import {createHubCatalog} from './hub-catalog.mjs';
 import { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } from '../vendor/notch-core/desktop-harness.js';
 
-import { prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, installStrata, stopStrata, setStrataDirectory, detectLocalHardware } from '../vendor/notch-core/desktop-harness.js';
+import { prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, installStrata, stopStrata, setStrataDirectory, detectLocalHardware, withLocalInference } from '../vendor/notch-core/desktop-harness.js';
 
 export function createModelManager(directory, { safeStorage, fetcher = fetch, recommend: recommendModels, install = installLocalModel,
-  hardware: detectHardware = detectLocalHardware, chooseModelDirectory, strata = {prepareStrata,strataCatalog,strataModels,strataStatus,strataPlan,installStrata,stopStrata,setStrataDirectory},
+  hardware: detectHardware = detectLocalHardware, withInference=withLocalInference, chooseModelDirectory, strata = {prepareStrata,strataCatalog,strataModels,strataStatus,strataPlan,installStrata,stopStrata,setStrataDirectory},
   colibri = { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } } = {}) {
   const keys = new Map(), preferences = new Map(), fallbacks = new Map();
   const keyFile = path.join(directory, 'provider-keys.encrypted.json'), contextFile = path.join(directory, 'model-context.json'), catalogFile = path.join(directory, 'openrouter-models.json');
@@ -20,6 +20,7 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
   let workspaceMode = 'shared';
   const hub=createHubCatalog(directory,{fetcher});
   let cached, pending, job, keyLoadError, installedMlx = [];
+  let contextWrite=Promise.resolve();
   let persistent = false;
   const secure = () => persistent;
   const ready = (async () => {
@@ -94,7 +95,10 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       if(job?.public.state==='running')throw new Error('A model download is already running.');
       if(action==='directory'){
         const directory=value===undefined?await chooseModelDirectory?.():value;
-        if(directory)await strata.setStrataDirectory(directory);
+        if(directory)await withInference(async()=>{
+          if(job?.public.state==='running')throw new Error('A model download is already running.');
+          await strata.setStrataDirectory(directory);
+        });
         return service.strata('catalog');
       }
       if(action==='install'&&(typeof value!=='string'||!/^[a-z0-9][a-z0-9_-]{0,127}$/.test(value)))throw new Error('Choose a Strata catalog model.');
@@ -130,10 +134,7 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       const current=job,output=text=>{const line=text.replace(/\x1b\[[0-9;]*m/g,'').trim().split(/[\r\n]+/).filter(Boolean).at(-1);if(line)current.public.message=line.replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);};
       void (async()=>{
         if(action==='setup')await colibri.prepareColibri(controller.signal,output);
-        else { let installed=false; try {
-          await colibri.installColibri(model,{signal:controller.signal,token:keys.get('huggingface'),output});
-          installed=true;
-        } finally {if(installed)await colibri.stopColibri();} }
+        else await colibri.installColibri(model,{signal:controller.signal,token:keys.get('huggingface'),output,unloadAfterValidation:true});
         controller.signal.throwIfAborted();
         current.public.state='complete';current.public.message=action==='setup'?'Colibri is ready. Choose a coding model below.':'Tool validation passed. Open Installed to select the model; weights load when you send a message.';
       })().catch(error=>{current.public.state=controller.signal.aborted?'cancelled':'failed';current.public.message=String(error.message).replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);});
@@ -154,9 +155,17 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       return service.allFallbacks();
     },
     async setContext(model, tokens, models) { await ready; const row = models.find(row=>row.key===model && (row.enabled || ['colibri','strata'].includes(row.provider))); if (!row || (tokens!=='auto' && !row.availableContextWindows.includes(tokens))) throw new Error('Choose a supported context limit for this model.');
+      const update=async()=>{
       if(row.provider==='strata'){if((await strata.strataStatus()).running)throw new Error('Unload Strata before changing context.');if(!(await strata.strataPlan(tokens==='auto'?undefined:tokens)).fits)throw new Error('This Strata context exceeds current free memory.');}
       if(row.provider==='colibri'){if((await colibri.colibriStatus()).running)throw new Error('Unload Colibri before changing context so free memory can be checked accurately.');if(!(await colibri.colibriPlan(tokens==='auto'?undefined:tokens)).fits)throw new Error('This Colibri context exceeds current free memory. Close applications or choose a smaller context.');}
-      if(tokens==='auto')preferences.delete(model);else preferences.set(model,tokens); await atomic(contextFile,Object.fromEntries(preferences)); },
+      const write=contextWrite.catch(()=>{}).then(async()=>{
+        const next=new Map(preferences);if(tokens==='auto')next.delete(model);else next.set(model,tokens);
+        await atomic(contextFile,Object.fromEntries(next));
+        if(tokens==='auto')preferences.delete(model);else preferences.set(model,tokens);
+      });contextWrite=write;await write;
+      };
+      return row.provider==='openrouter'?update():withInference(update);
+    },
     async hubCatalog(runner, options={}) { await ready; if (runner !== undefined && !['ollama','mlx'].includes(runner)) throw new Error('Choose Ollama or MLX.'); if(!options || typeof options!=='object' || Array.isArray(options) || Object.keys(options).some(key=>!['query','page','force'].includes(key)))throw new Error('Invalid model search.'); return (recommendModels || (args=>hub.list(args)))({ ...options,runner,token:keys.get('huggingface') }); },
     async startInstall(repo, runner) {
       await ready; if (job?.public.state==='running') throw new Error('A model download is already running.');

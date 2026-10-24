@@ -237,7 +237,10 @@ export async function colibriStatus() {
   const interrupted=await json(transactionFile());
   if(interrupted && Number.isSafeInteger(interrupted.pid) && interrupted.pid>0) {
     let alive=true;try{process.kill(interrupted.pid,0);}catch(error:any){if(error.code==='ESRCH')alive=false;}
-    if(!alive){await invoke(['stop'],{timeout:120000}).catch(()=>{});await restoreSelection(interrupted);}
+    if(!alive)await withLocalInference(async()=>{
+      // Discovery may have waited behind a new install; never roll that selection back.
+      if((await json(transactionFile()))?.pid===interrupted.pid){await invoke(['stop'],{timeout:120000});await restoreSelection(interrupted);}
+    });
   }
   let installed = false; try { await access(path.join(runtime(), 'coli')); installed = true; } catch { /* Optional runtime. */ }
   const cfg = await json(setupFile()), verified = await json(receiptFile()), preferences = await json(preferencesFile()) || {};
@@ -259,8 +262,9 @@ export async function colibriStatus() {
     selectionReason: cfg?.notch_selection_reason, calibration: cfg?.notch_calibration, log: path.join(root(), 'state', 'logs', 'serve.log') };
 }
 
-export async function installColibri(model: string, options: { signal?: AbortSignal; token?: string; output?: (text: string) => void; modelDir?: string } = {}) {
+export async function installColibri(model: string, options: { signal?: AbortSignal; token?: string; output?: (text: string) => void; modelDir?: string; unloadAfterValidation?: boolean } = {}) {
   await prepareColibri(options.signal, options.output);
+  return withLocalInference(async()=>{
   const release = await acquireLease('colibri-install', options.signal);
   try {
     let modelDir: string | undefined;
@@ -279,9 +283,12 @@ export async function installColibri(model: string, options: { signal?: AbortSig
     options.output?.('Checking current memory, loading, and validating coding tools…\n');
     validating=true;
     const ready=await validateColibri(undefined,options.signal,options.output);
+    if(options.unloadAfterValidation)await stopInternal();
+    options.signal?.throwIfAborted();
     await unlink(transactionFile());return ready;
     } catch(error) {if(validating)await stopInternal().catch(()=>{});await restoreSelection(previous);throw error;}
   } finally { await release(); }
+  },options.signal);
 }
 
 async function stopInternal() {

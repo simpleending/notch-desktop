@@ -289,9 +289,11 @@ async function strataCatalog(memory, signal) {
 }
 async function setStrataDirectory(directory) {
   const dataDirectory = strataModelDirectory(directory);
-  await mkdir(dataDirectory, { recursive: true });
-  const preferences = await json(path.join(root(), "preferences.json")) || {};
-  await atomic(path.join(root(), "preferences.json"), { ...preferences, dataDirectory });
+  return withLocalInference(async () => {
+    await mkdir(dataDirectory, { recursive: true });
+    const preferences = await json(path.join(root(), "preferences.json")) || {};
+    await atomic(path.join(root(), "preferences.json"), { ...preferences, dataDirectory });
+  });
 }
 async function strataStatus() {
   const selected = await json(selection());
@@ -333,13 +335,26 @@ async function strataModels(memory) {
 async function installStrata(id, memory, signal, output = () => {
 }) {
   return withLocalInference(async () => {
-    if ((await strataStatus()).running) throw new Error("Unload Strata before changing its model.");
+    const previous = await strataStatus();
+    if (previous.running) throw new Error("Unload Strata before changing its model.");
     const catalog = await strataCatalog(memory, signal), row = catalog.models.find((r) => r.id === id);
     if (!row || !row.fits) throw new Error(row?.reason || "Choose a supported Strata catalog model.");
     const result = await bridge("install", { id, contextWindow: row.contextWindow, dataDirectory: catalog.dataDirectory }, signal, output);
     if (result.id !== id || typeof result.profile !== "string" || typeof result.config !== "string") throw new Error("Invalid Strata model selection.");
-    await atomic(selection(), { ...result, nativeContext: Math.max(...row.contexts), contexts: row.contexts });
-    return result;
+    signal?.throwIfAborted();
+    try {
+      await atomic(selection(), { ...result, nativeContext: Math.max(...row.contexts), contexts: row.contexts });
+      signal?.throwIfAborted();
+      return result;
+    } catch (error) {
+      if (signal?.aborted) {
+        if (previous.selected) await atomic(selection(), previous.selected);
+        else await unlink(selection()).catch((failure) => {
+          if (failure.code !== "ENOENT") throw failure;
+        });
+      }
+      throw error;
+    }
   }, signal);
 }
 async function stopStrata() {

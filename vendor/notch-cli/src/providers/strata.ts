@@ -203,9 +203,11 @@ export async function strataCatalog(memory:LocalHardware,signal?:AbortSignal){
 }
 export async function setStrataDirectory(directory:string){
   const dataDirectory=strataModelDirectory(directory);
-  await mkdir(dataDirectory,{recursive:true});
-  const preferences=await json(path.join(root(),'preferences.json'))||{};
-  await atomic(path.join(root(),'preferences.json'),{...preferences,dataDirectory});
+  return withLocalInference(async()=>{
+    await mkdir(dataDirectory,{recursive:true});
+    const preferences=await json(path.join(root(),'preferences.json'))||{};
+    await atomic(path.join(root(),'preferences.json'),{...preferences,dataDirectory});
+  });
 }
 export async function strataStatus(){
   const selected=await json(selection());let running=false,modelId:string|undefined,contextWindow=selected?.contextWindow;
@@ -228,13 +230,24 @@ export async function strataModels(memory:LocalHardware){
 }
 export async function installStrata(id:string,memory:LocalHardware,signal?:AbortSignal,output:(s:string)=>void=()=>{}){
   return withLocalInference(async()=>{
-    if((await strataStatus()).running)throw new Error('Unload Strata before changing its model.');
+    const previous=await strataStatus();
+    if(previous.running)throw new Error('Unload Strata before changing its model.');
     const catalog=await strataCatalog(memory,signal),row=catalog.models.find((r:any)=>r.id===id);
     if(!row||!row.fits)throw new Error(row?.reason||'Choose a supported Strata catalog model.');
     const result=await bridge('install',{id,contextWindow:row.contextWindow,dataDirectory:catalog.dataDirectory},signal,output);
     if(result.id!==id||typeof result.profile!=='string'||typeof result.config!=='string')throw new Error('Invalid Strata model selection.');
-    await atomic(selection(),{...result,nativeContext:Math.max(...row.contexts),contexts:row.contexts});
-    return result;
+    signal?.throwIfAborted();
+    try{
+      await atomic(selection(),{...result,nativeContext:Math.max(...row.contexts),contexts:row.contexts});
+      signal?.throwIfAborted();
+      return result;
+    }catch(error){
+      if(signal?.aborted){
+        if(previous.selected)await atomic(selection(),previous.selected);
+        else await unlink(selection()).catch((failure:any)=>{if(failure.code!=='ENOENT')throw failure;});
+      }
+      throw error;
+    }
   },signal);
 }
 export async function stopStrata(){return withLocalInference(async()=>{const s=await json(selection());if(s)await bridge('stop',{profile:s.profile,instanceId:s.instanceId});});}

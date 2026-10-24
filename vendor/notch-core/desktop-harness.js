@@ -16,13 +16,13 @@ import {
   selectModel,
   withSharedWorker,
   withTaskWorkspace
-} from "./chunk-AUDQTKIA.js";
+} from "./chunk-2RB6TEHP.js";
 import {
   getConfigDir,
   isByokRef,
   ollamaContextLength,
   parseByokRef
-} from "./chunk-HBJOSRXS.js";
+} from "./chunk-TN6X5SOB.js";
 import {
   Rollout
 } from "./chunk-S5MWOFHZ.js";
@@ -49,7 +49,7 @@ import {
   strataModels,
   strataPlan,
   strataStatus
-} from "./chunk-YECVHNLG.js";
+} from "./chunk-N6NM5TEF.js";
 import {
   colibriCatalog,
   colibriCompatibility,
@@ -62,7 +62,7 @@ import {
   startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-HLNSOBYP.js";
+} from "./chunk-UJ2HKRSY.js";
 import "./chunk-S2VC66HG.js";
 import {
   executionContext,
@@ -6106,7 +6106,7 @@ async function runAgentLoopInternal(messages, config) {
   const outputLimit = config.maxOutputTokens ?? (/^(?:ollama(?:-anthropic)?|mlx|colibri|strata)\//.test(config.modelId ?? "") ? 16384 : void 0);
   const colibriModelId = config.colibriModelId ?? (/^colibri[/:]/.test(config.modelId ?? "") ? config.modelId.slice(8) : void 0);
   if (colibriModelId) {
-    const { startColibri: startColibri2, colibriStatus: colibriStatus2 } = await import("./colibri-AGI5KKLR.js");
+    const { startColibri: startColibri2, colibriStatus: colibriStatus2 } = await import("./colibri-J3X3CBIL.js");
     const automatic = config.colibriAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 12288, 16384, 32768, 65536, 131072, 262144].find((value) => {
       try {
@@ -6119,12 +6119,12 @@ async function runAgentLoopInternal(messages, config) {
     if (!automatic) contextBudget(contextWindow, overhead, outputLimit);
     await startColibri2(colibriModelId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, config.toolContext.log, useful);
     contextWindow = (await colibriStatus2()).contextWindow;
-    const { resolveByokModel } = await import("./byok-UJOZCS6R.js");
+    const { resolveByokModel } = await import("./byok-WX6ANGJZ.js");
     config.model = resolveByokModel({ provider: "colibri", model: colibriModelId, contextWindow }).model;
   }
   const strataId = config.strataModelId ?? (/^strata[/:]/.test(config.modelId ?? "") ? config.modelId.slice(7) : void 0);
   if (strataId) {
-    const { startStrata: startStrata2 } = await import("./strata-G6F254BZ.js");
+    const { startStrata: startStrata2 } = await import("./strata-QIVJL6AZ.js");
     const automatic = config.strataAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 16384, 32768, 65536, 131072, 262144, 524288].find((n) => {
       try {
@@ -6136,7 +6136,7 @@ async function runAgentLoopInternal(messages, config) {
     if (!useful) throw new Error("Instructions and tools exceed the Strata context limit.");
     const ready = await startStrata2(strataId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, useful);
     contextWindow = ready.contextWindow;
-    const { resolveByokModel } = await import("./byok-UJOZCS6R.js");
+    const { resolveByokModel } = await import("./byok-WX6ANGJZ.js");
     config.model = resolveByokModel({ provider: "strata", model: strataId, contextWindow }).model;
   }
   const fittedContext = fitContextWindow(contextWindow, overhead, outputLimit, config.contextWindows);

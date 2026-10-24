@@ -10,7 +10,7 @@ function fixture(overrides={}) {
   const calls=[],status={installed:true,configured:true,running:false};
   const colibri={
     async prepareColibri(){calls.push('prepare');},async colibriStatus(){return status;},async colibriCatalog(){return[{id:'coder',fits:true}];},async colibriModels(){return[];},
-    async colibriPlan(){return{fits:true};},async installColibri(id){calls.push(`install:${id}`);calls.push('validate');},async validateColibri(){calls.push('validate');},async stopColibri(){calls.push('unload');},...overrides,
+    async colibriPlan(){return{fits:true};},async installColibri(id,options){assert.equal(options.unloadAfterValidation,true);calls.push(`install:${id}`);calls.push('validate');},async validateColibri(){calls.push('validate');},async stopColibri(){calls.push('unload');},...overrides,
   };
   return{colibri,calls,status};
 }
@@ -20,7 +20,7 @@ test('Colibri downloads, validates tools and unloads before reporting ready',asy
   const f=fixture(),m=await manager(f);
   assert.equal((await m.colibri('catalog')).models[0].id,'coder');
   await assert.rejects(m.colibri('install','../bad'),/catalog model/);await assert.rejects(m.colibri('shell'),/Choose/);
-  await m.colibri('install','coder');assert.equal((await settled(m)).job.state,'complete');assert.deepEqual(f.calls,['install:coder','validate','unload']);
+  await m.colibri('install','coder');assert.equal((await settled(m)).job.state,'complete');assert.deepEqual(f.calls,['install:coder','validate']);
 });
 test('an atomic installer validation failure is never advertised as success',async()=>{
   const f=fixture({async installColibri(){throw new Error('Bad tool result');}}),m=await manager(f);
@@ -43,6 +43,18 @@ test('Colibri preload is installed once and repairs the prior release bridge',()
   assert.equal(patchModelPreload(modelPreload),modelPreload);
   const old=modelPreload.replace("\n  colibri:(action,model)=>ipcRenderer.invoke('notch-models:colibri',action,model),",'');
   assert.equal(patchModelPreload(old),modelPreload);
+});
+
+test('context validation stays in the runtime lease until its preference is saved',async()=>{
+  let tail=Promise.resolve(),releasePlan,inside=false;
+  const planning=new Promise(resolve=>releasePlan=resolve);
+  const queue=fn=>{const next=tail.then(async()=>{inside=true;try{return await fn();}finally{inside=false;}});tail=next.catch(()=>{});return next;};
+  const f=fixture({async colibriPlan(){assert(inside);await planning;return {fits:true};}});
+  const m=createModelManager(await mkdtemp(path.join(os.tmpdir(),'notch-context-race-')),{colibri:f.colibri,withInference:queue});
+  await m.status();const key='colibri/coder',rows=[{key,provider:'colibri',enabled:true,availableContextWindows:[8192]}];
+  const change=m.setContext(key,8192,rows);await new Promise(resolve=>setImmediate(resolve));
+  let mounted=false;const mount=queue(async()=>{assert.equal(m.requestedContext(key),8192);mounted=true;});
+  await new Promise(resolve=>setImmediate(resolve));assert(!mounted);releasePlan();await change;await mount;
 });
 
 test('backend and benchmark preferences are validated by the engine and catalog includes disabled choices',async()=>{

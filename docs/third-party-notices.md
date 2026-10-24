@@ -20,6 +20,8 @@ The Windows search companion is the unmodified [official ripgrep 15.2.0 x64 MSVC
 
 Electron and Chromium notices ship with the Windows application. Native libraries and upstream application components retain their included notices and applicable terms. The repository's AGPL license does not replace those licenses.
 
+Zod is MIT-licensed, copyright Colin McDonnell. Its bundled license is retained. Notch backports early array/set upper-bound rejection to the pinned Zod 3.25.76 JavaScript parsers for GHSA-mrhx-c7xc-m3w5, preserving the legacy API. Zod v4 entry points and inherited v4 copies use the official 4.6.6 release. The reproducible compatibility patch is in `scripts/patch-zod.mjs`; the original Zod 3 package version is not relabeled.
+
 ## Optional Colibri runtime
 
 The Origin repository icons in `assets/origin` are the unmodified light and dark SVG marks served by [Cursor's official Origin documentation](https://cursor.com/docs/origin). Origin and Cursor are their owners' trademarks. These marks identify the optional provider; notch is not affiliated with Cursor.

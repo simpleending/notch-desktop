@@ -8,17 +8,22 @@ const executable=path.resolve(process.argv[2]),reportFile=path.resolve(process.a
 const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|ELECTRON_RUN_AS_NODE/i.test(key)));
 const checks=[],errors=[];let app,page;
 try{
- app=await _electron.launch({executablePath:executable,args:[`--user-data-dir=${profile}`],env,timeout:45000});
+ app=await _electron.launch({executablePath:executable,args:[`--user-data-dir=${profile}`,...(process.env.NOTCH_QA_SOFTWARE_RENDERING==='1'?['--disable-gpu','--notch-windows-startup-compatibility']:[])],env,timeout:60000});
  app.on('window',window=>window.on('pageerror',error=>errors.push(error.message)));
  await app.evaluate(()=>{
-  const manager=globalThis.__notchHost.modelManager,original=manager.status.bind(manager);globalThis.__downloadCalls=0;globalThis.__downloadJob=null;
-  manager.status=async()=>({...await original(),job:globalThis.__downloadJob});
+  const host=globalThis.__notchHost,manager=host.modelManager;globalThis.__downloadCalls=0;globalThis.__downloadJob=null;
+  const key='openrouter/download-ui-fixture',rows=[{key,provider:'openrouter',displayName:'Download UI fixture',enabled:true,isDefault:true,isNew:false,priceFactor:0,source:'system',tags:[],tools:true,maxInputTokens:8192,maxOutputTokens:2048,availableContextWindows:[8192],defaultContextWindow:8192,recommendedContextWindow:8192,efforts:[],defaultEffort:null,supportsDisabled:true}];
+  host.listModels=async()=>rows;host.getCachedModels=()=>rows;host.getDefaultModel=()=>key;host.resolveModelChoice=()=>key;host.getModelDiscoveryWarning=()=>null;
+  manager.status=async()=>({openrouter:false,huggingface:false,persistentKeys:true,job:globalThis.__downloadJob});
   manager.hubCatalog=async(_runner,{query='' }={})=>({runner:'ollama',query,models:[{repo:'lab/small-model',bytes:2**29,required:2*2**30,fits:true,license:'apache-2.0'},{repo:'lab/large-model',bytes:100*2**30,required:125*2**30,fits:false}],nextPage:null});
   manager.startInstall=async repo=>{globalThis.__downloadCalls++;globalThis.__downloadJob={repo,state:'running',message:'40% - downloading weights',percent:40};return manager.status();};
   manager.cancelInstall=async()=>{globalThis.__downloadJob={...globalThis.__downloadJob,state:'cancelled',message:'Download cancelled; cached files are retained.'};return manager.status();};
+  const setup=runner=>{globalThis.__downloadJob={runner,repo:'Tiny UI fixture',state:'running',message:'Preparing model files…'};return manager.status();};
+  manager.colibri=async action=>{if(action==='setup')return setup('colibri');if(action!=='catalog')throw Error('Unexpected real Colibri operation');return{installed:true,version:'2.0.0',backend:'auto',benchmarkEnabled:false,running:false,backends:[],models:[],memory:{availableBytes:8e9,totalBytes:16e9,reserveBytes:3e9}};};
+  manager.strata=async action=>{if(action==='setup'){globalThis.__strataUiInstalled=true;return setup('strata');}if(action!=='catalog')throw Error('Unexpected real Strata operation');return{installed:!!globalThis.__strataUiInstalled,version:'0.2.2',running:false,gpu:'AMD Radeon 8060S',backend:'hip',backends:[],models:[],dataDirectory:'Z:/Models/Strata',freeDiskBytes:100e9};};
  });
- let setup;const until=Date.now()+30000;while(!setup&&Date.now()<until){setup=app.windows().find(window=>window.url().includes('first-launch-onboarding-overlay'));if(!setup)await new Promise(resolve=>setTimeout(resolve,100));}
- assert.ok(setup);await setup.getByRole('button',{name:/^Continue/}).click();const closed=setup.waitForEvent('close');await setup.getByRole('button',{name:/^Open notch/}).click();await closed;page=await app.firstWindow();await page.locator('.notch-welcome').waitFor();
+ let setup;const until=Date.now()+90000;while(!setup&&Date.now()<until){setup=app.windows().find(window=>window.url().includes('first-launch-onboarding-overlay'));if(!setup)await new Promise(resolve=>setTimeout(resolve,100));}
+ assert.ok(setup);await setup.getByRole('button',{name:/^Continue/}).click({timeout:90000});const closed=setup.waitForEvent('close');await setup.getByRole('button',{name:/^Open notch/}).click();await closed;page=await app.firstWindow();await page.locator('.notch-welcome').waitFor();console.log('Model manager fixture ready');
  for(const [width,height,dark]of [[1000,700,true],[900,600,false]]){
   await app.evaluate(({BrowserWindow},{url,width,height})=>{const window=BrowserWindow.getAllWindows().find(window=>window.webContents.getURL()===url);window.unmaximize();window.setBounds({x:40,y:40,width,height});},{url:page.url(),width,height});
   const theme=page.getByRole('switch',{name:'Dark appearance'});if((await theme.getAttribute('aria-checked')==='true')!==dark)await theme.click();
@@ -33,6 +38,7 @@ try{
   await confirm.getByText(/exceeds currently available memory/).waitFor();assert.equal(await page.getByRole('button',{name:'Download model',exact:true}).isDisabled(),false);assert.equal(await app.evaluate(()=>globalThis.__downloadCalls),calls);
   await page.getByRole('button',{name:'Back to models',exact:true}).click();await small.focus();await page.keyboard.press('Enter');await page.getByRole('button',{name:'Download model',exact:true}).click();
   await page.getByRole('progressbar',{name:'Model download progress'}).waitFor();assert.equal(await page.getByRole('progressbar').getAttribute('value'),'40');assert.equal(await app.evaluate(()=>globalThis.__downloadCalls),calls+1);
+  assert.equal(await page.getByRole('progressbar').evaluate(node=>node.getBoundingClientRect().height),5);
   await page.keyboard.press('Escape');await page.getByRole('button',{name:'Model',exact:true}).click();await page.getByRole('button',{name:'Manage models…',exact:true}).click();await page.getByRole('tab',{name:'Hugging Face',exact:true}).click();await page.getByRole('progressbar',{name:'Model download progress'}).waitFor();
   await page.getByRole('button',{name:'Cancel download',exact:true}).click();await page.getByRole('status').filter({hasText:'Download cancelled'}).waitFor();
   await small.click();await page.getByRole('button',{name:'Download model',exact:true}).click();
@@ -44,7 +50,17 @@ try{
   await page.locator('.notch-model-picker').evaluate(picker=>{picker.scrollTop=picker.scrollHeight;});
   const tabs=await page.locator('.notch-model-tabs').evaluate(node=>{const rect=node.getBoundingClientRect(),picker=node.closest('.notch-model-picker').getBoundingClientRect();return {top:rect.top,bottom:rect.bottom,pickerTop:picker.top};});assert.ok(tabs.top>=tabs.pickerTop&&tabs.bottom>tabs.top);
   await page.screenshot({path:reportFile.replace('.json',dark?'-dark.png':'-light.png')});
+  console.log(`Download, cancellation and retry checks passed: ${dark?'dark':'light'}`);
   await page.getByRole('button',{name:'Show installed models',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[role=tab][aria-selected=true]')?.textContent==='Installed');
+  for(const [runner,title] of [['colibri','Colibri'],['strata','Strata']]){
+   if(runner==='strata')await app.evaluate(()=>{globalThis.__strataUiInstalled=false;});
+   await page.getByRole('tab',{name:title,exact:true}).click();await page.getByRole('button',{name:runner==='colibri'?'Update engine support':'Set up Strata control runtime',exact:true}).click();
+   const progress=page.getByRole('progressbar',{name:title+' setup progress'});await progress.waitFor();
+   assert.equal(await progress.getAttribute('value'),null);assert.equal(await progress.evaluate(node=>node.getBoundingClientRect().height),5);
+   await progress.scrollIntoViewIfNeeded();await page.screenshot({path:reportFile.replace('.json',`-${runner}-${dark?'dark':'light'}.png`)});
+   await page.getByRole('button',{name:'Cancel',exact:true}).click();await progress.waitFor({state:'hidden'});
+   console.log(`${title} progress and cancellation passed: ${dark?'dark':'light'}`);
+  }
   await page.keyboard.press('Escape');await app.evaluate(()=>{globalThis.__downloadJob=null;});checks.push({width,height,theme:dark?'dark':'light',visibleConfirmation:true,downloadArrow:true,explicitConfirmation:true,keyboard:true,memoryWarning:true,progress:true,reopen:true,cancel:true,failure:true,retry:true,showInstalled:true});
  }
  assert.deepEqual(errors,[]);await fs.writeFile(reportFile,JSON.stringify({passed:true,executable,profile,checks,errors,method:'Real packaged renderer and model IPC; deterministic download fixtures, no inference.'},null,2));console.log(JSON.stringify({passed:true,checks}));

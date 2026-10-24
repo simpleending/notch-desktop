@@ -16,6 +16,10 @@ const symbolUrl = 'data:image/svg+xml;base64,' + Buffer.from(symbolMarkup).toStr
 export const legacyBrandAsset = /^(?:duck|Qoduck|userCard|voice_|activeDays\d+Sticker|(?:automationFirstCreate|desktopPetFirstUse|forkFirstUse|goalFirstUse|mobileMessageFirstReceive|snakeFirstPlay|voiceFirstUse)Sticker|notch(?:Anniversary|Pioneer|-(?:loading-line|metal|mobile-download-visual))|profileStickerSparseState|quickNote(?:AddButton|EmptyState|OnboardingFirstNote|TitleQuick)|onboardingWallpaper|parchmentDoodle|(?:bird|crocodile|dog|gorilla)-|planAgentAvatar|agent(?:-team)?-creation-figure|Login_poster|update-notification-card|feedbackWatermark|(?:failed|idle|jumping|look|review|running|waiting|waving|glass)(?:-|_))/;
 export function patchSecondaryArtwork(source) {
   source = patchModelLoading(source);
+  if(source.includes('function RadialMenu(')&&!source.includes('const notchDiamondMenu=')){
+    source=patchFunction(source,'RadialMenu','function RadialMenu(props){return jsxRuntimeExports.jsx(notchDiamondMenu,props);}');
+    source='import {createDiamondMenu} from "./diamond-menu.mjs";\n'+source+'\nconst notchDiamondMenu=createDiamondMenu(reactExports,{Root:Root2,Trigger,Portal:Portal2,Content:Content2,Item:Item2});\n';
+  }
   const indicator='getSessionIndicatorKind(n1.runtimeState,n1.pendingInteractionCount,n1.unread,n1.latestTurnStatus,n1.sideChatAttentionState)';
   if(source.includes('const SidebarChatSessionLink=') && !source.includes('notchTaskAttention('+indicator)){
     if(source.split(indicator).length!==2)throw new Error('Task attention indicator anchor changed.');
@@ -312,7 +316,7 @@ export async function verifyWorkbenchImports(assets, checkExports = true) {
 export async function installWorkbenchAssets(application, root) {
   const renderer = path.join(application, 'out/renderer'), assets = path.join(renderer, 'assets');
   await cp(path.join(root, 'src/ui-messages.mjs'), path.join(assets, 'ui-messages.mjs'));
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'model-menu.mjs', 'model-activity.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'loading-skeleton.mjs', 'task-attention.mjs', 'colibri-panel.mjs', 'strata-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'diamond-menu.mjs', 'model-menu.mjs', 'model-activity.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'loading-skeleton.mjs', 'task-attention.mjs', 'colibri-panel.mjs', 'strata-panel.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
   await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root,'assets/github'),path.join(assets,'github'),{recursive:true});

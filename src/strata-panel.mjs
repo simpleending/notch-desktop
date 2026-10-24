@@ -37,7 +37,7 @@ export function createStrataPanel(React){
               h('button',{key:row.id,type:'button',role:'option','aria-selected':false,tabIndex:row===(catalog.models||[]).find(item=>item.fits)?0:-1,disabled:working||!row.fits,title:uiMessage(row.reason),onClick:()=>setSelected(row)},
                 h('strong',null,row.name),h('small',null,`${row.download_gb} GB · ${row.contextWindow?`${row.contextWindow.toLocaleString()} tokens`:'No safe automatic context'}`),h('small',null,uiMessage(row.reason)))))),
       job?.runner==='strata'?h('div',{className:'notch-model-job',role:job.state==='failed'?'alert':'status'},
-        h('p',null,uiMessage(job.message)),job.state==='running'?h('button',{type:'button',disabled:busy,onClick:()=>void act('cancel')},'Cancel'):
+        h('div',null,h('p',null,uiMessage(job.message)),job.state==='running'?h('progress',{'aria-label':'Strata setup progress'}):null),job.state==='running'?h('button',{type:'button',disabled:busy,onClick:()=>void act('cancel')},'Cancel'):
         job.state==='complete'?h('button',{type:'button',disabled:busy,onClick:async()=>{try{await refresh();await onInstalled(true);}catch(e){setError(e.message);}}},'Refresh installed models'):null):null,
       error?h('p',{className:'notch-model-error',role:'alert'},uiMessage(error)):null);
   };

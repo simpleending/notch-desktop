@@ -34,11 +34,9 @@ export async function runColibriModels(action: string, flags: Record<string, any
   }
   if (!flags.modelDir && !selected?.fits) throw new Error(selected?.reason || 'Choose a listed model.');
   if (!flags.yes && !/^(y|yes)$/i.test(await options.ask(flags.modelDir ? 'Validate these converted Colibri weights and use them for this project? [y/N] ' : `Download ${selected!.name} (${selected!.download_gb} GB), verify it and use it for this project? [y/N] `))) return { code: 0 };
-  const ready=await installColibri(selected?.id || '', { signal: options.signal, modelDir: flags.modelDir, output: text => process.stdout.write(text) });
-  try {
+  const ready=await installColibri(selected?.id || '', { signal: options.signal, modelDir: flags.modelDir, output: text => process.stdout.write(text), unloadAfterValidation:flags.launch===false || !options.embedded });
     const selection: ByokConfigBlock = { provider: 'colibri', model: ready.modelId, baseUrl: ready.baseUrl, ...(selected?{sourceRepo:selected.repo}:{}) };
     await persistConfigPatch(flags.cwd, { provider: selection, byok: undefined, model: undefined, baseUrl: undefined, apiKey: undefined });
     console.log(`Ready: colibri/${ready.modelId}. Automatic context: ${ready.contextWindow.toLocaleString()} tokens. Saved for ${flags.cwd}.`);
     return { code: 0, selection, ...(flags.launch !== false && !options.embedded && process.stdin.isTTY ? { launch: flags.cwd } : {}) };
-  } finally { if (flags.launch === false || !options.embedded) await stopColibri(); }
 }

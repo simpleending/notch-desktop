@@ -54,8 +54,8 @@ async function runLocalModelsCli(argv, options = {}) {
     if (!["recommend", "install", "status", "unload"].includes(action)) throw new Error("Choose recommend, install, status, or unload.");
     if (flags.json && !["recommend", "status"].includes(action)) throw new Error("--json is supported for recommend and status.");
     if (action === "unload") {
-      const { loadConfig } = await import("./config-3AA5PYAY.js");
-      const { parseByokRef, isByokRef } = await import("./byok-UJOZCS6R.js");
+      const { loadConfig } = await import("./config-5Q42DJIU.js");
+      const { parseByokRef, isByokRef } = await import("./byok-WX6ANGJZ.js");
       const { models } = await loadConfig({ projectRoot: flags.cwd });
       const current = models.chat;
       const ref = isByokRef(current.model) ? parseByokRef(current.model) : { provider: current.byokProvider, model: current.model };
@@ -184,7 +184,7 @@ Installing ${selected.repo}; model license: ${selected.license || "see model car
     if (args?.ok !== true) throw new Error("The model did not produce a valid tool call. Download is retained, but your previous model selection is unchanged.");
     signal.throwIfAborted();
     const selection = { provider: runner, model: selected.model, sourceRepo: selected.repo, baseUrl, contextWindow: fit.contextLength, ...runner === "ollama" ? { ollamaBatch: fit.batchSize } : {} };
-    const { persistConfigPatch } = await import("./config-3AA5PYAY.js");
+    const { persistConfigPatch } = await import("./config-5Q42DJIU.js");
     await persistConfigPatch(flags.cwd, { provider: selection, byok: void 0, model: void 0, baseUrl: void 0, apiKey: void 0 });
     console.log(`Ready: ${runner}/${selected.model}. Saved for ${flags.cwd}.`);
     leaveLoaded = flags.launch !== false && (options.embedded || !!process.stdin.isTTY);

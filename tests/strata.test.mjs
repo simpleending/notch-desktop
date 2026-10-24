@@ -28,6 +28,28 @@ test('Strata setup, install, cancellation and context changes use the isolated e
   const saved=JSON.parse(await readFile(path.join(directory,'model-context.json'),'utf8'));assert.equal(saved['ollama/existing'],8192);
 });
 
+test('a folder picker opened before a download cannot change its destination during installation',async()=>{
+  const directory=await mkdtemp(path.join(os.tmpdir(),'notch-strata-folder-'));
+  let choose,entered,started,leased=false,writes=0;
+  const choosing=new Promise(resolve=>entered=resolve),installing=new Promise(resolve=>started=resolve);
+  const manager=createModelManager(directory,{
+    hardware:async()=>({}),withInference:async fn=>{leased=true;try{return await fn();}finally{leased=false;}},
+    chooseModelDirectory:()=>{entered();return new Promise(resolve=>choose=resolve);},
+    strata:{
+      strataStatus:async()=>({running:false}),strataCatalog:async()=>({models:[]}),
+      setStrataDirectory:async()=>{assert(leased);writes++;},
+      installStrata:async(_id,_memory,signal)=>{started();await new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));},
+    },
+  });
+  const selection=manager.strata('directory');await choosing;
+  await manager.strata('install','coder');await installing;choose(directory);
+  await assert.rejects(selection,/download is already running/);assert.equal(writes,0);
+  await manager.cancelInstall();
+  for(let i=0;i<50&&(await manager.status()).job.state==='running';i++)await new Promise(resolve=>setTimeout(resolve,2));
+  assert.equal((await manager.status()).job.state,'cancelled');
+  await manager.strata('directory',directory);assert.equal(writes,1);
+});
+
 test('Strata keeps unavailable backends and models visible with reasons, with benchmarks off',()=>{
   const React={Fragment:'fragment',useState:value=>[value,()=>{}],useRef:()=>({current:null}),useEffect(){},createElement:(type,props,...children)=>({type,props:props||{},children})};
   const cached={installed:true,version:'0.2.2',gpu:'AMD Radeon 8060S',backend:'hip',reason:'Strix Halo support is experimental',dataDirectory:'Z:/Strata',freeDiskBytes:100e9,
