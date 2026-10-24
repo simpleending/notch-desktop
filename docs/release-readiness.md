@@ -1,5 +1,13 @@
 # Windows release verification
 
+Version 0.1.46 makes scheduled advancement and run insertion transactional, checks Stop after asynchronous session setup, rearms the scheduler after storage faults, and recovers the latest offline occurrence without silently truncating interval counts. Reused automation chats bind cancellation and token limits to each new run. Skipped occurrences record the selected recovery policy.
+
+New automation controls include time/token limits, waiting status, schedule previews with timezones, missed-run policy, deduplicated notifications, local presets and paged run history. The source suite passes 443 tests with no failures or skips; strict typecheck and the rebuilt core pass. Regression coverage includes native IPC option preservation, SQLite rollback, early cancellation, summary disconnection/restart, run limits, saved preset round trips and active-process races during runtime cleanup. The packaged automation harness uses deterministic provider responses and temporary profiles, with no model-weight download or GPU benchmark.
+
+Runtime cleanup is explicit in Models settings. It removes only unchanged, owned version folders after preserving the current and preceding version and checking running processes before and after quarantine. User-added files or empty folders, links and older unowned installations prevent removal. Diagnostic log rotation is restricted to inactive engine logs.
+
+## Previous 0.1.45 verification
+
 Version 0.1.45 serializes Colibri setup, validation and install-only cleanup with local inference, and commits context changes under that same lease. Regression tests cover cancellation restoring the prior selection and queued mounts seeing the saved context. The packaged dependency tree is refreshed from the lockfile rather than inherited from an older prototype.
 
 The final source suite passes 418 tests with no failures or skips, and strict typecheck and the core build pass. All seven packaged Zod copies pass the compatibility checks. The Windows installer passes archive integrity and SHA-512 manifest verification. Its compression level was reduced for this memory-constrained build host; application contents are unchanged. The rendered diamond menu passes light/dark, center/edge placement, distinct-icon, arrow-key focus and Escape-dismissal checks; corrected screenshots show the diamond without a rectangular background.

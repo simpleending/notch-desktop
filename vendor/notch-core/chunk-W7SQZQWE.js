@@ -5,6 +5,9 @@ import {
   withLocalInference
 } from "./chunk-M6FOGWEU.js";
 import {
+  markOwnedRuntime
+} from "./chunk-CS6Q4K4N.js";
+import {
   acquireLease
 } from "./chunk-SWZ3JTKY.js";
 
@@ -207,6 +210,7 @@ async function prepareStrata(signal, output = () => {
         await access(path.join(unpacked, "strata.py"));
       }
       await rename(unpacked, runtime());
+      await markOwnedRuntime(runtime());
     } finally {
       if (path.dirname(stage) !== root()) throw new Error("Invalid Strata staging path.");
       await rm(stage, { recursive: true, force: true });

@@ -4,14 +4,15 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
-import { processSnapshot, stopOwnedProcesses } from './process-tree.mjs';
+import { processSnapshot, stopOwnedProcesses,closeQaApp } from './process-tree.mjs';
 import { cloudModelRows } from '../src/model-policy.mjs';
+import {verifyAutomationControls} from './automation-controls-qa.mjs';
 
 const executable=path.resolve(process.argv[2]),reportFile=path.resolve(process.argv[3]||'release/automations-verification.json');
 const root=await fs.mkdtemp(path.join(os.tmpdir(),'notch-automations-')),profile=path.join(root,'profile'),cwd=path.join(root,'project');
 await fs.mkdir(cwd);await fs.writeFile(path.join(cwd,'automation.txt'),'original');
 const row=cloudModelRows([{id:'fixture/automation',name:'Automation verification',context_length:8192,architecture:{input_modalities:['text'],output_modalities:['text']},supported_parameters:['tools'],pricing:{prompt:'0',completion:'0'}}],true)[0];row.isDefault=true;
-const env=Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|ELECTRON_RUN_AS_NODE/i.test(key)));
+const env={...Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|ELECTRON_RUN_AS_NODE/i.test(key))),NOTCH_AUTO_DREAM:'0',NOTCH_AUTO_UPDATE:'0'};
 let app,page;const checks=[],errors=[];
 const until=async(check,label)=>{for(let i=0;i<600;i++){if(await check())return;await delay(50);}throw Error('Timed out: '+label);};
 async function launch(){
@@ -22,7 +23,7 @@ async function launch(){
     const host=globalThis.__notchHost;
     host.listModels=async()=>[row];host.getCachedModels=()=>[row];host.getDefaultModel=()=>row.key;host.resolveModelChoice=()=>row.key;
     host.modelManager.key=async()=>'fixture-only';
-    const original=globalThis.fetch,trace=globalThis.__automationQa={calls:[],release:null};
+    const original=globalThis.fetch,trace=globalThis.__automationQa={calls:[],release:null,notices:[]};host.automations.setNotifier(notice=>trace.notices.push(notice));
     globalThis.fetch=async(url,options)=>{
       if(!String(url).endsWith('/chat/completions'))return original(url,options);
       const body=JSON.parse(options.body),index=body.messages.findLastIndex(x=>x.role==='user'),raw=body.messages[index]?.content;
@@ -101,6 +102,7 @@ try{
   let repeated;for(let i=0;i<1500;i++){repeated=await runs(recurring.id);if(repeated.some(run=>run.status==='succeeded'))break;await delay(50);}
   assert.ok(repeated.some(run=>run.status==='succeeded'));assert.ok((await call('getAutomationTask',recurring.id)).nextRunAt>Date.now());
   await page.evaluate(id=>window.notchDesktop.setAutomationTaskEnabled(id,false),recurring.id);checks.push('recurring timer runs and advances its next execution');
+  await verifyAutomationControls({app,page,call,create,completed,runs,until,checks,cwd,row});
   await app.close();app=null;await launch();
   assert.equal((await call('getAutomationTask',cron.id)).name,'Saved cron verification');assert.equal((await call('getAutomationTaskSettings')).preventSleep,true);
   assert.equal((await completed(task.id))[0].executionSessionId,first.executionSessionId);assert.equal((await call('getAutomationTask',paused.id)).enabled,false);
@@ -116,4 +118,4 @@ try{
   await call('deleteAutomationTask',cron.id);assert.equal(await call('getAutomationTask',cron.id),null);checks.push('deletion removes the automation');
   await fs.writeFile(reportFile,JSON.stringify({passed:true,executable,root,checks,errors},null,2));console.log(JSON.stringify({passed:true,checks,root,errors}));
 }catch(error){await fs.writeFile(reportFile,JSON.stringify({passed:false,executable,root,checks,errors,error:error.stack},null,2));throw error;}
-finally{if(app){const owned=app,snapshot=await processSnapshot();const timer=setTimeout(()=>{void stopOwnedProcesses(owned.process().pid,snapshot);},15000);try{await owned.close();}finally{clearTimeout(timer);}}}
+finally{if(app){const owned=app,snapshot=await processSnapshot().catch(()=>null);const timer=setTimeout(()=>{if(snapshot)void stopOwnedProcesses(owned.process().pid,snapshot).catch(()=>{if(owned.process().exitCode===null)owned.process().kill();});else if(owned.process().exitCode===null)owned.process().kill();},15000);try{await closeQaApp(owned);}finally{clearTimeout(timer);}}}

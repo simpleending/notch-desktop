@@ -104,6 +104,22 @@ test('native compaction progress closes on success and failure without fabricate
   }
 });
 
+test('an automation canceled while session history loads never reaches inference',async()=>{
+  const f=fixture(),abort=new AbortController;let release,started,turns=0;const loading=new Promise(resolve=>{started=resolve;});
+  f.host.loadSession=async()=>{started();await new Promise(resolve=>release=resolve);return{messages:[]};};
+  const query=new NotchQuery(f.host,{cwd:process.cwd(),sessionId:'automation-load-race',prompt:'Run',automation:{signal:abort.signal}},{runTurn:async turn=>{turns++;return{messages:turn.messages};}});
+  await loading;abort.abort(Object.assign(Error('The automation reached its time limit.'),{code:'timeout'}));release();for await(const _event of query){}assert.equal(turns,0);
+});
+
+test('merged automation turns rebind cancellation and token budgets instead of keeping the first run',async()=>{
+  const f=fixture(),first=new AbortController,second=new AbortController,usages=[0,0];let turns=0;
+  f.host.automations={queryOptions:()=>turns===0?{signal:first.signal,maxTokens:10,usage:()=>usages[0]++}:{signal:second.signal,maxTokens:20,usage:()=>usages[1]++}};
+  async function* prompts(){yield{message:{content:'First run'}};first.abort(Error('Earlier run ended'));yield{message:{content:'Second run'}};}
+  const query=new NotchQuery(f.host,{cwd:process.cwd(),sessionId:'merged-limits',prompt:prompts()},{runTurn:async turn=>{
+    assert.equal(turn.signal.aborted,false);assert.equal(turn.maxTotalTokens,turns===0?10:20);turns++;turn.onUsage({inputTokens:1,outputTokens:1,contextWindow:8192});return{messages:turn.messages};
+  }});for await(const _event of query){}assert.equal(turns,2);assert.deepEqual(usages,[1,1]);
+});
+
 test('workbench file-review hooks are awaited with native names, inputs and matching call IDs', async () => {
   const f = fixture(), hooks = [];
   const query = new NotchQuery(f.host, { cwd: process.cwd(), prompt: 'write', hooks: {

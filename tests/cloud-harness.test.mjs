@@ -135,6 +135,35 @@ for(const partial of [false,true])test(`OpenRouter HTTP 200 stream errors fail t
   finally{globalThis.fetch=previous;}
 });
 
+test('a disconnected summary never replaces history with partial text, and restart retains the active tool chain',async t=>{
+  const cwd=await mkdtemp(path.join(os.tmpdir(),'notch-summary-restart-')),messages=[{role:'user',content:'ORIGINAL_DECISION_KEEP_SQLITE'}];
+  for(let i=0;i<20;i++)messages.push({role:'user',content:'Completed review '+i},{role:'assistant',content:'Reviewed files and tests. '.repeat(160)});
+  messages.push({role:'user',content:'Continue CURRENT_TASK'}, {role:'assistant',content:[{type:'tool-call',toolName:'read',toolCallId:'preserved-read',input:{path:'receipt.txt'}}]}, {role:'tool',content:[{type:'tool-result',toolName:'read',toolCallId:'preserved-read',output:{type:'text',value:'PRESERVED_TOOL_RECEIPT'}}]});
+  let summaries=0,archived;
+  t.mock.method(globalThis,'fetch',async(_url,options)=>{
+    const body=JSON.parse(options.body);
+    if(!body.stream){summaries++;return new Response('{"choices":[{"message":{"content":"PARTIAL_SUMMARY_MUST_NEVER_BE_SAVED', {headers:{'content-type':'application/json'}});}
+    const history=JSON.stringify(body.messages);assert.match(history,/ORIGINAL_DECISION_KEEP_SQLITE/);assert.match(history,/CURRENT_TASK/);assert.doesNotMatch(history,/PARTIAL_SUMMARY_MUST_NEVER_BE_SAVED/);
+    assert.equal(body.messages.find(row=>row.role==='tool'&&row.tool_call_id==='preserved-read')?.content,'PRESERVED_TOOL_RECEIPT');
+    const frame=(delta,finish_reason=null)=>({id:'restart',choices:[{index:0,delta,finish_reason}]});return new Response(`data: ${JSON.stringify(frame({content:'RESUME_OK'}))}\n\ndata: ${JSON.stringify(frame({},'stop'))}\n\ndata: [DONE]\n\n`,{headers:{'content-type':'text/event-stream'}});
+  });
+  const turn={cwd,model:'openrouter/openai/gpt-4.1',apiKey:'fixture-only',contextWindow:8192,maxOutputTokens:512,accessMode:'read-only',signal:AbortSignal.timeout(30000),checkpoints:new CheckpointManager(),tools:['Read'],approve:async()=>false,onCompact:async original=>{archived=structuredClone(original);}};
+  const result=await runDesktopTurn({...turn,sessionId:'summary-disconnect',messages});assert.equal(result.text,'RESUME_OK');assert.deepEqual(archived,messages);assert(summaries>0);assert.doesNotMatch(JSON.stringify(result.messages),/PARTIAL_SUMMARY/);
+  const restored=JSON.parse(JSON.stringify(result.messages));assert.equal((await runDesktopTurn({...turn,sessionId:'summary-restart',messages:[...restored,{role:'user',content:'Continue after restarting Notch'}]})).text,'RESUME_OK');
+});
+
+test('automation token budgets prevent inference when the prompt already exceeds the allowance',async t=>{
+  const cwd=await mkdtemp(path.join(os.tmpdir(),'notch-token-cap-'));const calls=[];t.mock.method(globalThis,'fetch',async url=>{calls.push(String(url));throw Error('No request should be sent');});
+  await assert.rejects(runDesktopTurn({cwd,sessionId:'token-cap',model:'openrouter/openai/gpt-4.1',apiKey:'fixture-only',messages:[{role:'user',content:'Hello'}],contextWindow:8192,maxTotalTokens:1,accessMode:'read-only',signal:AbortSignal.timeout(15000),checkpoints:new CheckpointManager(),tools:[],approve:async()=>false}),error=>error.code==='token-limit');assert.deepEqual(calls.filter(url=>url.endsWith('/chat/completions')),[]);
+});
+
+test('compaction usage counts toward an automation budget before the next generation',async t=>{
+  const cwd=await mkdtemp(path.join(os.tmpdir(),'notch-compaction-cap-')),messages=[{role:'user',content:'Keep ORIGINAL_DECISION'}];for(let i=0;i<24;i++)messages.push({role:'user',content:'Task '+i},{role:'assistant',content:'Reviewed files and tests. '.repeat(160)});messages.push({role:'user',content:'Continue'});
+  let summaries=0,streams=0,usage;
+  t.mock.method(globalThis,'fetch',async(url,options)=>{if(!String(url).endsWith('/chat/completions'))throw Error('Metadata unavailable');const body=JSON.parse(options.body);if(body.stream){streams++;throw Error('Budget exhausted');}summaries++;return Response.json({id:'summary',choices:[{index:0,message:{role:'assistant',content:'ORIGINAL_DECISION'},finish_reason:'stop'}],usage:{prompt_tokens:9000,completion_tokens:1000,total_tokens:10000}});});
+  await assert.rejects(runDesktopTurn({cwd,sessionId:'summary-budget',model:'openrouter/openai/gpt-4.1',apiKey:'fixture-only',messages,contextWindow:8192,maxOutputTokens:512,maxTotalTokens:10000,accessMode:'read-only',signal:AbortSignal.timeout(15000),checkpoints:new CheckpointManager(),tools:[],approve:async()=>false,onUsage:value=>{usage=value;}}),error=>error.code==='token-limit');assert.equal(summaries,1);assert.equal(streams,0);assert.equal(usage.inputTokens+usage.outputTokens,10000);
+});
+
 test('MLX inspection uses the repository revision and nested text context configuration',async()=>{
   const previous=globalThis.fetch, calls=[],revision='b'.repeat(40);
   globalThis.fetch=async (url,options)=>{

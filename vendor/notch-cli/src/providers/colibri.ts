@@ -8,6 +8,7 @@ import type { LocalHardware } from './local-models.js';
 import { withLocalInference } from '../concurrency/local-inference.js';
 import { acquireLease } from '../concurrency/lease.js';
 import { quietPython } from './python-console.js';
+import {markOwnedRuntime,rotateRuntimeLog} from './runtime-maintenance.js';
 import { COLIBRI_PLANNER, colibriContexts, colibriRank, colibriBackendReady, colibriLaunchPid, type ColibriCandidate, type ColibriMeasurement } from './colibri-selection.js';
 
 const exec = promisify(execFile);
@@ -122,6 +123,7 @@ async function installRuntimeAsset(asset: { name: string; sha256: string }, sign
   const { stdout } = await exec(tar, ['-tf', file], { signal, windowsHide: true, timeout: 30000 });
   if (stdout.split(/\r?\n/).some(entry => entry && (path.win32.isAbsolute(entry) || entry.split(/[\\/]/).includes('..')))) throw new Error('Unsafe Colibri archive path; extraction refused.');
   const stage = await mkdtemp(path.join(root(), 'extract-'));
+  const fresh=!(await stat(runtime()).catch(()=>null));
   try {
     await exec(tar, ['-xf', file, '-C', stage], { signal, windowsHide: true, timeout: 60000 });
     await mkdir(runtime(), { recursive: true });
@@ -131,6 +133,7 @@ async function installRuntimeAsset(asset: { name: string; sha256: string }, sign
     await rm(stage, { recursive: true, force: true });
   }
   await access(path.join(runtime(), 'coli'));
+  if(fresh)await markOwnedRuntime(runtime());
 }
 
 export async function prepareColibri(signal?: AbortSignal, output: (text: string) => void = console.log) {
@@ -301,6 +304,7 @@ export async function stopColibri() { return withLocalInference(stopInternal); }
 
 async function launchColibri(candidate: ColibriCandidate, cfg: any, modelId?: string, signal?: AbortSignal) {
   const logFile = path.join(root(), 'state', 'logs', 'serve.log');
+  await rotateRuntimeLog(logFile);
   const before = await stat(logFile).catch(() => null);
   cfg.backend = candidate.backend;
   cfg.env = candidate.env;

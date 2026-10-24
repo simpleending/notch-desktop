@@ -5,6 +5,10 @@ import {
   withLocalInference
 } from "./chunk-M6FOGWEU.js";
 import {
+  markOwnedRuntime,
+  rotateRuntimeLog
+} from "./chunk-CS6Q4K4N.js";
+import {
   acquireLease
 } from "./chunk-SWZ3JTKY.js";
 
@@ -277,6 +281,7 @@ async function installRuntimeAsset(asset, signal, output) {
   const { stdout } = await exec(tar, ["-tf", file], { signal, windowsHide: true, timeout: 3e4 });
   if (stdout.split(/\r?\n/).some((entry) => entry && (path.win32.isAbsolute(entry) || entry.split(/[\\/]/).includes("..")))) throw new Error("Unsafe Colibri archive path; extraction refused.");
   const stage = await mkdtemp(path.join(root(), "extract-"));
+  const fresh = !await stat(runtime()).catch(() => null);
   try {
     await exec(tar, ["-xf", file, "-C", stage], { signal, windowsHide: true, timeout: 6e4 });
     await mkdir(runtime(), { recursive: true });
@@ -286,6 +291,7 @@ async function installRuntimeAsset(asset, signal, output) {
     await rm(stage, { recursive: true, force: true });
   }
   await access(path.join(runtime(), "coli"));
+  if (fresh) await markOwnedRuntime(runtime());
 }
 async function prepareColibri(signal, output = console.log) {
   const asset = colibriAsset();
@@ -513,6 +519,7 @@ async function stopColibri() {
 }
 async function launchColibri(candidate, cfg, modelId, signal) {
   const logFile = path.join(root(), "state", "logs", "serve.log");
+  await rotateRuntimeLog(logFile);
   const before = await stat(logFile).catch(() => null);
   cfg.backend = candidate.backend;
   cfg.env = candidate.env;

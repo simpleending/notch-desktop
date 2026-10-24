@@ -16,13 +16,13 @@ import {
   selectModel,
   withSharedWorker,
   withTaskWorkspace
-} from "./chunk-2RB6TEHP.js";
+} from "./chunk-BVSBGJHO.js";
 import {
   getConfigDir,
   isByokRef,
   ollamaContextLength,
   parseByokRef
-} from "./chunk-TN6X5SOB.js";
+} from "./chunk-76JNJZ2B.js";
 import {
   Rollout
 } from "./chunk-S5MWOFHZ.js";
@@ -30,7 +30,7 @@ import {
   loadedMlxModel,
   startMlx,
   stopMlx
-} from "./chunk-OZ465FDJ.js";
+} from "./chunk-R2LF7GJS.js";
 import {
   LOCAL_MODEL_CATALOG,
   detectLocalHardware,
@@ -40,6 +40,7 @@ import {
   parseNvidiaMemory
 } from "./chunk-B72JEX4V.js";
 import {
+  STRATA_CONTROL,
   installStrata,
   prepareStrata,
   setStrataDirectory,
@@ -49,8 +50,9 @@ import {
   strataModels,
   strataPlan,
   strataStatus
-} from "./chunk-N6NM5TEF.js";
+} from "./chunk-W7SQZQWE.js";
 import {
+  COLIBRI_VERSION,
   colibriCatalog,
   colibriCompatibility,
   colibriModels,
@@ -62,7 +64,7 @@ import {
   startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-UJ2HKRSY.js";
+} from "./chunk-L4X6AUK3.js";
 import "./chunk-S2VC66HG.js";
 import {
   executionContext,
@@ -74,7 +76,12 @@ import {
   managedOllama,
   setManagedOllamaLauncher,
   withManagedOllamaStart
-} from "./chunk-G4ZZBABE.js";
+} from "./chunk-PUZERE5T.js";
+import {
+  markOwnedRuntime,
+  pruneOwnedRuntimes,
+  rotateRuntimeLog
+} from "./chunk-CS6Q4K4N.js";
 import {
   acquireLease
 } from "./chunk-SWZ3JTKY.js";
@@ -5228,6 +5235,12 @@ function microCompact(messages) {
 var compressionThreshold = (window) => contextBudget(window).compactAt;
 var MAX_COMPRESSION_FAILURES = 3;
 var compressionFailures = /* @__PURE__ */ new WeakMap();
+function summaryOutput(input, requested, billing) {
+  if (!billing) return requested;
+  const remaining = billing.remaining() - estimateTextTokens(input) - 128;
+  if (remaining < 1) throw Object.assign(Error("The automation reached its token limit."), { code: "token-limit" });
+  return Math.min(requested, remaining);
+}
 async function autoCompactSummarize(messages, opts) {
   const threshold = opts.historyBudget ? Math.floor(opts.historyBudget * 0.8) : compressionThreshold(opts.contextWindow);
   const currentTokens = estimateTokens(messages);
@@ -5250,26 +5263,30 @@ async function autoCompactSummarize(messages, opts) {
   const summaryBudget = (opts.historyBudget ?? contextBudget(opts.contextWindow).history) - estimateTokens([...head, ...tail]) - 96;
   if (summaryBudget < 64) return { messages, compressed: false };
   let summaryText;
+  const outputLimit = summaryOutput(middleText, Math.min(1024, contextBudget(opts.contextWindow).output, Math.max(64, Math.floor(summaryBudget * 0.6))), opts.billing);
   try {
     const result = await generateText3({
       model: opts.model,
       instructions: "You are a conversation summarizer. Condense the following conversation history into a brief summary. Preserve: files modified, key decisions, errors encountered, and the current task state. Be concise but thorough. Output only the summary, no preamble.",
       messages: [{ role: "user", content: middleText }],
-      maxOutputTokens: Math.min(1024, contextBudget(opts.contextWindow).output, Math.max(64, Math.floor(summaryBudget * 0.6))),
+      maxOutputTokens: outputLimit,
       abortSignal: opts.signal,
       maxRetries: 0
     });
+    opts.billing?.usage(result.usage.inputTokens ?? 0, result.usage.outputTokens ?? 0);
+    opts.signal?.throwIfAborted();
     summaryText = result.text.trim();
     if (!summaryText) throw new Error("Empty compaction summary");
     compressionFailures.delete(opts.model);
-  } catch {
+  } catch (error) {
+    if (error?.code === "token-limit") throw error;
     opts.signal?.throwIfAborted();
     compressionFailures.set(opts.model, (compressionFailures.get(opts.model) ?? 0) + 1);
     return deterministicCompress(messages, keepRecent);
   }
   return buildCompressedHistory(head, summaryText, tail);
 }
-async function fullCompact(messages, model, contextWindow = 131072, signal, historyBudget = contextBudget(contextWindow).history) {
+async function fullCompact(messages, model, contextWindow = 131072, signal, historyBudget = contextBudget(contextWindow).history, billing) {
   if (messages.length < 4) {
     return { messages, compressed: false };
   }
@@ -5282,17 +5299,21 @@ async function fullCompact(messages, model, contextWindow = 131072, signal, hist
   const summaryBudget = historyBudget - estimateTokens([...head, ...last2]) - 96;
   if (summaryBudget < 64) return { messages, compressed: false };
   let summaryText;
+  const outputLimit = summaryOutput(middleText, Math.min(2048, contextBudget(contextWindow).output, Math.max(64, Math.floor(summaryBudget * 0.6))), billing);
   try {
     const result = await generateText3({
       model,
       instructions: "Compress this entire conversation into a dense summary. Include: the original task, all files created/modified, key decisions, current state, and any unresolved issues. Max 500 words.",
       messages: [{ role: "user", content: middleText }],
-      maxOutputTokens: Math.min(2048, contextBudget(contextWindow).output, Math.max(64, Math.floor(summaryBudget * 0.6))),
+      maxOutputTokens: outputLimit,
       abortSignal: signal,
       maxRetries: 0
     });
+    billing?.usage(result.usage.inputTokens ?? 0, result.usage.outputTokens ?? 0);
+    signal?.throwIfAborted();
     summaryText = result.text;
-  } catch {
+  } catch (error) {
+    if (error?.code === "token-limit") throw error;
     signal?.throwIfAborted();
     summaryText = buildDeterministicSummary(allButLast2);
   }
@@ -5397,12 +5418,12 @@ ${firstContent}` : [{ type: "text", text: summaryContent }, ...firstContent] });
   }
   return { messages: compressed, compressed: true };
 }
-async function autoCompress(messages, model, contextWindow, onCompress, signal, historyBudget) {
-  const result = await autoCompressWithStats(messages, model, contextWindow, signal, historyBudget);
+async function autoCompress(messages, model, contextWindow, onCompress, signal, historyBudget, billing) {
+  const result = await autoCompressWithStats(messages, model, contextWindow, signal, historyBudget, billing);
   if (result.messages !== messages) onCompress?.();
   return result.messages;
 }
-async function autoCompressWithStats(messages, model, contextWindow, signal, historyBudget = contextBudget(contextWindow).history) {
+async function autoCompressWithStats(messages, model, contextWindow, signal, historyBudget = contextBudget(contextWindow).history, billing) {
   const stats = { budgetStashed: 0, snipped: 0, collapsed: false, autoCompacted: false, fullCompacted: false };
   const threshold = Math.floor(historyBudget * 0.8);
   if (estimateTokens(messages) < threshold) return { messages, stats };
@@ -5410,12 +5431,12 @@ async function autoCompressWithStats(messages, model, contextWindow, signal, his
   let result = microCompact(br.messages);
   stats.budgetStashed = br.stashed;
   if (estimateTokens(result) >= threshold) {
-    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget });
+    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget, billing });
     result = auto.messages;
     stats.autoCompacted = auto.compressed;
   }
   if (estimateTokens(result) > historyBudget) {
-    const full = await fullCompact(result, model, contextWindow, signal, historyBudget);
+    const full = await fullCompact(result, model, contextWindow, signal, historyBudget, billing);
     result = full.messages;
     stats.fullCompacted = full.compressed;
   }
@@ -6106,7 +6127,7 @@ async function runAgentLoopInternal(messages, config) {
   const outputLimit = config.maxOutputTokens ?? (/^(?:ollama(?:-anthropic)?|mlx|colibri|strata)\//.test(config.modelId ?? "") ? 16384 : void 0);
   const colibriModelId = config.colibriModelId ?? (/^colibri[/:]/.test(config.modelId ?? "") ? config.modelId.slice(8) : void 0);
   if (colibriModelId) {
-    const { startColibri: startColibri2, colibriStatus: colibriStatus2 } = await import("./colibri-J3X3CBIL.js");
+    const { startColibri: startColibri2, colibriStatus: colibriStatus2 } = await import("./colibri-XXTCI5A4.js");
     const automatic = config.colibriAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 12288, 16384, 32768, 65536, 131072, 262144].find((value) => {
       try {
@@ -6119,12 +6140,12 @@ async function runAgentLoopInternal(messages, config) {
     if (!automatic) contextBudget(contextWindow, overhead, outputLimit);
     await startColibri2(colibriModelId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, config.toolContext.log, useful);
     contextWindow = (await colibriStatus2()).contextWindow;
-    const { resolveByokModel } = await import("./byok-WX6ANGJZ.js");
+    const { resolveByokModel } = await import("./byok-RCJXHY7M.js");
     config.model = resolveByokModel({ provider: "colibri", model: colibriModelId, contextWindow }).model;
   }
   const strataId = config.strataModelId ?? (/^strata[/:]/.test(config.modelId ?? "") ? config.modelId.slice(7) : void 0);
   if (strataId) {
-    const { startStrata: startStrata2 } = await import("./strata-QIVJL6AZ.js");
+    const { startStrata: startStrata2 } = await import("./strata-Y45U57FW.js");
     const automatic = config.strataAutoContext ?? config.contextWindow === void 0;
     const useful = [8192, 16384, 32768, 65536, 131072, 262144, 524288].find((n) => {
       try {
@@ -6136,7 +6157,7 @@ async function runAgentLoopInternal(messages, config) {
     if (!useful) throw new Error("Instructions and tools exceed the Strata context limit.");
     const ready = await startStrata2(strataId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, useful);
     contextWindow = ready.contextWindow;
-    const { resolveByokModel } = await import("./byok-WX6ANGJZ.js");
+    const { resolveByokModel } = await import("./byok-RCJXHY7M.js");
     config.model = resolveByokModel({ provider: "strata", model: strataId, contextWindow }).model;
   }
   const fittedContext = fitContextWindow(contextWindow, overhead, outputLimit, config.contextWindows);
@@ -6155,7 +6176,15 @@ async function runAgentLoopInternal(messages, config) {
     history = await autoCompress(history, config.model, contextWindow, () => {
       wasCompressed = true;
       config.onCompress?.();
-    }, config.toolContext.abortSignal, Math.floor(budget.history / tokenRatio));
+    }, config.toolContext.abortSignal, Math.floor(budget.history / tokenRatio), config.maxTotalTokens ? {
+      remaining: () => config.maxTotalTokens - totalPromptTokens - totalCompletionTokens,
+      usage: (input, output) => {
+        totalPromptTokens += input;
+        totalCompletionTokens += output;
+        config.onUsage?.({ inputTokens: input, outputTokens: output, contextWindow });
+        if (totalPromptTokens + totalCompletionTokens >= config.maxTotalTokens) throw Object.assign(Error("The automation reached its token limit."), { code: "token-limit" });
+      }
+    } : void 0);
     if (estimateTokens(history) * tokenRatio > budget.history) throw new Error("The current request or tool results exceed the selected context. Increase context or split the request; the transcript has been saved.");
     await config.toolContext.runHook?.("post-compact", { messageCount: history.length });
   };
@@ -6182,6 +6211,8 @@ async function runAgentLoopInternal(messages, config) {
     const toolCalls = [];
     const toolResults = [];
     let streamUsage = null;
+    const remainingTokens = config.maxTotalTokens ? config.maxTotalTokens - totalPromptTokens - totalCompletionTokens - estimateTokens(history) - overhead : Infinity;
+    if (remainingTokens < 1) throw Object.assign(new Error("The automation reached its token limit."), { code: "token-limit" });
     const result = streamText2({
       // The stream consumer propagates failures; the SDK default also dumps raw requests to stderr.
       onError() {
@@ -6194,7 +6225,7 @@ async function runAgentLoopInternal(messages, config) {
       stopWhen: isStepCount2(1),
       repairToolCall: feedback.repair,
       maxRetries: 0,
-      maxOutputTokens: budget.output
+      maxOutputTokens: Math.min(budget.output, remainingTokens)
     });
     for await (const event of result.stream) {
       if (event.type === "error") {
@@ -6927,7 +6958,7 @@ async function runDesktopTurn(turn) {
     delete selection.byokApiShape;
   }
   if (provider === "ollama" && selection.baseUrl?.replace(/\/v1\/?$/, "") === "http://127.0.0.1:11436") {
-    const { managedOllama: managedOllama2 } = await import("./ollama-runtime-3KRDVJSV.js");
+    const { managedOllama: managedOllama2 } = await import("./ollama-runtime-QXBKLJ6I.js");
     await managedOllama2("0.40.3", turn.signal);
   }
   if (provider === "ollama" || provider === "ollama-anthropic") selection.contextWindow = ollamaContextLength(selection.contextWindow, selection.nativeContextWindow);
@@ -7000,6 +7031,7 @@ Desktop agent instructions:
 ${turn.instructions}` : ""),
       toolContext: ctx,
       maxIterations: turn.maxIterations,
+      maxTotalTokens: turn.maxTotalTokens,
       contextWindow: selection.contextWindow,
       strataModelId: provider === "strata" ? isByokRef(selection.model) ? parseByokRef(selection.model).model : selection.model : void 0,
       strataAutoContext: turn.strataAutoContext,
@@ -7017,8 +7049,10 @@ ${turn.instructions}` : ""),
   }
 }
 export {
+  COLIBRI_VERSION,
   CheckpointManager,
   LOCAL_MODEL_CATALOG,
+  STRATA_CONTROL,
   acquireLease,
   autoCompress,
   colibriCatalog,
@@ -7041,10 +7075,13 @@ export {
   linuxGpuMemory,
   loadedMlxModel,
   managedOllama,
+  markOwnedRuntime,
   modelFit,
   parseNvidiaMemory,
   prepareColibri,
   prepareStrata,
+  pruneOwnedRuntimes,
+  rotateRuntimeLog,
   runDesktopTurn,
   safeTailStart,
   setColibriPreference,

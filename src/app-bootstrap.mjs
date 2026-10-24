@@ -1,4 +1,4 @@
-import { app, session, ipcMain, safeStorage, shell, dialog } from 'electron';
+import { app, session, ipcMain, safeStorage, shell, dialog,Notification,BrowserWindow } from 'electron';
 import path from 'node:path';
 import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
@@ -25,6 +25,10 @@ const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
 globalThis.__notchProfileOverride = requestedProfile ? { directory: app.getPath('userData'), existed: existsSync(path.join(app.getPath('userData'), 'main.sqlite')) } : null;
 globalThis.__notchHost = createHost(app.getPath('userData'));
+globalThis.__notchHost.automations.setNotifier(({title,body})=>{
+  if(!Notification.isSupported())return;
+  const notice=new Notification({title,body});notice.on('click',()=>{const window=BrowserWindow.getAllWindows().find(window=>!window.isDestroyed()&&!new URL(window.webContents.getURL()||'about:blank').searchParams.has('surface'));if(window){if(window.isMinimized())window.restore();window.show();window.focus();}});notice.show();
+});
 if(process.platform==='win32')setManagedOllamaLauncher(()=>{throw Error('The hidden local runtime is not ready. Retry loading the model.');});
 globalThis.__notchHost.runtimeReady = (async()=>{
   const start=()=>managedOllama('0.40.3',globalThis.__notchDiscovery.signal,false);

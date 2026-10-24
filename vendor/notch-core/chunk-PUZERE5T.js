@@ -1,4 +1,8 @@
 import {
+  markOwnedRuntime,
+  rotateRuntimeLog
+} from "./chunk-CS6Q4K4N.js";
+import {
   acquireLease
 } from "./chunk-SWZ3JTKY.js";
 
@@ -136,7 +140,7 @@ async function ensureManagedOllama(minimum, signal, allowInstall = true) {
     const name = runtimeAssetName(os.platform(), os.arch());
     const main = release.assets.find((asset) => asset.name === name);
     if (!main) throw new Error(`Official runtime asset ${name} is unavailable.`);
-    const directory = path.join(root(), release.tag_name);
+    const directory = path.join(root(), release.tag_name), fresh = !await stat(directory).catch(() => null);
     await mkdir(directory, { recursive: true });
     const assets = [main];
     if (os.platform() === "win32" && os.arch() === "x64") {
@@ -171,9 +175,11 @@ async function ensureManagedOllama(minimum, signal, allowInstall = true) {
       }
     }
     if (!installed) throw new Error("Downloaded Ollama could not run on this computer.");
+    if (fresh) await markOwnedRuntime(directory);
     await writeFile(path.join(root(), "installed.json"), JSON.stringify({ tag: installed.tag }), { mode: 384 });
   }
   signal?.throwIfAborted();
+  await rotateRuntimeLog(path.join(root(), "server.log"));
   const log = await open(path.join(root(), "server.log"), "a", 384);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api_key/i.test(key)));
   let child;

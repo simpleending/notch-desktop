@@ -65,7 +65,8 @@ test('marketplace and remote automation controls are removed; local recording no
     function ExperimentsSettings(){return jsx.jsxs(Group,{children:[jsx.jsx(SettingsItem,{title:t('settings.experimentalRecordingNote'),control:cloudRecord}),jsx.jsx(SettingsItem,{title:'Local notes',control:localNote})]});}
     function AutomationTasksView(){const state=reactExports.useState("all"),tabs=["tasks","templates","logs"].map(draw);return jsx.jsxs(Group,{children:[jsx.jsx(TabsTrigger,{value:'all'}),jsx.jsx(TabsTrigger,{value:'cloud'}),jsx.jsx(TabsTrigger,{value:'local'})]});}`;
   const patched=patchLocalOnlyRenderer(source);parse(patched,{ecmaVersion:'latest'});
-  assert.doesNotMatch(patched,/cloudMarket|cloudRecord|value:'cloud'|value:'all'|"templates"/);
+  assert.doesNotMatch(patched,/cloudMarket|cloudRecord|value:'cloud'|value:'all'/);
+  assert.match(patched,/"templates"/);
   assert.match(patched,/localInstall/);assert.match(patched,/settings.experimentalRecordingNote/);assert.match(patched,/value:'local'/);assert.match(patched,/useState\("local"\)/);
   assert.equal(patchLocalOnlyRenderer(patched),patched);
 });

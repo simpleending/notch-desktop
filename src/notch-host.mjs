@@ -10,6 +10,8 @@ import { desktopInstructionsForContext } from './context-prompts.mjs';
 import { createLocalModelLifecycle, localRuntime } from './local-model-lifecycle.mjs';
 import { validateLocalPlugin } from './plugin-validation.mjs';
 import { createRemoteWorkspace } from './remote-workspace.mjs';
+import { createAutomations } from './automations.mjs';
+import { createRuntimeMaintenance } from './runtime-maintenance.mjs';
 
 const localIdentity = Object.freeze({ status: 'signed-in', mode: 'local', user: { id: 'local-notch', name: 'Local workspace', nickname: 'Local workspace', email: null }, error: null, loginUrl: null });
 async function localWorkspace(cwd) {
@@ -44,6 +46,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     getDefaultModel: () => defaultModel,
     getModelDiscoveryWarning: () => discoveryWarning,
     getQueueStatus: () => [...queries.values()].filter(query => query.queueMessage).map(query => ({ sessionId: query.id, message: query.queueMessage })),
+    localModelBusy: () => lifecycle.busy,
     async localModelChange(action,key) { return lifecycle.change(action,key); },
     resolveModelChoice(model) {
       const chosen = !model || model === 'auto' ? defaultModel : model;
@@ -188,6 +191,8 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     async hasSession(id) { try { await fs.access(sessionFile(sessions, id)); return true; } catch { return false; } },
     query(request) {
       if (host.phone) request = host.phone.prepare(request);
+      const automation=host.automations?.queryOptions(request.resumeSessionId||request.sessionId);
+      if(automation)request={...request,automation};
       const model = host.resolveModelChoice(request.model);
       if(!model.startsWith('openrouter/')&&lifecycle.busy)throw Error('Wait for the local model to finish loading or ejecting.');
       const id = request.resumeSessionId || request.sessionId;
@@ -221,6 +226,8 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     },
     async prepare(request) { host.phone?.note(request); let attached = false; return { attach(prompt) { if (attached) throw new Error('Prepared session already attached.'); attached = true; return host.query({ ...request, prompt }); }, async close() { attached = true; } }; },
   };
+  host.automations=createAutomations(dataDirectory,{host});
+  host.runtimeMaintenance=createRuntimeMaintenance();
   lifecycle=createLocalModelLifecycle({fetcher,runtime,catalog:()=>host.listModels(true),endpoint:key=>endpoints.get(key),
     invalidate:()=>{modelRevision++;fetchedAt=0;},
     context:(key,row)=>key.startsWith('ollama/')||host.modelManager?.requestedContext?.(key)?row.defaultContextWindow:undefined,

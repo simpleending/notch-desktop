@@ -18,6 +18,8 @@ export function registerModelIpc(ipcMain, host) {
     return manager[provider]('catalog');
   };
   const handlers = {
+    automations:(action,value)=>host.automations.command(action,value),
+    maintenance:action=>host.runtimeMaintenance(action),
     updates: (action='status',value) => {
       if(!['status','check','automatic','download','quit'].includes(action))throw new Error('Choose a supported update action.');
       return host.updates[action](value);
@@ -91,6 +93,8 @@ export const modelPreload = `\n/* notch model settings bridge */
 if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location.search).has('surface')){
  const {contextBridge,ipcRenderer}=require('electron');
  contextBridge.exposeInMainWorld('notchModels',Object.freeze({
+  automations:(action,value)=>ipcRenderer.invoke('notch-models:automations',action,value),
+  maintenance:action=>ipcRenderer.invoke('notch-models:maintenance',action),
   updates:(action,value)=>ipcRenderer.invoke('notch-models:updates',action,value),
   state:refresh=>ipcRenderer.invoke('notch-models:state',refresh),
   runtime:(action,key)=>ipcRenderer.invoke('notch-models:runtime',action,key),
@@ -118,6 +122,8 @@ if(window.location.protocol==='notch-app:'&&!new URLSearchParams(window.location
 
 export function patchModelPreload(source) {
   if(!source.includes('/* notch model settings bridge */'))return source+modelPreload;
+  if(!source.includes('automations:(action,value)=>'))source=source.replace('state:refresh=>',"automations:(action,value)=>ipcRenderer.invoke('notch-models:automations',action,value),\n  state:refresh=>");
+  if(!source.includes('maintenance:action=>'))source=source.replace('state:refresh=>',"maintenance:action=>ipcRenderer.invoke('notch-models:maintenance',action),\n  state:refresh=>");
   if(!source.includes('runtime:(action,key)=>'))source=source.replace("state:refresh=>ipcRenderer.invoke('notch-models:state',refresh),","state:refresh=>ipcRenderer.invoke('notch-models:state',refresh),\n  runtime:(action,key)=>ipcRenderer.invoke('notch-models:runtime',action,key),");
   if(!source.includes('updates:(action,value)=>'))source=source.replace('state:refresh=>','updates:(action,value)=>ipcRenderer.invoke(\'notch-models:updates\',action,value),\n  state:refresh=>');
   const current="hub:(runner,options)=>ipcRenderer.invoke('notch-models:hub',runner,options)",previous="hub:runner=>ipcRenderer.invoke('notch-models:hub',runner)";

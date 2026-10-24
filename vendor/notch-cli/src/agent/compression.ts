@@ -387,6 +387,13 @@ const compressionThreshold = (window: number) => contextBudget(window).compactAt
 const MAX_COMPRESSION_FAILURES = 3;
 
 const compressionFailures = new WeakMap<object, number>();
+interface CompressionBilling { remaining:()=>number; usage:(input:number,output:number)=>void }
+function summaryOutput(input:string,requested:number,billing?:CompressionBilling){
+  if(!billing)return requested;
+  const remaining=billing.remaining()-estimateTextTokens(input)-128;
+  if(remaining<1)throw Object.assign(Error('The automation reached its token limit.'),{code:'token-limit'});
+  return Math.min(requested,remaining);
+}
 
 /**
  * Tier 2: Model-based summarization of older conversation turns.
@@ -400,6 +407,7 @@ export async function autoCompactSummarize(
     keepRecent?: number;
     signal?: AbortSignal;
     historyBudget?: number;
+    billing?: CompressionBilling;
   },
 ): Promise<{ messages: ModelMessage[]; compressed: boolean }> {
   const threshold = opts.historyBudget ? Math.floor(opts.historyBudget * .8) : compressionThreshold(opts.contextWindow);
@@ -431,6 +439,7 @@ export async function autoCompactSummarize(
   if (summaryBudget < 64) return { messages, compressed: false };
 
   let summaryText: string;
+  const outputLimit=summaryOutput(middleText,Math.min(1024, contextBudget(opts.contextWindow).output, Math.max(64, Math.floor(summaryBudget * .6))),opts.billing);
   try {
     const result = await generateText({
       model: opts.model,
@@ -440,14 +449,17 @@ export async function autoCompactSummarize(
         'errors encountered, and the current task state. Be concise but thorough. ' +
         'Output only the summary, no preamble.',
       messages: [{ role: 'user', content: middleText }],
-      maxOutputTokens: Math.min(1024, contextBudget(opts.contextWindow).output, Math.max(64, Math.floor(summaryBudget * .6))),
+      maxOutputTokens: outputLimit,
       abortSignal: opts.signal,
       maxRetries: 0,
     });
+    opts.billing?.usage(result.usage.inputTokens??0,result.usage.outputTokens??0);
+    opts.signal?.throwIfAborted();
     summaryText = result.text.trim();
     if (!summaryText) throw new Error("Empty compaction summary");
     compressionFailures.delete(opts.model as object);
-  } catch {
+  } catch (error) {
+    if((error as {code?:string})?.code==='token-limit')throw error;
     opts.signal?.throwIfAborted();
     compressionFailures.set(opts.model as object, (compressionFailures.get(opts.model as object) ?? 0) + 1);
     // Fall back to deterministic
@@ -472,6 +484,7 @@ export async function fullCompact(
   contextWindow = 131072,
   signal?: AbortSignal,
   historyBudget = contextBudget(contextWindow).history,
+  billing?: CompressionBilling,
 ): Promise<{ messages: ModelMessage[]; compressed: boolean }> {
   if (messages.length < 4) {
     return { messages, compressed: false };
@@ -488,6 +501,7 @@ export async function fullCompact(
   if (summaryBudget < 64) return { messages, compressed: false };
 
   let summaryText: string;
+  const outputLimit=summaryOutput(middleText,Math.min(2048, contextBudget(contextWindow).output, Math.max(64, Math.floor(summaryBudget * .6))),billing);
   try {
     const result = await generateText({
       model,
@@ -496,12 +510,15 @@ export async function fullCompact(
         'the original task, all files created/modified, key decisions, ' +
         'current state, and any unresolved issues. Max 500 words.',
       messages: [{ role: 'user', content: middleText }],
-      maxOutputTokens: Math.min(2048, contextBudget(contextWindow).output, Math.max(64, Math.floor(summaryBudget * .6))),
+      maxOutputTokens: outputLimit,
       abortSignal: signal,
       maxRetries: 0,
     });
+    billing?.usage(result.usage.inputTokens??0,result.usage.outputTokens??0);
+    signal?.throwIfAborted();
     summaryText = result.text;
-  } catch {
+  } catch (error) {
+    if((error as {code?:string})?.code==='token-limit')throw error;
     signal?.throwIfAborted();
     summaryText = buildDeterministicSummary(allButLast2);
   }
@@ -646,8 +663,9 @@ export interface AutoCompressStats {
 export async function autoCompress(
   messages: ModelMessage[], model: LanguageModel, contextWindow: number,
   onCompress?: () => void, signal?: AbortSignal, historyBudget?: number,
+  billing?: CompressionBilling,
 ): Promise<ModelMessage[]> {
-  const result = await autoCompressWithStats(messages, model, contextWindow, signal, historyBudget);
+  const result = await autoCompressWithStats(messages, model, contextWindow, signal, historyBudget,billing);
   if (result.messages !== messages) onCompress?.();
   return result.messages;
 }
@@ -656,6 +674,7 @@ export async function autoCompress(
 export async function autoCompressWithStats(
   messages: ModelMessage[], model: LanguageModel, contextWindow: number,
   signal?: AbortSignal, historyBudget = contextBudget(contextWindow).history,
+  billing?: CompressionBilling,
 ): Promise<{ messages: ModelMessage[]; stats: AutoCompressStats }> {
   const stats: AutoCompressStats = { budgetStashed: 0, snipped: 0, collapsed: false, autoCompacted: false, fullCompacted: false };
   const threshold = Math.floor(historyBudget * .8);
@@ -664,11 +683,11 @@ export async function autoCompressWithStats(
   let result = microCompact(br.messages);
   stats.budgetStashed = br.stashed;
   if (estimateTokens(result) >= threshold) {
-    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget });
+    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget,billing });
     result = auto.messages; stats.autoCompacted = auto.compressed;
   }
   if (estimateTokens(result) > historyBudget) {
-    const full = await fullCompact(result, model, contextWindow, signal, historyBudget);
+    const full = await fullCompact(result, model, contextWindow, signal, historyBudget,billing);
     result = full.messages; stats.fullCompacted = full.compressed;
   }
   return { messages: result, stats };

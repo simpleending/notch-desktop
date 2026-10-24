@@ -120,6 +120,7 @@ export class NotchQuery {
     return preview;
   }
   emitResult(error, result) {
+    if(error)(this.automation??this.request.automation)?.failure?.(error);
     if (this.compacting) { this.compacting=false; this.emit(this.envelope('system',{subtype:'status',status:null})); }
     const interrupted = this.active?.controller.signal.aborted;
     const failed = !!error || (!!result?.status && result.status !== 'completed');
@@ -152,9 +153,12 @@ export class NotchQuery {
     if(this.changingModel)await this.modelChangeFinished;
     if(this.closed)return;
     this.host.assertTurnAvailable?.(this.id);
+    // Merged automation chats reuse this query. Bind limits and cancellation to the new run for each turn.
+    this.automation=this.host.automations?this.host.automations.queryOptions(this.id):this.request.automation;
     const controller = new AbortController();
-    const forwardAbort = () => controller.abort(this.request.abortController.signal.reason);
-    const outerSignal = this.request.abortController?.signal;
+    const signals=[this.request.abortController?.signal,this.automation?.signal].filter(Boolean);
+    const outerSignal = signals.length?AbortSignal.any(signals):undefined;
+    const forwardAbort = () => controller.abort(outerSignal.reason);
     if (outerSignal?.aborted) forwardAbort(); else outerSignal?.addEventListener('abort', forwardAbort, { once: true });
     let finish; const finished = new Promise(resolve => { finish = resolve; });
     this.active = { controller, finished, started: Date.now() };
@@ -167,19 +171,21 @@ export class NotchQuery {
       text = ''; textId = undefined;
     };
     try {
+      controller.signal.throwIfAborted();
       if (this.host.openCheckpoints) {
         this.state = await this.host.loadSession(this.id, this.request.cwd, this.request.executionTarget);
         this.checkpoints = await this.host.openCheckpoints(this.id, this.state.cwd, this.request.executionTarget);
       }
+      controller.signal.throwIfAborted();
       this.host.assertTurnAvailable?.(this.id);
       await this.checkpoints.beginTurn(messageId);
       this.state.messages.push({ role: 'user', content });
       await this.host.saveSession(this.id, this.state);
       const result = await this.runTurn({
         cwd: this.request.cwd, sessionId: this.id, messages: this.state.messages, model: this.model,
-        onQueue: message => { this.queueMessage = message; },
+        onQueue: message => { this.queueMessage = message;this.automation?.queue?.(message); },
         accessMode: accessForMode(this.permissionMode, this.planMode), signal: controller.signal,
-        checkpoints: this.checkpoints, maxIterations: this.request.maxTurns || 25,
+        checkpoints: this.checkpoints, maxIterations: this.request.maxTurns || 25,maxTotalTokens:this.automation?.maxTokens||undefined,
         tools: Array.isArray(this.request.tools) ? this.request.tools : undefined,
         allowedTools: this.request.allowedTools, disallowedTools: this.request.disallowedTools,
         instructions: typeof this.request.systemPrompt === 'string' ? this.request.systemPrompt : this.request.systemPrompt?.append,
@@ -212,9 +218,10 @@ export class NotchQuery {
         },
         onToolCall: (name, args, id) => { finishText(); this.emit(this.envelope('assistant', { message: { role: 'assistant', content: [{ type: 'tool_use', id, name: toolNames[name] || name, input: wireInput(name, args) }] }, parent_tool_use_id: null })); },
         onToolResult: (_name, output, isError, id) => { this.emit(this.envelope('user', { message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output, is_error: isError }] }, parent_tool_use_id: null })); },
-        onUsage: usage => this.acceptUsage(usage),
+        onUsage: usage => {this.acceptUsage(usage);this.automation?.usage?.(usage);},
         onCompact: messages => this.host.archiveTranscript?.(this.id, messages) ?? Promise.resolve(),
         onLifecycle: async (event, payload) => {
+          if(event==='pre-tool')controller.signal.throwIfAborted();
           if (event==='pre-compact') { this.compacting=true; this.emit(this.envelope('system',{subtype:'status',status:'compacting'})); return; }
           if (event==='post-compact') { this.compacting=false; this.emit(this.envelope('system',{subtype:'status',status:null})); return; }
           if (!['pre-tool', 'post-tool'].includes(event)) return;

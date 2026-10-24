@@ -2,6 +2,7 @@ import { parse } from 'acorn';
 import { patchClassMethod, patchFunction } from './bundle-patch.mjs';
 import { patchLocalServicesMain, patchLocalServicesRenderer } from './local-services-patch.mjs';
 import { patchEnglishMain } from './english-main-patch.mjs';
+import { patchAutomationsMain,patchAutomationsRenderer } from './automation-patch.mjs';
 
 const unavailable = 'throw new Error("This hosted feature is unavailable in the local edition of notch.");';
 const localCapabilities = 'cloudCollaborationEnabled:false,cloudAutomations:false,issuesEnabled:false,discussionsEnabled:false,agentTeamsEnabled:false,squadEnabled:false,partnerPlan:false';
@@ -60,7 +61,7 @@ export function patchLocalOnlyMain(source) {
     ['wne', 'target', 'return "https://openrouter.ai/api/v1/models";'],
   ];
   for (const [name, method, body] of methods) source = patchClassMethod(source, name, method, body);
-  return patchEnglishMain(patchLocalServicesMain(source));
+  return patchAutomationsMain(patchEnglishMain(patchLocalServicesMain(source)));
 }
 
 function replace(source, before, after) {
@@ -96,7 +97,6 @@ export function patchLocalOnlyRenderer(source) {
   if (source.includes('function InstalledExtensionsSettings(')) source = patchFunction(source,'InstalledExtensionsSettings',body => removeControls(body,['settings.installed.browseMarket']).replace('t1("extensions.noInstalledDescription")','"Extensions installed from local files appear here."'));
   if (source.includes('function AutomationTasksView(')) source = patchFunction(source,'AutomationTasksView',body => {
     body = replace(body,'reactExports.useState("all")','reactExports.useState("local")');
-    body = replace(body,'["tasks","templates","logs"].map','["tasks","logs"].map');
     return removeControls(body,['all','cloud']);
   });
   if (source.includes('class KeybindingService') || source.includes('KeybindingService=class')) source = patchClassMethod(source,'KeybindingService','registerKeybinding',body => {
@@ -106,5 +106,5 @@ export function patchLocalOnlyRenderer(source) {
   source=patchLocalServicesRenderer(source);
   if(source.includes('function VoiceInputRecognitionSettings('))source=patchFunction(source,'VoiceInputRecognitionSettings',body=>removeControls(body,['settings.voiceBasicPolish','settings.voiceVoiceprint']));
   if(source.includes('function ExperimentsSettings('))source=patchFunction(source,'ExperimentsSettings',body=>removeControls(body,['settings.experimentalVoiceDiscussion']));
-  return source;
+  return patchAutomationsRenderer(source);
 }

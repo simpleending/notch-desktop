@@ -20,10 +20,11 @@ export { detectLocalHardware, parseNvidiaMemory, linuxGpuMemory, modelFit, inspe
 export { contextBudget, estimateTextTokens } from './agent/context-budget.js';
 export { managedOllama, setManagedOllamaLauncher, withManagedOllamaStart } from './providers/ollama-runtime.js';
 export { withLocalInference } from './concurrency/local-inference.js';
+export { markOwnedRuntime, pruneOwnedRuntimes, rotateRuntimeLog } from './providers/runtime-maintenance.js';
 export { startMlx, stopMlx, loadedMlxModel } from './providers/local-runner.js';
 export { startColibri } from './providers/colibri.js';
-export { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } from './providers/colibri.js';
-export { prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, setStrataDirectory, installStrata, startStrata, stopStrata } from './providers/strata.js';
+export { COLIBRI_VERSION, prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } from './providers/colibri.js';
+export { STRATA_CONTROL, prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, setStrataDirectory, installStrata, startStrata, stopStrata } from './providers/strata.js';
 export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };
 export interface DesktopTurn {
@@ -56,6 +57,7 @@ export interface DesktopTurn {
   checkpoints: CheckpointManager;
   approve: NonNullable<ToolContext['confirmTool']>;
   maxIterations?: number;
+  maxTotalTokens?: number;
   onText?: AgentConfig['onTextChunk'];
   onToolCall?: AgentConfig['onToolCall'];
   onToolResult?: AgentConfig['onToolResult'];
@@ -157,7 +159,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
       contextWindows: turn.automaticContext ? turn.availableContextWindows : undefined,
       resolveContext: contextWindow => resolveModel({ ...selection, contextWindow }),
       systemPrompt: (turn.remoteWorkspace ? `You are Notch, an AI coding assistant. All workspace tools operate over SSH on the user's host.\n${turn.remoteWorkspace.instructions}` : await buildSystemPrompt(cwd, selection.model, ctx, selection.contextWindow)) + (turn.instructions ? `\n\nDesktop agent instructions:\n${turn.instructions}` : ''), toolContext: ctx,
-      maxIterations: turn.maxIterations, contextWindow: selection.contextWindow, strataModelId: provider === 'strata' ? (isByokRef(selection.model) ? parseByokRef(selection.model).model : selection.model) : undefined, strataAutoContext: turn.strataAutoContext, colibriAutoContext: turn.colibriAutoContext ?? selection.contextWindow === undefined, colibriModelId: selection.byokProvider === 'colibri' ? (selection.model.startsWith('colibri/') ? selection.model.slice(8) : selection.model) : undefined,
+      maxIterations: turn.maxIterations,maxTotalTokens:turn.maxTotalTokens, contextWindow: selection.contextWindow, strataModelId: provider === 'strata' ? (isByokRef(selection.model) ? parseByokRef(selection.model).model : selection.model) : undefined, strataAutoContext: turn.strataAutoContext, colibriAutoContext: turn.colibriAutoContext ?? selection.contextWindow === undefined, colibriModelId: selection.byokProvider === 'colibri' ? (selection.model.startsWith('colibri/') ? selection.model.slice(8) : selection.model) : undefined,
       onTextChunk: turn.onText, onToolCall: turn.onToolCall, onToolResult: turn.onToolResult,
       onUsage: turn.onUsage,
       maxOutputTokens: turn.maxOutputTokens, onCompact: turn.onCompact,

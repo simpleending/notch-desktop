@@ -12,6 +12,7 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import { promisify } from 'node:util';
 import { acquireLease } from '../concurrency/lease.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import {markOwnedRuntime,rotateRuntimeLog} from './runtime-maintenance.js';
 const exec = promisify(execFile);
 export const MANAGED_OLLAMA_HOST = 'http://127.0.0.1:11436';
 const root = () => path.join(os.homedir(), '.notch', 'runtimes', 'ollama');
@@ -109,7 +110,7 @@ async function ensureManagedOllama(minimum: string, signal?: AbortSignal, allowI
     const name = runtimeAssetName(os.platform(), os.arch());
     const main = release.assets.find(asset => asset.name === name);
     if (!main) throw new Error(`Official runtime asset ${name} is unavailable.`);
-    const directory = path.join(root(), release.tag_name); await mkdir(directory, { recursive: true });
+    const directory = path.join(root(), release.tag_name),fresh=!(await stat(directory).catch(()=>null)); await mkdir(directory, { recursive: true });
     const assets = [main];
     // The AMD runtime is a separate official asset; include it on Windows x64.
     if (os.platform() === 'win32' && os.arch() === 'x64') {
@@ -138,9 +139,11 @@ async function ensureManagedOllama(minimum: string, signal?: AbortSignal, allowI
       } catch { signal?.throwIfAborted(); }
     }
     if (!installed) throw new Error('Downloaded Ollama could not run on this computer.');
+    if(fresh)await markOwnedRuntime(directory);
     await writeFile(path.join(root(), 'installed.json'), JSON.stringify({ tag: installed.tag }), { mode: 0o600 });
   }
   signal?.throwIfAborted();
+  await rotateRuntimeLog(path.join(root(),'server.log'));
   const log = await open(path.join(root(), 'server.log'), 'a', 0o600);
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/token|secret|password|api_key/i.test(key)));
   let child: ChildProcess;

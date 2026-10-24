@@ -77,6 +77,7 @@ export interface AgentConfig {
   onCorrection?: (attempt: number, success: boolean) => void;
   /** Counts from the latest provider request, rather than cumulative turn usage. */
   onUsage?: (usage: { inputTokens: number; outputTokens: number; contextWindow: number }) => void;
+  maxTotalTokens?: number;
 }
 
 export interface AgentResponse {
@@ -225,7 +226,10 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
     history = await autoCompress(history, config.model, contextWindow, () => {
       wasCompressed = true;
       config.onCompress?.();
-    }, config.toolContext.abortSignal, Math.floor(budget.history / tokenRatio));
+    }, config.toolContext.abortSignal, Math.floor(budget.history / tokenRatio),config.maxTotalTokens?{
+      remaining:()=>config.maxTotalTokens!-totalPromptTokens-totalCompletionTokens,
+      usage:(input,output)=>{totalPromptTokens+=input;totalCompletionTokens+=output;config.onUsage?.({inputTokens:input,outputTokens:output,contextWindow});if(totalPromptTokens+totalCompletionTokens>=config.maxTotalTokens!)throw Object.assign(Error('The automation reached its token limit.'),{code:'token-limit'});},
+    }:undefined);
     if (estimateTokens(history) * tokenRatio > budget.history) throw new Error('The current request or tool results exceed the selected context. Increase context or split the request; the transcript has been saved.');
     await config.toolContext.runHook?.('post-compact', { messageCount: history.length });
   };
@@ -269,6 +273,8 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
     const toolResults: Array<{ toolCallId: string; result: unknown }> = [];
     let streamUsage: { promptTokens?: number; completionTokens?: number } | null = null;
 
+    const remainingTokens=config.maxTotalTokens?config.maxTotalTokens-totalPromptTokens-totalCompletionTokens-estimateTokens(history)-overhead:Infinity;
+    if(remainingTokens<1)throw Object.assign(new Error('The automation reached its token limit.'),{code:'token-limit'});
     const result = streamText({
       // The stream consumer propagates failures; the SDK default also dumps raw requests to stderr.
       onError() {},
@@ -280,7 +286,7 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       stopWhen: isStepCount(1),
       repairToolCall: feedback.repair,
       maxRetries: 0,
-      maxOutputTokens: budget.output,
+      maxOutputTokens: Math.min(budget.output,remainingTokens),
     });
 
     for await (const event of result.stream) {

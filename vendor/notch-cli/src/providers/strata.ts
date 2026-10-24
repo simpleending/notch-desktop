@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { withLocalInference } from '../concurrency/local-inference.js';
 import { acquireLease } from '../concurrency/lease.js';
 import { quietPython } from './python-console.js';
+import {markOwnedRuntime} from './runtime-maintenance.js';
 import type { LocalHardware } from './local-models.js';
 
 export const STRATA_VERSION='0.2.2', STRATA_CONTROL='0.1.47';
@@ -139,6 +140,7 @@ export async function prepareStrata(signal?:AbortSignal,output:(s:string)=>void=
       let unpacked=stage;
       try{await access(path.join(unpacked,'strata.py'));}catch{const entries=await readdir(stage);if(entries.length!==1)throw new Error('Invalid Strata archive.');unpacked=path.join(stage,entries[0]!);await access(path.join(unpacked,'strata.py'));}
       await rename(unpacked,runtime());
+      await markOwnedRuntime(runtime());
     }finally{if(path.dirname(stage)!==root())throw new Error('Invalid Strata staging path.');await rm(stage,{recursive:true,force:true});}
   }finally{await release();}
 }
