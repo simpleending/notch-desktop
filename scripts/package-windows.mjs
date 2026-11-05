@@ -125,7 +125,8 @@ const configuration={appId,productName,executableName:'Notch',copyright:'Copyrig
     createDesktopShortcut:true,createStartMenuShortcut:true,shortcutName:productName,uninstallDisplayName:productName,deleteAppDataOnUninstall:false,runAfterFinish:true,differentialPackage:false,license:path.join(root,'LICENSE')}};
 const config=path.join(staging,'electron-builder.json');await fs.writeFile(config,JSON.stringify(configuration,null,2));
 await new Promise((resolve,reject)=>{
-  const env={...Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|^csc_/i.test(key))),CSC_IDENTITY_AUTO_DISCOVERY:'false'};
+  // The bundled NSIS extractor cannot decode the ARM64 filter auto-selected by newer 7-Zip.
+  const env={...Object.fromEntries(Object.entries(process.env).filter(([key])=>!/token|secret|password|api.?key|^csc_/i.test(key))),CSC_IDENTITY_AUTO_DISCOVERY:'false',ELECTRON_BUILDER_7Z_FILTER:'BCJ2'};
   const child=spawn(process.execPath,[process.env.npm_execpath,'exec','--yes','--package=electron-builder@26.15.3','--','electron-builder','--prepackaged',app,'--win','nsis','--x64','--config',config,'--publish','never'],{cwd:root,env,stdio:'inherit',windowsHide:true});
   child.once('error',reject);child.once('close',code=>code===0?resolve():reject(new Error(`Installer build exited ${code}.`)));
 });
