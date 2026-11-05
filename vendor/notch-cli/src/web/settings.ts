@@ -8,10 +8,10 @@ import { getConfigDir } from '../auth.js';
 
 export const webSettingsSchema = z.object({
   enabled: z.boolean().default(true),
-  searchProvider: z.enum(['duckduckgo', 'tavily']).default('duckduckgo'),
+  searchProvider: z.enum(['duckduckgo', 'tavily', 'serper', 'serpapi']).default('duckduckgo'),
   browser: z.enum(['auto', 'msedge', 'chrome', 'chromium']).default('auto'),
 });
-export type WebSettings = z.infer<typeof webSettingsSchema> & { tavilyKey?: string };
+export type WebSettings = z.infer<typeof webSettingsSchema> & { tavilyKey?: string; serperKey?: string; serpapiKey?: string };
 const file = () => path.join(getConfigDir(), 'web-research.json');
 export const validSearchKey = (key: string) => /^[\x21-\x7e]{12,4096}$/.test(key);
 

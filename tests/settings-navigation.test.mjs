@@ -46,6 +46,12 @@ test('web settings retry a failed load and retain an unsaved key when another se
     await all(view.render()).find(node => node.type === 'form').props.onSubmit({ preventDefault() {} }); await tick();
     assert.equal(field(view.render(), 'Tavily API key').props.value, '');
     assert.equal(settings.key, 'unsaved-user-key');
+    await field(view.render(), 'Search provider').props.onChange({ target: { value: 'serpapi' } });
+    field(view.render(), 'SerpApi API key').props.onChange({ target: { value: 'serpapi-fixture-key' } });
+    await all(view.render()).find(node => node.props['aria-label'] === 'SerpApi credentials').props.onSubmit({ preventDefault() {} }); await tick();
+    assert.equal(settings.searchProvider, 'serpapi');
+    assert.equal(settings.serpapiKey, 'serpapi-fixture-key');
+    assert.equal(settings.key, 'unsaved-user-key');
   } finally { view.close(); }
 });
 

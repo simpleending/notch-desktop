@@ -73,9 +73,10 @@ try {
   await access.selectOption('false'); await until(async () => !(await page.evaluate(() => window.notchModels.web())).enabled, 'disable web access');
   await access.selectOption('true'); await until(async () => (await page.evaluate(() => window.notchModels.web())).enabled, 'enable web access');
   await page.getByLabel('Tavily API key', { exact: true }).fill('tvly-fixture-only-secret');
-  await page.getByRole('button', { name: 'Save key', exact: true }).click(); await until(async () => (await page.evaluate(() => window.notchModels.web())).hasKey, 'save encrypted search key');
-  await page.getByRole('button', { name: 'Remove key', exact: true }).click(); await until(async () => !(await page.evaluate(() => window.notchModels.web())).hasKey, 'remove search key');
-  await page.getByLabel('Tavily API key', { exact: true }).fill('tvly-fixture-only-secret'); await page.getByRole('button', { name: 'Save key', exact: true }).click(); await until(async () => (await page.evaluate(() => window.notchModels.web())).hasKey, 'replace search key');
+  const tavily = page.getByRole('form', { name: 'Tavily credentials' });
+  await tavily.getByRole('button', { name: 'Save key', exact: true }).click(); await until(async () => (await page.evaluate(() => window.notchModels.web())).hasKey, 'save encrypted search key');
+  await tavily.getByRole('button', { name: 'Remove key', exact: true }).click(); await until(async () => !(await page.evaluate(() => window.notchModels.web())).hasKey, 'remove search key');
+  await page.getByLabel('Tavily API key', { exact: true }).fill('tvly-fixture-only-secret'); await tavily.getByRole('button', { name: 'Save key', exact: true }).click(); await until(async () => (await page.evaluate(() => window.notchModels.web())).hasKey, 'replace search key');
   assert.ok(!(await fs.readFile(path.join(profile, 'web-research.json'), 'utf8')).includes('tvly-fixture-only-secret')); checks.push('Settings save an encrypted key and toggle web access');
   await page.getByRole('combobox', { name: 'Research browser', exact: true }).selectOption('chromium');
   await until(async () => (await page.evaluate(() => window.notchModels.web())).browser === 'chromium', 'choose browser');

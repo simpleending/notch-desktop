@@ -47,16 +47,24 @@ export function parseDuckDuckGo(html: string): SearchResult[] {
   return results;
 }
 
-export async function searchDuckDuckGo(query: string, maxResults: number, include: string[] = [], exclude: string[] = [], signal?: AbortSignal): Promise<SearchResult[]> {
+export function searchDomainFilters(include: string[] = [], exclude: string[] = []) {
   const allowed = include.map(searchDomain), denied = exclude.map(searchDomain);
   const filters = [allowed.length ? `(${allowed.map(host => `site:${host}`).join(' OR ')})` : '', ...denied.map(host => `-site:${host}`)].filter(Boolean);
+  const matches = (hostname: string, host: string) => hostname === host || hostname.endsWith('.' + host);
+  return {
+    filters,
+    accepts: (url: string) => {
+      const host = new URL(webUrl(url)).hostname.toLowerCase();
+      return (!allowed.length || allowed.some(domain => matches(host, domain))) && !denied.some(domain => matches(host, domain));
+    },
+  };
+}
+
+export async function searchDuckDuckGo(query: string, maxResults: number, include: string[] = [], exclude: string[] = [], signal?: AbortSignal): Promise<SearchResult[]> {
+  const { filters, accepts } = searchDomainFilters(include, exclude);
   const url = new URL('https://html.duckduckgo.com/html/'); url.searchParams.set('q', [query, ...filters].join(' '));
   const response = await fetch(url.href, { signal, headers: { Accept: 'text/html' } });
   if (!response.ok) throw Error(`DuckDuckGo search failed: HTTP ${response.status}. Retry later or select Tavily in Web research settings.`);
   const results = parseDuckDuckGo(await boundedText(response));
-  const matches = (hostname: string, host: string) => hostname === host || hostname.endsWith('.' + host);
-  return results.filter(row => {
-    const host = new URL(row.url).hostname.toLowerCase();
-    return (!allowed.length || allowed.some(domain => matches(host, domain))) && !denied.some(domain => matches(host, domain));
-  }).slice(0, maxResults);
+  return results.filter(row => accepts(row.url)).slice(0, maxResults);
 }

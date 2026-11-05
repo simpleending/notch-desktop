@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import type { NotchTool, ToolResult } from './types.js';
 import { loadWebSettings } from '../web/settings.js';
-import { searchDuckDuckGo } from '../web/duckduckgo.js';
+import { searchDomainFilters, searchDuckDuckGo } from '../web/duckduckgo.js';
 import { boundedText, sourceLink } from '../web/content.js';
 
 const TAVILY_ENDPOINT = 'https://api.tavily.com/search';
@@ -58,12 +58,39 @@ function snippet(text: string | undefined, n: number): string {
   return clean.slice(0, n).trimEnd() + '...';
 }
 
+async function searchGoogle(provider: 'serper' | 'serpapi', key: string, params: z.infer<typeof parameters>, signal: AbortSignal): Promise<TavilyResult[]> {
+  const { filters, accepts } = searchDomainFilters(params.include_domains, params.exclude_domains);
+  const q = [params.query, ...filters].join(' ');
+  const serper = provider === 'serper';
+  const url = serper ? 'https://google.serper.dev/search'
+    : 'https://serpapi.com/search.json?' + new URLSearchParams({ engine: 'google', q, api_key: key });
+  const response = await fetch(url, {
+    signal,
+    redirect: 'error',
+    ...(serper ? { method: 'POST', headers: { 'X-API-KEY': key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q, num: params.max_results ?? DEFAULT_RESULTS }) } : {}),
+  });
+  if (!response.ok) throw Error(`HTTP ${response.status}`);
+  const data = JSON.parse(await boundedText(response));
+  // SerpApi includes an error message even for a successful, empty Google search.
+  if (!serper && data?.search_metadata?.status === 'Success' && data.search_information?.organic_results_state === 'Fully empty') return [];
+  if (!data || data.error || data.search_metadata?.status === 'Error') throw Error('The provider rejected the search.');
+  const rows = data[serper ? 'organic' : 'organic_results'] ?? [];
+  if (!Array.isArray(rows)) throw Error('Invalid search results.');
+  return rows.flatMap(row => {
+    if (typeof row?.link !== 'string') return [];
+    try {
+      return accepts(row.link) ? [{ title: row.title, url: row.link, content: row.snippet }] : [];
+    } catch { return []; }
+  });
+}
+
 export const webSearchTool: NotchTool<typeof parameters> = {
   name: 'web_search',
   description:
     'Search the web using the configured provider (DuckDuckGo by default, no key needed) and return ranked results with titles, URLs, and snippets. ' +
     'Use this to discover relevant pages, find current information, or answer factual questions. ' +
-    'Pair with `web_fetch` to read full page contents. Choose DuckDuckGo or optional Tavily in Web research settings. Tavily requires an API key. Cite the returned URLs as Markdown links.',
+    'Pair with `web_fetch` to read full page contents. Choose DuckDuckGo, Tavily, Serper or SerpApi in Web research settings. Cite the returned URLs as Markdown links.',
   parameters,
   async execute(params, ctx): Promise<ToolResult> {
     let settings;
@@ -76,6 +103,19 @@ export const webSearchTool: NotchTool<typeof parameters> = {
         data = { results: await searchDuckDuckGo(params.query, params.max_results ?? DEFAULT_RESULTS, params.include_domains, params.exclude_domains, signal) };
       } catch (error) {
         return { content: `Web search failed: ${(error as Error).message}`, isError: true };
+      }
+    } else if (settings.searchProvider !== 'tavily') {
+      const provider = settings.searchProvider;
+      const label = provider === 'serper' ? 'Serper' : 'SerpApi';
+      const key = provider === 'serper' ? settings.serperKey : settings.serpapiKey;
+      if (!key) return { content: `Add a ${label} API key in Settings → Web research or set ${provider.toUpperCase()}_API_KEY.`, isError: true };
+      try {
+        data = { results: await searchGoogle(provider, key, params, signal) };
+      } catch (error) {
+        // Transport and parse errors may include the credential-bearing URL.
+        const detail = signal.aborted ? 'Search canceled or timed out.' : error instanceof Error && /^HTTP \d{3}$/.test(error.message)
+          ? `${error.message}. Check your key and provider quota.` : 'Check the provider and your network connection.';
+        return { content: `${label} search failed. ${detail}`, isError: true };
       }
     } else {
       const apiKey = settings.tavilyKey;

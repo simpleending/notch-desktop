@@ -1561,7 +1561,7 @@ import { spawn as spawn3 } from "child_process";
 import { z as z9 } from "zod";
 var webSettingsSchema = z9.object({
   enabled: z9.boolean().default(true),
-  searchProvider: z9.enum(["duckduckgo", "tavily"]).default("duckduckgo"),
+  searchProvider: z9.enum(["duckduckgo", "tavily", "serper", "serpapi"]).default("duckduckgo"),
   browser: z9.enum(["auto", "msedge", "chrome", "chromium"]).default("auto")
 });
 var file = () => path11.join(getConfigDir(), "web-research.json");
@@ -1783,19 +1783,26 @@ function parseDuckDuckGo(html) {
   if (anchors.length && !results.length) throw Error("DuckDuckGo returned no usable source links. Try another search or select Tavily in Web research settings.");
   return results;
 }
-async function searchDuckDuckGo(query, maxResults, include = [], exclude = [], signal) {
+function searchDomainFilters(include = [], exclude = []) {
   const allowed = include.map(searchDomain), denied = exclude.map(searchDomain);
   const filters = [allowed.length ? `(${allowed.map((host) => `site:${host}`).join(" OR ")})` : "", ...denied.map((host) => `-site:${host}`)].filter(Boolean);
+  const matches = (hostname, host) => hostname === host || hostname.endsWith("." + host);
+  return {
+    filters,
+    accepts: (url) => {
+      const host = new URL(webUrl(url)).hostname.toLowerCase();
+      return (!allowed.length || allowed.some((domain) => matches(host, domain))) && !denied.some((domain) => matches(host, domain));
+    }
+  };
+}
+async function searchDuckDuckGo(query, maxResults, include = [], exclude = [], signal) {
+  const { filters, accepts } = searchDomainFilters(include, exclude);
   const url = new URL("https://html.duckduckgo.com/html/");
   url.searchParams.set("q", [query, ...filters].join(" "));
   const response = await fetch(url.href, { signal, headers: { Accept: "text/html" } });
   if (!response.ok) throw Error(`DuckDuckGo search failed: HTTP ${response.status}. Retry later or select Tavily in Web research settings.`);
   const results = parseDuckDuckGo(await boundedText(response));
-  const matches = (hostname, host) => hostname === host || hostname.endsWith("." + host);
-  return results.filter((row) => {
-    const host = new URL(row.url).hostname.toLowerCase();
-    return (!allowed.length || allowed.some((domain) => matches(host, domain))) && !denied.some((domain) => matches(host, domain));
-  }).slice(0, maxResults);
+  return results.filter((row) => accepts(row.url)).slice(0, maxResults);
 }
 
 // vendor/notch-cli/src/tools/web-search.ts
@@ -1818,9 +1825,38 @@ function snippet(text2, n) {
   if (clean.length <= n) return clean;
   return clean.slice(0, n).trimEnd() + "...";
 }
+async function searchGoogle(provider, key, params, signal) {
+  const { filters, accepts } = searchDomainFilters(params.include_domains, params.exclude_domains);
+  const q = [params.query, ...filters].join(" ");
+  const serper = provider === "serper";
+  const url = serper ? "https://google.serper.dev/search" : "https://serpapi.com/search.json?" + new URLSearchParams({ engine: "google", q, api_key: key });
+  const response = await fetch(url, {
+    signal,
+    redirect: "error",
+    ...serper ? {
+      method: "POST",
+      headers: { "X-API-KEY": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ q, num: params.max_results ?? DEFAULT_RESULTS })
+    } : {}
+  });
+  if (!response.ok) throw Error(`HTTP ${response.status}`);
+  const data = JSON.parse(await boundedText(response));
+  if (!serper && data?.search_metadata?.status === "Success" && data.search_information?.organic_results_state === "Fully empty") return [];
+  if (!data || data.error || data.search_metadata?.status === "Error") throw Error("The provider rejected the search.");
+  const rows = data[serper ? "organic" : "organic_results"] ?? [];
+  if (!Array.isArray(rows)) throw Error("Invalid search results.");
+  return rows.flatMap((row) => {
+    if (typeof row?.link !== "string") return [];
+    try {
+      return accepts(row.link) ? [{ title: row.title, url: row.link, content: row.snippet }] : [];
+    } catch {
+      return [];
+    }
+  });
+}
 var webSearchTool = {
   name: "web_search",
-  description: "Search the web using the configured provider (DuckDuckGo by default, no key needed) and return ranked results with titles, URLs, and snippets. Use this to discover relevant pages, find current information, or answer factual questions. Pair with `web_fetch` to read full page contents. Choose DuckDuckGo or optional Tavily in Web research settings. Tavily requires an API key. Cite the returned URLs as Markdown links.",
+  description: "Search the web using the configured provider (DuckDuckGo by default, no key needed) and return ranked results with titles, URLs, and snippets. Use this to discover relevant pages, find current information, or answer factual questions. Pair with `web_fetch` to read full page contents. Choose DuckDuckGo, Tavily, Serper or SerpApi in Web research settings. Cite the returned URLs as Markdown links.",
   parameters: parameters10,
   async execute(params, ctx) {
     let settings;
@@ -1837,6 +1873,17 @@ var webSearchTool = {
         data = { results: await searchDuckDuckGo(params.query, params.max_results ?? DEFAULT_RESULTS, params.include_domains, params.exclude_domains, signal) };
       } catch (error) {
         return { content: `Web search failed: ${error.message}`, isError: true };
+      }
+    } else if (settings.searchProvider !== "tavily") {
+      const provider = settings.searchProvider;
+      const label = provider === "serper" ? "Serper" : "SerpApi";
+      const key = provider === "serper" ? settings.serperKey : settings.serpapiKey;
+      if (!key) return { content: `Add a ${label} API key in Settings \u2192 Web research or set ${provider.toUpperCase()}_API_KEY.`, isError: true };
+      try {
+        data = { results: await searchGoogle(provider, key, params, signal) };
+      } catch (error) {
+        const detail = signal.aborted ? "Search canceled or timed out." : error instanceof Error && /^HTTP \d{3}$/.test(error.message) ? `${error.message}. Check your key and provider quota.` : "Check the provider and your network connection.";
+        return { content: `${label} search failed. ${detail}`, isError: true };
       }
     } else {
       const apiKey = settings.tavilyKey;
