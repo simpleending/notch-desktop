@@ -687,6 +687,15 @@ export async function autoCompressWithStats(
     result = auto.messages; stats.autoCompacted = auto.compressed;
   }
   if (estimateTokens(result) > historyBudget) {
+    // A recent batch can exceed the window on its own. Keep its tool chain with previews.
+    const recent = budgetReduce(result, {
+      keepLastN: 0,
+      maxToolResultChars: Math.min(BUDGET_TOOL_RESULT_MAX, Math.max(BUDGET_PREVIEW_CHARS * 2, historyBudget)),
+    });
+    result = recent.messages;
+    stats.budgetStashed += recent.stashed;
+  }
+  if (estimateTokens(result) > historyBudget) {
     const full = await fullCompact(result, model, contextWindow, signal, historyBudget,billing);
     result = full.messages; stats.fullCompacted = full.compressed;
   }

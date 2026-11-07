@@ -2,6 +2,14 @@ import type { ModelMessage } from 'ai';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { toolResultValue } from '../messages.js';
 import type { ToolResult } from '../tools/types.js';
+import { sourceLink, webUrl } from '../web/content.js';
+
+const WEB_CALL_LIMITS = { web_search: 4, web_fetch: 4 };
+type WebTool = keyof typeof WEB_CALL_LIMITS;
+
+export function isWebResearchTool(name: string): name is WebTool {
+  return name === 'web_search' || name === 'web_fetch';
+}
 
 export function isVerificationCommand(command: string): boolean {
   return /\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|check|verify|lint|typecheck|validate|smoke|build)[\w:-]*\b|\b(?:vitest|jest|pytest|tsc|eslint|curl|Invoke-WebRequest|Invoke-RestMethod)\b|\b(?:cargo|go|dotnet)\s+test\b|\bnode\s+--check\b|\bnode\s+(?:-e|--eval)\s+.*\b(?:assert|fetch|statusCode)\b|\b[^\s"']*(?:verify|check|test|spec|smoke|qa)[^\s"']*\.(?:[cm]?js|[cm]?ts|py)\b/i.test(command);
@@ -29,6 +37,10 @@ function canonical(value: unknown): unknown {
 export class ExecutionGuard {
   private pending: Promise<unknown> = Promise.resolve();
   private batch = new Map<string, ToolResult>();
+  private webRequests = new Set<string>();
+  private webCalls = { web_search: 0, web_fetch: 0 };
+  private webResearchClosed = false;
+  private sources = new Map<string, { title: string; excerpt: string; fetched: boolean }>();
   private failures = new Map<string, number>();
   private failedSinceChange = new Map<string, number>();
   private ownership = new AsyncLocalStorage<boolean>();
@@ -50,6 +62,49 @@ export class ExecutionGuard {
   }
 
   beginStep(): void { this.batch.clear(); }
+  get webCallCount(): number { return this.webRequests.size; }
+  get hasFetchedSource(): boolean { return [...this.sources.values()].some(source => source.fetched); }
+  closeWebResearch(): void { this.webResearchClosed = true; }
+  webToolAvailable(name: string): boolean {
+    return !isWebResearchTool(name) || (!this.webResearchClosed && this.webCalls[name] < WEB_CALL_LIMITS[name]);
+  }
+  private preferredSources() {
+    return [...this.sources].sort(([, a], [, b]) => Number(b.fetched) - Number(a.fetched))
+      .slice(0, 4);
+  }
+  get webSourceLinks(): string[] {
+    return this.preferredSources().map(([url, source]) => sourceLink(source.title, url));
+  }
+  webEvidence(maxChars: number): string {
+    const sources = this.preferredSources();
+    const excerptLength = Math.max(0, Math.floor(maxChars / Math.max(1, sources.length)) - 700);
+    return sources.map(([url, source]) => {
+      const link = sourceLink(source.title, url);
+      return excerptLength && source.excerpt ? link + '\n' + source.excerpt.slice(0, excerptLength) : link;
+    }).join('\n\n').slice(0, maxChars);
+  }
+  private recordWebSources(name: WebTool, result: ToolResult): ToolResult {
+    const { webSources, ...visible } = result;
+    if (!result.isError && Array.isArray(webSources)) {
+      for (const source of webSources) {
+        if (typeof source?.url !== 'string' || source.url.length > 512 || typeof source.title !== 'string') continue;
+        try {
+          const url = webUrl(source.url);
+          const previous = this.sources.get(url);
+          if (!previous || name === 'web_fetch') {
+            const title = source.title.replace(/[<>]/g, ' ').slice(0, 160);
+            const excerpt = typeof source.excerpt === 'string' ? source.excerpt.slice(0, 2000) : '';
+            this.sources.set(url, {
+              title: name === 'web_fetch' && title === new URL(url).hostname ? previous?.title ?? title : title,
+              excerpt: excerpt || previous?.excerpt || '',
+              fetched: name === 'web_fetch',
+            });
+          }
+        } catch { /* An invalid link cannot become a citation. */ }
+      }
+    }
+    return visible;
+  }
   get failedChecks(): string[] { return [...this.checks.values()].filter(check=>!check.passed).map(check=>check.command).concat([...this.unrunChecks]); }
   private recordCheck(args: Record<string,unknown>, result: ToolResult): void {
     const command=typeof args.command==='string'?args.command.trim():'';
@@ -63,6 +118,13 @@ export class ExecutionGuard {
       if(this.stopped)return {content:this.stopped,isError:true};
       const input=name==='shell'?{command:String(args.command??'').trim(),background:!!args.background}:args;
       const key=name+':'+JSON.stringify(canonical(input));
+      if (isWebResearchTool(name)) {
+        if (this.webRequests.has(key)) return { content: 'Duplicate web request skipped. Use the evidence already returned for this request.', notExecuted: true };
+        if (!this.webToolAvailable(name)) return { content: 'The web research limit for this tool is reached. Use the evidence already collected.', notExecuted: true };
+        this.webRequests.add(key);
+        this.webCalls[name]++;
+        return this.recordWebSources(name, await this.ownership.run(true, execute));
+      }
       const duplicate=this.batch.get(key);
       if(duplicate)return {...duplicate,content:'Duplicate call skipped; previous result:\n'+duplicate.content};
       if((this.failures.get(key)??0)>=2||(this.failedSinceChange.get(name)??0)>=5){

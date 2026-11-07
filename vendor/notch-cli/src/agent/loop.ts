@@ -1,5 +1,5 @@
 import { toolOutput } from '../messages.js';
-import { ExecutionGuard } from './execution-guard.js';
+import { ExecutionGuard, isWebResearchTool } from './execution-guard.js';
 import { executionContext, withLocalInference } from '../concurrency/local-inference.js';
 import { withTaskWorkspace, openRouterTaskContext } from '../concurrency/task-workspace.js';
 import { isStepCount, asSchema, jsonSchema } from 'ai';
@@ -17,7 +17,7 @@ import { streamText, type ModelMessage, type LanguageModel, type ToolModelMessag
 import { promises as fs } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { buildToolMap, type ToolContext } from '../tools/index.js';
-import { autoCompress, estimateTokens } from './compression.js';
+import { autoCompress, estimateTokens, safeTailStart } from './compression.js';
 import { contextBudget, estimateTextTokens, fitContextWindow } from './context-budget.js';
 import { loadProjectInstructions } from '../context/project-instructions.js';
 import { formatMemoriesForPrompt } from '../memory/index.js';
@@ -158,6 +158,10 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let wasCompressed = false;
+  let retriedEmptyReply = false;
+  let webRounds = 0;
+  let webOnlyTurn = true;
+  let finishResearch = false;
 
   let verificationReminder = false;
 
@@ -179,8 +183,8 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       ].join('\n')
     : '';
 
-  const schemaText = JSON.stringify(await Promise.all(Object.entries(tools).map(async ([name, value]) => ({ name, description: value.description, schema: await asSchema(value.inputSchema).jsonSchema }))));
-  let overhead = estimateTextTokens(`${config.systemPrompt}${templateFormatHint}${schemaText}`) + 256;
+  const toolSchemas = await Promise.all(Object.entries(tools).map(async ([name, value]) => ({ name, description: value.description, schema: await asSchema(value.inputSchema).jsonSchema })));
+  let overhead = estimateTextTokens(config.systemPrompt + templateFormatHint + JSON.stringify(toolSchemas)) + 256;
   // Local reasoning shares the output allowance with tool arguments; keep cloud limits unchanged.
   const outputLimit = config.maxOutputTokens ?? (/^(?:ollama(?:-anthropic)?|mlx|colibri|strata)\//.test(config.modelId ?? '') ? 16384 : undefined);
   const colibriModelId = config.colibriModelId ?? (/^colibri[/:]/.test(config.modelId ?? '') ? config.modelId!.slice(8) : undefined);
@@ -263,28 +267,60 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       history = mc.messages;
       config.onMicrocompact?.(mc.cleared, mc.savedChars);
     }
+    if (webOnlyTurn && guard.hasFetchedSource && estimateTokens(history) * tokenRatio >= budget.compactAt) finishResearch = true;
+    if (finishResearch) guard.closeWebResearch();
+    const activeTools = toolNames.filter(name => guard.webToolAvailable(name));
+    if (finishResearch && activeTools.length === 1 && activeTools[0] === 'notch_tool_error') activeTools.pop();
+    const sourceLinks = guard.webSourceLinks;
+    const researchGuidance = sourceLinks.length
+      ? '\n\nCite the actual sources used with Markdown links. These URLs were returned by your research tools:\n'
+        + sourceLinks.map(link => link.slice(link.lastIndexOf('](') + 2, -1)).join('\n')
+      : '';
+    const instructions = config.systemPrompt + (finishResearch
+      ? '\n\nWeb research is complete for this turn. Use the collected evidence and finish the user’s request. Distinguish what the sources say from inference. Do not make another web request.'
+      : templateFormatHint) + researchGuidance + (retriedEmptyReply
+      ? '\n\nThe previous response was empty. Continue from the existing results and provide a visible answer.'
+      : '');
+    if (finishResearch) {
+      overhead = estimateTextTokens(instructions + JSON.stringify(toolSchemas.filter(tool => activeTools.includes(tool.name)))) + 256;
+      budget = contextBudget(contextWindow, overhead, outputLimit);
+    }
     await compact();
+    let modelMessages = history;
+    if (finishResearch && webOnlyTurn && sourceLinks.length) {
+      // A text-only synthesis should see the evidence, without a transcript
+      // ending in native tool calls that the model may try to continue.
+      const prior = history.slice(0, safeTailStart(history, 0) + 1);
+      const space = Math.max(0, Math.floor(budget.history / tokenRatio) - estimateTokens(prior) - 180);
+      const evidence = guard.webEvidence(Math.min(6500, space * 2));
+      modelMessages = [...prior, { role: 'user', content: [
+        'Answer my current request now. The web research has already been completed. Cite the evidence you use as clickable Markdown links.',
+        fenceUntrustedContext('tool-output', evidence),
+      ].filter(Boolean).join('\n\n') }];
+    }
 
     // --- Stream (retry is handled by outer withRetry in index.ts) ---
     guard.beginStep();
+    const webCallsBefore = guard.webCallCount;
     const holdText = totalToolCalls > 0 || guard.failedChecks.length > 0;
     let fullText = '';
     const toolCalls: Array<{ toolCallId: string; toolName: string; args: Record<string, unknown> }> = [];
     const toolResults: Array<{ toolCallId: string; result: unknown }> = [];
     let streamUsage: { promptTokens?: number; completionTokens?: number } | null = null;
 
-    const remainingTokens=config.maxTotalTokens?config.maxTotalTokens-totalPromptTokens-totalCompletionTokens-estimateTokens(history)-overhead:Infinity;
+    const remainingTokens=config.maxTotalTokens?config.maxTotalTokens-totalPromptTokens-totalCompletionTokens-estimateTokens(modelMessages)-overhead:Infinity;
     if(remainingTokens<1)throw Object.assign(new Error('The automation reached its token limit.'),{code:'token-limit'});
     const result = streamText({
       // The stream consumer propagates failures; the SDK default also dumps raw requests to stderr.
       onError() {},
       model: config.model,
-      messages: history,
+      messages: modelMessages,
       abortSignal: config.toolContext.abortSignal,
-      instructions: `${config.systemPrompt}${templateFormatHint}`,
+      instructions,
       tools,
+      activeTools,
       stopWhen: isStepCount(1),
-      repairToolCall: feedback.repair,
+      repairToolCall: activeTools.length ? feedback.repair : undefined,
       maxRetries: 0,
       maxOutputTokens: Math.min(budget.output,remainingTokens),
     });
@@ -379,16 +415,18 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       config.onCorrection?.(totalCorrectionAttempts, false);
       continue;
     }
+    if (finishResearch && webOnlyTurn && /^\s*(?:<tool_call\b|TOOL:)/i.test(fullText)
+        && /\bweb_(?:search|fetch)\b/i.test(fullText)) fullText = '';
 
     // --- Correction pipeline: when the model produced no native tool calls
     // but the text looks like it tried to call a tool, run the correction
     // pass to extract or re-elicit the tool call. ---
-    if (toolCalls.length === 0 && fullText && correctionCfg.maxCorrectionAttempts > 0 && toolNames.length > 0) {
-      const directExtracted = extractToolCallsFromText(fullText, toolNames);
+    if (toolCalls.length === 0 && fullText && correctionCfg.maxCorrectionAttempts > 0 && activeTools.length > 0) {
+      const directExtracted = extractToolCallsFromText(fullText, activeTools);
       const templateExtracted = correctionCfg.useTemplateFormat
-        ? extractTemplateToolCalls(fullText, toolNames)
+        ? extractTemplateToolCalls(fullText, activeTools)
         : [];
-      const shouldCorrect = looksLikeFailedToolCall(fullText, toolNames)
+      const shouldCorrect = looksLikeFailedToolCall(fullText, activeTools)
         || directExtracted.length > 0
         || templateExtracted.length > 0
         || (intentResult === 'yes' && totalToolCalls === 0);
@@ -401,7 +439,7 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
             : await correctionPass(
                 config.model,
                 fullText,
-                toolNames,
+                activeTools,
                 history,
                 correctionCfg.maxCorrectionAttempts,
               );
@@ -459,6 +497,9 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
 
     // --- Handle tool calls ---
     if (toolCalls.length > 0) {
+      webOnlyTurn &&= toolCalls.every(call => isWebResearchTool(call.toolName));
+      if (webOnlyTurn && (++webRounds >= 3 || iterations + 1 === maxIter || guard.webCallCount === webCallsBefore
+          || (!guard.webToolAvailable('web_search') && !guard.webToolAvailable('web_fetch')))) finishResearch = true;
       // Append assistant message
       if (nativeCallCount === toolCalls.length && nativeAssistantMessages.length) {
         history.push(...nativeAssistantMessages);
@@ -510,20 +551,42 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       config.onTextChunk?.(fullText);
     } else if (holdText && fullText) config.onTextChunk?.(fullText);
 
-    // --- No tool calls — done, unless coordinator mode has pending workers ---
-    if (!guard.failedChecks.length && nativeAssistantMessages.length) history.push(...nativeAssistantMessages);
-    else history.push({ role: 'assistant', content: fullText });
+    // Links come from tool receipts, so a compacted transcript or a model
+    // that omits Markdown citations cannot erase all of the sources.
+    const sources = guard.webSourceLinks;
+    const sourceList = !guard.failedChecks.length && fullText.trim() && sources.length
+      && !sources.some(link => fullText.includes(link.slice(link.lastIndexOf(']('))))
+      ? '\n\n### Sources\n' + sources.map(link => '- ' + link).join('\n')
+      : '';
+    if (sourceList) {
+      fullText += sourceList;
+      config.onTextChunk?.(sourceList);
+    }
 
     // Coordinator-mode hook: if the model ran out of tool calls but there are
     // in-flight worker agents, wait for the next <task-notification> and
     // continue the loop. In non-coordinator mode pollPendingAgents() is a
     // no-op (the registry stays empty) and this adds ~0 overhead.
+    const emptyAfterCompaction = (wasCompressed || finishResearch) && !fullText.trim();
+    if (!emptyAfterCompaction) {
+      if (!sourceList && !guard.failedChecks.length && nativeAssistantMessages.length) history.push(...nativeAssistantMessages);
+      else history.push({ role: 'assistant', content: fullText });
+    }
     if (await pollPendingAgents(history)) {
       continue;
     }
+    if (emptyAfterCompaction) {
+      if (!retriedEmptyReply && iterations < maxIter) {
+        retriedEmptyReply = true;
+        continue;
+      }
+      fullText = 'The model returned no answer after context compression. Send a follow-up to continue.';
+      history.push({ role: 'assistant', content: fullText });
+      config.onTextChunk?.(fullText);
+    }
 
     return {
-      status: guard.failedChecks.length ? 'verification-failed' : 'completed',
+      status: guard.failedChecks.length ? 'verification-failed' : emptyAfterCompaction ? 'stalled' : 'completed',
       text: fullText,
       messages: history,
       iterations,

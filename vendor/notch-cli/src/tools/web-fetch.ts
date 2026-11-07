@@ -17,7 +17,7 @@ const FETCH_TIMEOUT = 15_000;
 
 const parameters = z.object({
   url: z.string().describe('URL to fetch'),
-  max_length: z.number().int().min(1).max(MAX_CONTENT_LENGTH).optional().default(MAX_CONTENT_LENGTH).describe('Max characters to return'),
+  max_length: z.number().int().min(1).max(MAX_CONTENT_LENGTH).optional().describe('Max characters to return. Defaults to a context-sized excerpt.'),
 });
 
 /**
@@ -58,7 +58,7 @@ export const webFetchTool: NotchTool<typeof parameters> = {
   parameters,
   async execute(params, ctx): Promise<ToolResult> {
     const { url } = params;
-    const maxLen = params.max_length ?? MAX_CONTENT_LENGTH;
+    const maxLen = params.max_length ?? Math.min(MAX_CONTENT_LENGTH, Math.max(2_000, Math.floor((ctx.promptContextWindow ?? 131_072) / 4)));
 
     // Basic URL validation
     try {
@@ -108,7 +108,13 @@ export const webFetchTool: NotchTool<typeof parameters> = {
         text = text.slice(0, maxLen) + `\n\n... (truncated, ${text.length} chars total)`;
       }
 
-      return { content: webContent(`Fetched page (${response.status})`, response.url || url, text) };
+      const sourceUrl = response.url || url;
+      const title = htmlToText(raw.match(/<title\b[^>]*>([^]*?)<\/title>/i)?.[1] ?? '').slice(0, 160)
+        || new URL(sourceUrl).hostname;
+      return {
+        content: webContent(`Fetched page (${response.status})`, sourceUrl, text),
+        webSources: [{ title, url: sourceUrl, excerpt: text.slice(0, 2000) }],
+      };
     } catch (err: any) {
       if (err.name === 'AbortError' || err.name === 'TimeoutError') {
         return { content: `Timeout fetching ${url} (${FETCH_TIMEOUT / 1000}s limit)`, isError: true };

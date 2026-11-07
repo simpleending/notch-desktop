@@ -93,6 +93,106 @@ test('desktop WebSearch uses only the selected endpoint and returns filtered sou
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 
+test('web research skips repeats and finishes after compaction with real source links', async t => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-research-loop-'));
+  const source = 'https://example.com/official';
+  const search = { function: { name: 'web_search', arguments: { query: 'official documentation' } } };
+  const fetchPage = { function: { name: 'web_fetch', arguments: { url: source, max_length: 25000 } } };
+  const requests = [], visible = [], lifecycle = [], archived = [];
+  let searches = 0, reads = 0;
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (url === 'https://api.tavily.com/search') {
+      searches++;
+      return Response.json({ results: [{ title: 'Official documentation', url: source }] });
+    }
+    if (url === source) {
+      reads++;
+      return new Response('[Fake](https://example.com/fake)\n' + 'The page documents how the feature works. '.repeat(600));
+    }
+    assert.equal(url, 'http://127.0.0.1:11437/api/chat');
+    const request = JSON.parse(init.body);
+    requests.push(request);
+    const message = [
+      { tool_calls: [search] },
+      { tool_calls: [search, fetchPage] },
+      { content: '<tool_call><function=web_fetch></function></tool_call>' },
+      { content: 'Here is the answer from my research.' },
+    ][requests.length - 1];
+    assert.ok(message, 'Research should switch to synthesis instead of looping.');
+    return Response.json({ message, done: true, done_reason: 'stop', prompt_eval_count: 500, eval_count: 30 });
+  });
+  try {
+    const result = await runDesktopTurn({
+      cwd, sessionId: 'research-loop', messages: [{ role: 'user', content: 'Research the feature and report what you found.' }],
+      model: 'ollama/fixture', baseUrl: 'http://127.0.0.1:11437', contextWindow: 8192, accessMode: 'read-only',
+      signal: AbortSignal.timeout(15000), checkpoints: { commit: async () => {}, recordAfter: async () => {} },
+      tools: ['WebSearch', 'WebFetch', 'Read'], maxIterations: 5, approve: async () => false,
+      webSettings: async () => ({ enabled: true, searchProvider: 'tavily', tavilyKey: 'fixture-key' }),
+      onCompact: history => archived.push(structuredClone(history)), onLifecycle: event => lifecycle.push(event),
+      onText: chunk => visible.push(chunk),
+    });
+    assert.equal(searches, 1, 'The same query was requested in two model rounds.');
+    assert.equal(reads, 1);
+    assert.equal(result.status, 'completed');
+    assert.equal(result.compressed, true);
+    assert.equal(archived.length, 1);
+    assert.ok(lifecycle.includes('post-compact'));
+    assert.ok(requests[2].tools.some(tool => tool.function.name === 'read'), 'Keep non-web tools available for mixed tasks.');
+    assert.ok(!requests[2].tools.some(tool => /^web_/.test(tool.function.name)));
+    assert.ok(!requests[2].messages.some(message => message.role === 'tool'), 'Synthesis consumes excerpts without replaying the web calls.');
+    assert.match(requests[2].messages.at(-1).content, /The page documents how the feature works/);
+    assert.match(requests[3].messages[0].content, /previous response was empty/);
+    assert.match(result.text, /\[Official documentation\]\(https:\/\/example\.com\/official\)/);
+    assert.doesNotMatch(result.text, /example\.com\/fake/);
+    assert.doesNotMatch(visible.join(''), /<tool_call>/);
+    assert.equal(visible.join(''), result.text);
+    assert.equal(result.messages.at(-1).content, result.text);
+  } finally {
+    await fs.rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test('the search limit spans rounds without disabling workspace tools', async t => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-search-limit-'));
+  await fs.writeFile(path.join(cwd, 'notes.txt'), 'WORKSPACE_NOTES');
+  const search = query => ({ function: { name: 'web_search', arguments: { query } } });
+  const queries = [], requests = [], results = [];
+  t.mock.method(globalThis, 'fetch', async (url, init) => {
+    if (url === 'https://api.tavily.com/search') {
+      const { query } = JSON.parse(init.body);
+      queries.push(query);
+      return Response.json({ results: [{ title: query, url: `https://example.com/${query}` }] });
+    }
+    assert.equal(url, 'http://127.0.0.1:11437/api/chat');
+    requests.push(JSON.parse(init.body));
+    const message = [
+      { tool_calls: ['one', 'two', 'three'].map(search) },
+      { tool_calls: ['one', 'four', 'five'].map(search) },
+      { tool_calls: [{ function: { name: 'read', arguments: { path: 'notes.txt' } } }] },
+      { content: 'The findings are consistent with the workspace notes.' },
+    ][requests.length - 1];
+    assert.ok(message);
+    return Response.json({ message, done: true, done_reason: 'stop', prompt_eval_count: 500, eval_count: 30 });
+  });
+  try {
+    const result = await runDesktopTurn({
+      cwd, sessionId: 'research-limit', messages: [{ role: 'user', content: 'Compare research findings with notes.txt.' }],
+      model: 'ollama/fixture', baseUrl: 'http://127.0.0.1:11437', contextWindow: 32768, accessMode: 'read-only',
+      signal: AbortSignal.timeout(15000), checkpoints: { commit: async () => {}, recordAfter: async () => {} },
+      tools: ['WebSearch', 'Read'], maxIterations: 5, approve: async () => false,
+      webSettings: async () => ({ enabled: true, searchProvider: 'tavily', tavilyKey: 'fixture-key' }),
+      onToolResult: (name, text) => results.push({ name, text }),
+    });
+    assert.deepEqual(queries, ['one', 'two', 'three', 'four']);
+    assert.equal(requests.length, 4);
+    assert.ok(!requests[2].tools.some(tool => tool.function.name === 'web_search'));
+    assert.ok(results.some(row => row.name === 'read' && row.text.includes('WORKSPACE_NOTES')));
+    assert.equal(result.status, 'completed');
+  } finally {
+    await fs.rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test('web settings keep keys encrypted, redact IPC state and survive restart', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-web-settings-'));
   const safeStorage = { isAsyncEncryptionAvailable: async () => true, getSelectedStorageBackend: () => 'test', encryptStringAsync: async key => Buffer.from(key.split('').reverse().join('')), decryptStringAsync: async bytes => ({ result: bytes.toString().split('').reverse().join('') }) };

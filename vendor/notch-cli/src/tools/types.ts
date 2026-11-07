@@ -15,6 +15,8 @@ export type PermissionLevel = 'allow' | 'deny' | 'prompt';
 export interface ToolResult {
   content: string;
   isError?: boolean;
+  /** Links actually returned by built-in web research tools. */
+  webSources?: Array<{ title: string; url: string; excerpt?: string }>;
   /** Preflight rejection or preview: this is not an executed command result. */
   notExecuted?: boolean;
   /** Verified built-in file-content change; false means a no-op write. */

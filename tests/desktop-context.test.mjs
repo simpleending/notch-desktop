@@ -40,3 +40,54 @@ test('the full desktop tool request grows only to a validated automatic context 
     assert(JSON.stringify(compactTools).length < JSON.stringify(fullTools).length);
   } finally { globalThis.fetch = actualFetch; }
 });
+
+test('8K compaction preserves a parallel web fetch chain and continues the turn', async () => {
+  const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'notch-web-context-'));
+  const task = { role: 'user', content: 'Summarize the three pages and cite them.' };
+  const pages = ['first', 'second', 'third'];
+  const calls = pages.map(page => ({
+    type: 'tool-call', toolName: 'web_fetch', toolCallId: page, input: { url: `https://example.com/${page}` },
+  }));
+  const messages = [task, { role: 'assistant', content: calls }, {
+    role: 'tool', content: pages.map(page => ({
+      type: 'tool-result', toolName: 'web_fetch', toolCallId: page,
+      output: { type: 'text', value: `https://example.com/${page}\n${'Useful page text. '.repeat(1300)}` },
+    })),
+  }];
+  const actualFetch = globalThis.fetch;
+  const requests = [];
+  const archives = [];
+  globalThis.fetch = async (_url, init) => {
+    requests.push(JSON.parse(init.body));
+    const message = requests.length === 1
+      ? { role: 'assistant', content: '', thinking: 'I can answer this.' }
+      : { role: 'assistant', content: 'Summary with citations.' };
+    return new Response(JSON.stringify({ message, done: true, done_reason: 'stop' }) + '\n');
+  };
+  try {
+    const result = await runDesktopTurn({
+      cwd, sessionId: 'web-context-test', messages, model: 'ollama/fixture', baseUrl: 'http://127.0.0.1:18888/v1',
+      contextWindow: 8192, tools: ['WebFetch'], accessMode: 'read-only', signal: new AbortController().signal,
+      checkpoints: { commit: async () => {} }, maxIterations: 2, onCompact: history => archives.push(structuredClone(history)),
+    });
+    assert.equal(result.status, 'completed');
+    assert.equal(result.text, 'Summary with citations.');
+    assert.equal(result.compressed, true);
+    assert.deepEqual(archives, [messages]);
+    assert.equal(requests.length, 2);
+    const request = requests.at(-1);
+    assert.match(request.messages[0].content, /previous response was empty/);
+    assert.equal(request.options.num_ctx, 8192);
+    assert.equal(request.messages.find(message => message.role === 'user').content, task.content);
+    assert.equal(request.messages.find(message => message.role === 'assistant').tool_calls.length, pages.length);
+    const results = request.messages.filter(message => message.role === 'tool');
+    assert.equal(results.length, pages.length);
+    for (const [index, page] of pages.entries()) {
+      assert.equal(results[index].tool_name, 'web_fetch');
+      assert.match(results[index].content, new RegExp(`https://example.com/${page}`));
+      assert.ok(results[index].content.length < 1000);
+    }
+  } finally {
+    globalThis.fetch = actualFetch;
+  }
+});

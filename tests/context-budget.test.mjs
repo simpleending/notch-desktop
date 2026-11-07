@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { contextBudget, estimateTextTokens, autoCompress, fullCompact, safeTailStart } from '../vendor/notch-core/desktop-harness.js';
+import { contextBudget, estimateTextTokens, estimateTokens, autoCompress, fullCompact, safeTailStart } from '../vendor/notch-core/desktop-harness.js';
 test('small local and large cloud contexts reserve proportional output plus instruction/tool overhead',()=>{
   const small=contextBudget(8192,1800),cloud=contextBudget(131072,1800,4096);
   assert.ok(small.history>3000);assert.equal(small.output,2048);assert.equal(cloud.output,4096);
@@ -24,4 +24,22 @@ test('full fallback retains the original decision and current multimodal request
   const result=await fullCompact(messages,{},8192);
   assert.equal(result.messages[0],first);
   const last=result.messages.at(-1);assert.equal(last.role,'user');assert.deepEqual(last.content.slice(-2),content);
+});
+
+test('an 8K turn shortens medium-sized results when several calls share the history budget', async () => {
+  const task = { role: 'user', content: 'Compare the two sources.' };
+  const calls = ['web_search', 'web_fetch'].map(toolName => ({ type: 'tool-call', toolName, toolCallId: toolName, input: {} }));
+  const messages = [task, { role: 'assistant', content: calls }, {
+    role: 'tool', content: calls.map(({ toolName, toolCallId }) => ({
+      type: 'tool-result', toolName, toolCallId,
+      output: { type: 'text', value: `${toolName}\n${'Source text. '.repeat(215)}` },
+    })),
+  }];
+  const budget = 1400;
+  assert.ok(estimateTokens(messages) > budget);
+  const compacted = await autoCompress(messages, {}, 8192, undefined, undefined, budget);
+  assert.ok(estimateTokens(compacted) < budget);
+  assert.equal(compacted[0], task);
+  assert.deepEqual(compacted[1].content, calls);
+  assert.deepEqual(compacted[2].content.map(part => part.toolCallId), calls.map(call => call.toolCallId));
 });

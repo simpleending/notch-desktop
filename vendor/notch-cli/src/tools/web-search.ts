@@ -217,6 +217,7 @@ export const webSearchTool: NotchTool<typeof parameters> = {
       lines.push('');
     }
 
+    const webSources: NonNullable<ToolResult['webSources']> = [];
     results.forEach((r, i) => {
       const idx = i + 1;
       const title = (typeof r.title === 'string' ? r.title.trim() : '') || '(untitled)';
@@ -224,10 +225,13 @@ export const webSearchTool: NotchTool<typeof parameters> = {
       const snip = snippet(typeof r.content === 'string' ? r.content : '', SNIPPET_CHARS);
       try {
         const entry = `**[${idx}]** ${sourceLink(title, url)}${snip ? `\n  > ${snip}` : ''}`;
-        if (lines.join('\n').length + entry.length + 1 <= MAX_TOTAL_CONTENT) lines.push(entry);
+        if (lines.join('\n').length + entry.length + 1 <= MAX_TOTAL_CONTENT) {
+          lines.push(entry);
+          webSources.push({ title, url, excerpt: snip });
+        }
       } catch { return; }
     });
 
-    return { content: lines.join('\n') };
+    return { content: lines.join('\n'), webSources };
   },
 };
