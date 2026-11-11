@@ -4,6 +4,14 @@ import { patchFunction } from './bundle-patch.mjs';
 
 const messages = JSON.parse(readFileSync(new URL('../vendor/notch-cli/src/ui/working-messages.json', import.meta.url), 'utf8'));
 const keys = Object.keys(messages), phrases = Object.values(messages);
+const statusLocale = 'const {i18n:notchStatusI18n}=useTranslation();const notchChineseStatus=(notchStatusI18n.resolvedLanguage||notchStatusI18n.language||"en").toLowerCase().startsWith("zh");';
+const imageStatus = {
+  queued: 'Waiting to generate…',
+  generating: 'Generating image…',
+  refining: 'Refining image…',
+  complete: 'Image generated',
+  error: 'Image generation failed',
+};
 
 export function patchWorkingStatus(source) {
   // Keep historical keys so existing custom phrases survive preference normalization.
@@ -29,10 +37,24 @@ export function patchWorkingStatus(source) {
   }
   source = source.replace('return thinkingStatusMessageKeys.map(W2=>v2[J2][W2]??a2(`chatActivity.processing.${W2}`))', `return [...new Set([...${JSON.stringify(keys)},...thinkingStatusMessageKeys.filter(key=>v2[J2][key]!==void 0)])].map(W2=>v2[J2][W2]??a2(\`chatActivity.processing.\${W2}\`))`);
   if (source.includes('function ThinkingStatus(')) source = patchFunction(source, 'ThinkingStatus', body => {
-    if (!body.includes('e1=[...new Set(e1)]')) body = body.replace('...o1}){', '...o1}){e1=[...new Set(e1)];');
+    if (!body.includes('notchStatusI18n')) {
+      const start = '...o1}){';
+      if (!body.includes(start)) throw new Error('Working status component changed.');
+      body = body.replace(start + 'e1=[...new Set(e1)];', start)
+        .replace(start, start + statusLocale
+          + 'e1=[...new Set(e1)].filter(message=>typeof message==="string"&&message.trim()&&(notchChineseStatus||!/\\p{Script=Han}/u.test(message)));'
+          + `if(!e1.length)e1=${JSON.stringify(phrases)};`);
+    }
     return body.replace('randomIndex(e1.length)', '0')
       .replace('nextRandomIndex(g1,e1.length)', '(g1+1)%e1.length')
       .replace('jsxRuntimeExports.jsx(ThinkingDotMatrixIcon,{"data-thinking-status-loader":"matrix",sizeClassName:"size-3"})', 'jsxRuntimeExports.jsx("span",{className:"notch-task-dot","aria-hidden":!0,"data-thinking-status-loader":"matrix"})');
+  });
+  if (source.includes('function ImageGeneration(')) source = patchFunction(source, 'ImageGeneration', body => {
+    if (body.includes('notchStatusI18n')) return body;
+    const fallback = 'l1??f1??STATUS_TEXT[t1]', start = 'const M1=useReducedMotion()';
+    if (!body.includes(fallback) || !body.includes(start)) throw new Error('Image generation status component changed.');
+    return body.replace(start, statusLocale + start)
+      .replace(fallback, `l1??f1??(notchChineseStatus?STATUS_TEXT:${JSON.stringify(imageStatus)})[t1]`);
   });
   if (source.includes('function ThinkingStatusMessagesDialog(')) source = patchFunction(source, 'ThinkingStatusMessagesDialog', `function ThinkingStatusMessagesDialog({open:e1,overrides:t1,onOpenChange:n1,onSave:r1}){
     const {t:i1,i18n:s1}=useTranslation(),language=(s1.resolvedLanguage||s1.language).toLowerCase().startsWith("zh")?"zh":"en",

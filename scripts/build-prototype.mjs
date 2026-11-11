@@ -16,7 +16,7 @@ import { installBackgroundProcesses } from '../src/background-process-patch.mjs'
 import { applyWindowsIdentity } from './windows-identity.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const { values } = parseArgs({ options: { installation: { type: 'string' }, output: { type: 'string' } } });
+const { values } = parseArgs({ options: { installation: { type: 'string' }, output: { type: 'string' }, 'packaging-base': { type: 'boolean' } } });
 if (!values.installation) throw new Error('Specify --installation /path/to/installed/app.');
 const installation = path.resolve(values.installation), output = path.resolve(values.output || path.join(root, 'release', 'Notch-prototype'));
 if (output === installation || output.startsWith(installation + path.sep) || installation.startsWith(output + path.sep)) throw new Error('Choose an output directory separate from the installed application.');
@@ -42,7 +42,8 @@ for (const [name] of Object.entries(JSON.parse(await readFile(path.join(root, 'p
 await cp(path.join(root, 'node_modules'), path.join(application, 'notch/node_modules'), { recursive: true,
   filter: source => !/[/\\](?:electron|electron-qa|@electron|typescript|tsup|esbuild|@esbuild)(?:[/\\]|$)/.test(source) });
 const mainFile = path.join(application, 'out/main/index.js');
-const patched = patchWorkbench(await readFile(mainFile, 'utf8')); await writeFile(mainFile, patchWebSourceProjection(patchLocalOnlyMain(patchWebToolCatalog(patched.source))));
+const patched = patchWorkbench(await readFile(mainFile, 'utf8'));
+await writeFile(mainFile, values['packaging-base'] ? patched.source : patchWebSourceProjection(patchLocalOnlyMain(patchWebToolCatalog(patched.source))));
 async function rebrandDirectory(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const file = path.join(directory, entry.name);
@@ -66,7 +67,7 @@ for (const name of ['application-icons', 'bundled-resources', 'dynamic-text', 'e
 }
 await rebrandTree(application);
 await installBackgroundProcesses(application);
-await installSetupRenderer(application, root);
+if (!values['packaging-base']) await installSetupRenderer(application, root);
 for (const name of ['extensions','dynamic-text','bundled-resources','application-icons']) await rebrandTree(path.join(resources, name));
 await installLocalFeatures(path.join(resources, 'extensions'));
 await rebuildPluginCatalog(path.join(resources, 'extensions'));

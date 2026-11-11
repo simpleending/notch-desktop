@@ -29,6 +29,37 @@ test('custom canonical messages replace defaults while explicit historical custo
   assert.equal(patchWorkingStatus(patched), patched);
 });
 
+test('English working indicators fall back when legacy or pending messages contain Chinese', () => {
+  const original = 'function ThinkingStatus({messages:e1,...o1}){e1=[...new Set(e1)];return e1;}';
+  const patched = patchWorkingStatus(original);
+  const getStatus = language => new Function('useTranslation', patched + ';return ThinkingStatus;')(
+    () => ({ i18n: { resolvedLanguage: language, language: 'zh' } }),
+  );
+  const chinese = '正在处理…';
+  assert.deepEqual(getStatus('en-US')({ messages: [chinese] }), Object.values(messages));
+  assert.deepEqual(getStatus('en')({ messages: [chinese, 'Waiting for the tool…', 'Waiting for the tool…'] }), ['Waiting for the tool…']);
+  assert.deepEqual(getStatus('zh-CN')({ messages: [chinese] }), [chinese]);
+  assert.equal(patchWorkingStatus(patched), patched);
+});
+
+test('image status fallbacks follow the interface language and keep explicit status text', () => {
+  const original = 'const STATUS_TEXT={queued:"等待生成",generating:"正在生成图片",refining:"正在细化细节",complete:"图片已生成",error:"生成失败"};'
+    + 'function ImageGeneration({status:t1="generating",caption:f1,statusText:l1}){const M1=useReducedMotion()??!1,j1=l1??f1??STATUS_TEXT[t1];return j1;}';
+  const patched = patchWorkingStatus(original);
+  const getStatus = language => new Function('useTranslation', 'useReducedMotion', patched + ';return ImageGeneration;')(
+    () => ({ i18n: { language } }), () => false,
+  );
+  const en = getStatus('en-US');
+  assert.equal(en({}), 'Generating image…');
+  assert.equal(en({ status: 'queued' }), 'Waiting to generate…');
+  assert.equal(en({ status: 'refining' }), 'Refining image…');
+  assert.equal(en({ status: 'complete' }), 'Image generated');
+  assert.equal(en({ status: 'error' }), 'Image generation failed');
+  assert.equal(en({ statusText: 'Preparing preview…' }), 'Preparing preview…');
+  assert.equal(getStatus('zh')({}), '正在生成图片');
+  assert.equal(patchWorkingStatus(patched), patched);
+});
+
 test('status editor shows current-language defaults and preserves other-language and historical custom phrases on save and reset', () => {
   const patched = patchWorkingStatus(fixture);
   for (const language of ['en', 'zh']) {
