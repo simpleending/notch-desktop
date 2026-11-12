@@ -9,6 +9,7 @@
 import { tool, type ToolExecutionOptions } from 'ai';
 import { zodToJsonSchema } from 'zod-to-json-schema';
 import { readTool } from './read.js';
+import { knowledgeTool } from './knowledge.js';
 import { writeTool } from './write.js';
 import { editTool } from './edit.js';
 import { applyPatchTool } from './apply-patch.js';
@@ -71,6 +72,7 @@ export type { ToolContext, ToolResult, NotchTool, PermissionLevel } from './type
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const BUILTIN_TOOLS: NotchTool<any>[] = [
   readTool,
+  knowledgeTool,
   writeTool,
   editTool,
   applyPatchTool,
@@ -160,7 +162,8 @@ function getAllTools(ctx?: ToolContext): NotchTool<any>[] {
   // Non-coordinator mode: full built-in set + MCP + plugins, and the
   // coordinator-only tools are excluded entirely so the model never sees
   // agent_spawn / agent_send_message / agent_stop outside coordinator mode.
-  const all = ctx?.remoteWorkspace ? BUILTIN_TOOLS.filter(t => ['read', 'write', 'edit', 'shell', 'grep', 'glob'].includes(t.name)) : ctx?.taskWorkspace ? BUILTIN_TOOLS : [...BUILTIN_TOOLS.filter(t => t !== taskChangesTool), ...mcpTools, ...pluginManager.getTools()];
+  const builtins = BUILTIN_TOOLS.filter(t => t !== knowledgeTool || !!ctx?.knowledge);
+  const all = ctx?.remoteWorkspace ? builtins.filter(t => ['read', 'write', 'edit', 'shell', 'grep', 'glob'].includes(t.name)) : ctx?.taskWorkspace ? builtins : [...builtins.filter(t => t !== taskChangesTool), ...(ctx?.mcpTools ?? mcpTools), ...pluginManager.getTools()];
   return ctx?.onlyTools ? all.filter(tool => ctx.onlyTools!.includes(tool.name) || (ctx.taskWorkspace && tool === taskChangesTool && ctx.onlyTools!.includes('read'))) : all;
 }
 

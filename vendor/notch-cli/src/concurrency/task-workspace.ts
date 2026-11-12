@@ -9,8 +9,7 @@ import type { ToolContext } from '../tools/types.js';
 import type { LanguageModel } from 'ai';
 
 export function openRouterTaskContext(ctx: ToolContext, model: LanguageModel): ToolContext {
-  const cloud = typeof model === 'string' ? /^openrouter[/:]/.test(model) : /^openrouter(?:\.|$)/.test(model.provider);
-  return { ...ctx, isolateTasks: () => !ctx.remoteWorkspace && cloud && (ctx.workspaceMode?.() === 'isolated' || (!ctx.workspaceMode && !!ctx.isolateTasks?.())) };
+  return { ...ctx, isolateTasks: () => !ctx.remoteWorkspace && (ctx.workspaceMode?.() === 'isolated' || (!ctx.workspaceMode && !!ctx.isolateTasks?.())) };
 }
 
 export function parseWorkspaceMode(value: unknown): 'shared' | 'isolated' {

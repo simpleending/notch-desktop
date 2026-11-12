@@ -10,16 +10,16 @@ import { quietPython } from './python-console.js';
 import {markOwnedRuntime} from './runtime-maintenance.js';
 import type { LocalHardware } from './local-models.js';
 
-export const STRATA_VERSION='0.2.2', STRATA_CONTROL='0.1.47';
+export const STRATA_VERSION='0.2.13', STRATA_CONTROL='0.1.59';
 export const STRATA_URL='http://127.0.0.1:11438/v1';
 const root=()=>path.join(os.homedir(),'.notch/runtimes/strata');
 const runtime=()=>path.join(root(),`control-${STRATA_CONTROL}`);
 const selection=()=>path.join(root(),'selected.json');
 const exec=promisify(execFile);
 const assets:Record<string,[string,string]>={
-  'win32-x64':['windows-x86_64.zip','91dc0a8adda3d4b5ce6307dd0f7b9d64ee26d093f544e822f764b97506f601d3'],
-  'linux-x64':['linux-x86_64.tar.gz','7ac52e3d4ef8f50466fa0cc662be218975373309214519aa0b68fafd39e66fe8'],
-  'darwin-arm64':['macos-arm64.tar.gz','bb25eb49e29407621ceaebd7d1381360f8eac3f35b92bb0b351c8ff0755cc2fd'],
+  'win32-x64':['windows-x86_64.zip','c81f6800094942a5e750c7d93f348062bc16484f946ea83b0c0d2f8c91c44e87'],
+  'linux-x64':['linux-x86_64.tar.gz','14a9fde3dbde5a16cd1a0d34fe04b3dca38c462114a534f8813a00fcabfc4f5d'],
+  'darwin-arm64':['macos-arm64.tar.gz','62e571b58d60d6507e5d24975f380ae0f2c302210e895ad31fc166b59c18d024'],
 };
 export function strataAsset(platform=process.platform,arch=process.arch){
   const asset=assets[`${platform}-${arch}`];
@@ -76,7 +76,7 @@ else:
         s=LaunchSettings(name='notch-'+row.id,family=row.family,model=row.model,data_dir=request.get('dataDirectory') or str(root/'models'),
             context=request['contextWindow'],vision='off',parallel=1,tune='skip',access='local',port=11438)
         runner=Runner(s,catalog=c,components_dir=str(root/'components'),assume_yes=True,
-            feed='https://github.com/Niko1221/Strata/releases/download/v0.2.2',
+            feed='https://github.com/Niko1221/Strata/releases/download/v0.2.13',
             emit=lambda e: print(e.text,file=sys.stderr,flush=True))
         if op=='install':
             runner.ensure_engine()
@@ -228,7 +228,7 @@ export async function strataModels(memory:LocalHardware){
   const catalog=running?null:await strataCatalog(memory),row=catalog?.models.find((r:any)=>r.id===selected.id);
   return [{key:`strata/${selected.id}`,provider:'strata',displayName:`${selected.title} · Strata`,enabled:running||!!row?.fits,experimental:true,
     maxInputTokens:selected.nativeContext,availableContextWindows:selected.contexts,defaultContextWindow:selected.contextWindow,
-    maxOutputTokens:2048,description:row?.reason||'Experimental Strata. Memory and context are checked again before each load.',running}];
+    maxOutputTokens:2048,description:catalog?.installed===false?'Update the Strata control runtime in Manage models. Existing model files are retained.':row?.reason||'Experimental Strata. Memory and context are checked again before each load.',running}];
 }
 export async function installStrata(id:string,memory:LocalHardware,signal?:AbortSignal,output:(s:string)=>void=()=>{}){
   return withLocalInference(async()=>{

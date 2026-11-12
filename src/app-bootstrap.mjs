@@ -1,4 +1,5 @@
-import { app, session, ipcMain, safeStorage, shell, dialog,Notification,BrowserWindow } from 'electron';
+import { app, session, ipcMain, safeStorage, shell, dialog,Notification,BrowserWindow,Tray,Menu } from 'electron';
+import { createAutomationBackground, revealAutomation } from './automation-background.mjs';
 import path from 'node:path';
 import { writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
@@ -25,9 +26,12 @@ const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
 globalThis.__notchProfileOverride = requestedProfile ? { directory: app.getPath('userData'), existed: existsSync(path.join(app.getPath('userData'), 'main.sqlite')) } : null;
 globalThis.__notchHost = createHost(app.getPath('userData'));
-globalThis.__notchHost.automations.setNotifier(({title,body})=>{
+const automationBackground = createAutomationBackground({app,BrowserWindow,Tray,Menu,directory:app.getPath('userData')});
+globalThis.__notchHost.automationBackground = automationBackground;
+void app.whenReady().then(()=>automationBackground.start()).catch(error=>console.error('Background automations:',error.message));
+globalThis.__notchHost.automations.setNotifier(({title,body,sessionId})=>{
   if(!Notification.isSupported())return;
-  const notice=new Notification({title,body});notice.on('click',()=>{const window=BrowserWindow.getAllWindows().find(window=>!window.isDestroyed()&&!new URL(window.webContents.getURL()||'about:blank').searchParams.has('surface'));if(window){if(window.isMinimized())window.restore();window.show();window.focus();}});notice.show();
+  const notice=new Notification({title,body});notice.on('click',()=>{void revealAutomation(BrowserWindow,sessionId).catch(error=>console.error('Open automation:',error.message));});notice.show();
 });
 if(process.platform==='win32')setManagedOllamaLauncher(()=>{throw Error('The hidden local runtime is not ready. Retry loading the model.');});
 globalThis.__notchHost.runtimeReady = (async()=>{
@@ -80,6 +84,9 @@ app.whenReady().then(() => {
   app.on('will-quit', () => globalThis.__notchHost.origin?.close());
   void globalThis.__notchHost.origin.status().catch(() => {});
   registerModelIpc(ipcMain,globalThis.__notchHost);
+  const enginePoll=setInterval(()=>{void globalThis.__notchHost.modelManager.checkEngineUpdates().catch(()=>{});},24*60*60*1000);enginePoll.unref();
+  void globalThis.__notchHost.modelManager.checkEngineUpdates().catch(()=>{});
+  app.on('will-quit',()=>clearInterval(enginePoll));
   void globalThis.__notchHost.phone.start();
 });
 app.on('browser-window-created',(_event,window)=>{

@@ -7,6 +7,10 @@ export function createAutomationViews(React){
   const button=(label,onClick,disabled=false)=>h('button',{type:'button',onClick,disabled,style:{...control,width:'auto',cursor:'pointer'}},label);
   function Options({value,onChange,taskId,schedule}){
     const [message,setMessage]=React.useState(''),[saving,setSaving]=React.useState(false);
+    const [background,setBackground]=React.useState(false);
+    const [watchFiles,setWatchFiles]=React.useState('');
+    React.useEffect(()=>{let alive=true;if(taskId)api('watch',{taskId}).then(value=>{if(alive)setWatchFiles(value.files.join('\n'));},error=>{if(alive)setMessage(error.message);});return()=>{alive=false;};},[taskId]);
+    React.useEffect(()=>{let alive=true;api('background').then(value=>{if(alive)setBackground(value.enabled);},error=>{if(alive)setMessage(error.message);});return()=>{alive=false;};},[]);
     const field=(label,node,help)=>h('label',{style:{display:'grid',gap:4}},h('span',{style:{fontWeight:500}},label),node,help&&h('span',{style:{opacity:.65}},help));
     const select=(key,choices)=>h('select',{'aria-label':key==='notifications'?'Notifications':'After Notch was closed',style:control,value:value[key],onChange:event=>onChange({...value,[key]:event.target.value})},choices.map(([id,label])=>h('option',{key:id,value:id},label)));
     return h('section',{'aria-label':'Automation run options',style:box},
@@ -14,9 +18,12 @@ export function createAutomationViews(React){
       field('Time limit (minutes)',h('input',{'aria-label':'Time limit (minutes)',type:'number',min:0,max:1440,step:1,style:control,value:value.maxRuntimeMs/60000,onChange:event=>onChange({...value,maxRuntimeMs:Math.round(Number(event.target.value)*60000)})}),'0 allows unlimited time, including waiting for a model.'),
       field('Token budget',h('input',{'aria-label':'Token budget',type:'number',min:0,max:10000000,step:1,style:control,value:value.maxTokens,onChange:event=>onChange({...value,maxTokens:Number(event.target.value)})}),'Input and output tokens across the run. 0 allows unlimited tokens.'),
       field('Notifications',select('notifications',[['changes','Changed results and errors'],['errors','Errors only'],['all','Every completed run'],['off','Off']]),'Repeated identical errors stay quiet. Begin unchanged reports with [NO_CHANGE] to suppress them.'),
-      field('After Notch was closed',select('missedRuns',[['latest','Run the latest missed occurrence'],['skip','Skip missed occurrences']]),'Older missed occurrences are recorded in history. Notch must be open to run automations.'),
+      h('label',{style:{display:'flex',gap:8}},h('input',{type:'checkbox',checked:background,onChange:async event=>{try{const result=await api('background',event.target.checked);setBackground(result.enabled);}catch(error){setMessage(error.message);}}}),'Keep Notch in the system tray when closing its window'),
+      field('After Notch was closed',select('missedRuns',[['latest','Run the latest missed occurrence'],['skip','Skip missed occurrences']]),'Schedules run while Notch is open or in the tray. Quitting Notch or turning off this computer stops scheduling; missed runs follow this setting.'),
       h('label',{style:{display:'flex',alignItems:'start',gap:8}},h('input',{type:'checkbox',checked:value.retryResources,onChange:event=>onChange({...value,retryResources:event.target.checked})}),'Wait up to 5 minutes for a busy local model or available memory'),
       h(Preview,{schedule}),
+      taskId&&field('Also run when these files change',h('textarea',{'aria-label':'Files that trigger this automation',style:control,value:watchFiles,onChange:event=>setWatchFiles(event.target.value)}),'One full file path per line, up to ten. Changes are grouped; at most one event run per minute. Changes during a run are ignored to prevent loops.'),
+      taskId&&button('Save file triggers',async()=>{try{const value=await api('watch',{taskId,files:watchFiles.split(/\r?\n/).map(file=>file.trim()).filter(Boolean)});setWatchFiles(value.files.join('\n'));setMessage('File triggers saved.');}catch(error){setMessage(error.message);}}),
       taskId&&button(saving?'Saving preset…':'Save current automation as preset',async()=>{setSaving(true);setMessage('');try{await api('savePreset',taskId);setMessage('Saved. Find it in Presets.');}catch(error){setMessage(error.message);}finally{setSaving(false);}},saving),
       taskId&&h('span',{style:{opacity:.65}},'Presets use the last saved task. Save edits before creating a preset.'),
       message&&h('p',{role:'status',style:{margin:0}},uiMessage(message, "Status details are unavailable. Refresh to check again.")));

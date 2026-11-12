@@ -34,6 +34,8 @@ export interface NotchTool<TParams extends z.ZodTypeAny = z.ZodTypeAny> {
 
 /** Shared context available to all tools during execution */
 export interface ToolContext {
+  mcpTools?: NotchTool<any>[];
+  knowledge?: (input: { query?: string; id?: string }) => Promise<unknown>;
   prepareLocalModel?: () => Promise<void>;
   /** Selects concise built-in descriptions without changing schemas or permissions. */
   promptContextWindow?: number;

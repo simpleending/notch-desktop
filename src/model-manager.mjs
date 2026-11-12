@@ -1,3 +1,4 @@
+import { createEngineUpdates } from './engine-updates.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -12,6 +13,7 @@ import { prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, i
 export function createModelManager(directory, { safeStorage, fetcher = fetch, recommend: recommendModels, install = installLocalModel,
   hardware: detectHardware = detectLocalHardware, withInference=withLocalInference, chooseModelDirectory, strata = {prepareStrata,strataCatalog,strataModels,strataStatus,strataPlan,installStrata,stopStrata,setStrataDirectory},
   colibri = { prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } } = {}) {
+  const engineUpdates = createEngineUpdates(directory,{fetcher});
   const keys = new Map(), preferences = new Map(), fallbacks = new Map();
   const keyFile = path.join(directory, 'provider-keys.encrypted.json'), contextFile = path.join(directory, 'model-context.json'), catalogFile = path.join(directory, 'openrouter-models.json');
   const fallbackFile = path.join(directory, 'openrouter-fallbacks.json');
@@ -87,7 +89,9 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
     async strataModels(hardware) {
       return (await strata.strataModels(hardware)).map(row=>({...row,defaultContextWindow:service.context(row.key,row.availableContextWindows,row.defaultContextWindow),requestedContextWindow:service.requestedContext(row.key)}));
     },
+    async checkEngineUpdates(force=false) { return engineUpdates.check(force); },
     async strata(action, value) {
+      if(action==='updates'){if(value===true)await engineUpdates.check(true);return engineUpdates.status('strata');}
       await ready;
       if(!['catalog','setup','install','unload','directory'].includes(action))throw new Error('Choose a supported Strata action.');
       if(action==='catalog')return {...await strata.strataCatalog(await detectHardware(true)),...await strata.strataStatus()};
@@ -117,8 +121,9 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       return (await colibri.colibriModels(hardware)).map(row=>({...row,running:status.running&&row.key==='colibri/'+status.modelId,defaultContextWindow:service.context(row.key,row.availableContextWindows,row.defaultContextWindow),requestedContextWindow:service.requestedContext(row.key)}));
     },
     async colibri(action, model) {
+      if(action==='updates'){if(model===true)await engineUpdates.check(true);return engineUpdates.status('colibri');}
       await ready;
-      if (!['catalog','setup','install','unload','backend','benchmark'].includes(action)) throw new Error('Choose a supported Colibri action.');
+      if (!['catalog','setup','install','unload','backend','benchmark','validate'].includes(action)) throw new Error('Choose a supported Colibri action.');
       if (action==='catalog') {
         const status=await colibri.colibriStatus();
         let compatibility={};
@@ -134,6 +139,7 @@ export function createModelManager(directory, { safeStorage, fetcher = fetch, re
       const current=job,output=text=>{const line=text.replace(/\x1b\[[0-9;]*m/g,'').trim().split(/[\r\n]+/).filter(Boolean).at(-1);if(line)current.public.message=line.replace(/(?:sk-or-|hf_)[\w-]+/g,'[redacted]').slice(-500);};
       void (async()=>{
         if(action==='setup')await colibri.prepareColibri(controller.signal,output);
+        else if(action==='validate'){await colibri.prepareColibri(controller.signal,output);await colibri.validateColibri(undefined,controller.signal,output);await colibri.stopColibri();}
         else await colibri.installColibri(model,{signal:controller.signal,token:keys.get('huggingface'),output,unloadAfterValidation:true});
         controller.signal.throwIfAborted();
         current.public.state='complete';current.public.message=action==='setup'?'Colibri is ready. Choose a coding model below.':'Tool validation passed. Open Installed to select the model; weights load when you send a message.';

@@ -30,7 +30,7 @@ const preview = version.includes('-preview.'), productName = preview ? 'notch pr
 const appId = `com.freesyntax.notch.desktop${preview ? '.preview' : ''}`;
 const updatePublish={provider:'github',owner:'simpleending',repo:'notch-desktop',releaseType:'release'};
 if(!process.env.npm_execpath)throw new Error('Run npm run package:windows.');
-const source=path.join(root,'release/Notch-prototype');await fs.access(path.join(source,'Notch.exe'));
+const source=path.resolve(process.env.NOTCH_PACKAGE_BASE||path.join(root,'release/Notch-prototype'));await fs.access(path.join(source,'Notch.exe'));
 const staging=await fs.mkdtemp(path.join(root,'release/windows-preview-')), app=path.join(staging,'app'), unpacked=path.join(app,'build-app');
 const ripgrepVersion='15.2.0', ripgrepName=`ripgrep-${ripgrepVersion}-x86_64-pc-windows-msvc`;
 const ripgrepArchive=path.join(root,'release',`${ripgrepName}.zip`);

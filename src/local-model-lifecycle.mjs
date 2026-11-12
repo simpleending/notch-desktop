@@ -8,12 +8,16 @@ export function createLocalModelLifecycle({fetcher=fetch, runtime=localRuntime, 
     if(!response.ok)throw Error(`Local model request failed (HTTP ${response.status}).`);
     return response.json();
   }
-  async function mounted() {
+  async function mountedOllama() {
     const roots=['http://127.0.0.1:11436','http://127.0.0.1:11434'];
     const result=[];
     for(const root of roots){let data;try{data=await ollama(root,'/api/ps');}catch{continue;}
       for(const row of data.models || [])if(typeof row.name==='string')result.push({key:'ollama/'+row.name,root,name:row.name});
     }
+    return result;
+  }
+  async function mounted() {
+    const result=await mountedOllama();
     const colibri=await runtime.colibriStatus(),strata=await runtime.strataStatus(),mlx=runtime.loadedMlxModel();
     if(colibri.running)result.push({key:'colibri/'+colibri.modelId});
     if(strata.running)result.push({key:'strata/'+strata.selected.id});
@@ -56,7 +60,7 @@ export function createLocalModelLifecycle({fetcher=fetch, runtime=localRuntime, 
     if(!active.some(item=>item.key===key))throw Error('The model did not finish loading. Refresh models and retry.');
     return{loaded:true};
   }
-  return {mounted, async prepare(key){return runtime.withLocalInference(async()=>{for(const row of await mounted())if(!keep(row,key))await eject(row);});}, get busy(){return !!pending;},
+  return {mounted, mountedOllama, async prepare(key){return runtime.withLocalInference(async()=>{for(const row of await mounted())if(!keep(row,key))await eject(row);});}, get busy(){return !!pending;},
     change(action,key) {
       if(pending)throw Error('A local model is already loading or ejecting. Wait for it to finish.');
       assertIdle();

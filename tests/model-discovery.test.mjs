@@ -18,6 +18,20 @@ async function fixture(){
 }
 async function turn(f,model){let result;for await(const event of f.host.query({cwd:f.directory,prompt:'Hello',model}))if(event.type==='result')result=event;return result;}
 
+test('fine-tunes retain their installed identity and generated aliases use model identity',async()=>{
+  const f=await fixture();
+  try{
+    f.states.set(roots[0],[row('qwen3.8-9b-heretic:q4_k_m'),row('notch-hf-example:latest')]);
+    f.setShow({...metadata,model_info:{...metadata.model_info,'general.name':'Qwen3.8 9B Heretic','general.base_model.0.name':'Qwen3.5 9B'}});
+    let models=await f.host.listModels(true);
+    assert.equal(models.find(model=>model.key==='ollama/qwen3.8-9b-heretic:q4_k_m').displayName,'qwen3.8-9b-heretic:q4_k_m');
+    assert.equal(models.find(model=>model.key==='ollama/notch-hf-example:latest').displayName,'Qwen3.8 9B Heretic');
+    f.setShow({...metadata,model_info:{...metadata.model_info,'general.base_model.0.name':'Qwen3.5 9B'}});
+    models=await f.host.listModels(true);
+    assert.equal(models.find(model=>model.key==='ollama/notch-hf-example:latest').displayName,'notch-hf-example:latest');
+  }finally{await f.host.workspaceSearch.shutdown();}
+});
+
 test('initial inventory waits for the cached local runtime before committing an empty list',async()=>{
   const f=await fixture();let ready;f.host.runtimeReady=new Promise(resolve=>{ready=resolve;});
   try{

@@ -12,8 +12,11 @@ import { parsePatch } from './tools/apply-patch.js';
 import { loadPermissions, checkPermission, type PermissionRule } from './permissions/index.js';
 import { checkAccess, type AccessMode } from './permissions/access.js';
 import type { ToolContext } from './tools/types.js';
+import { connectDesktopMcp, type DesktopMcpStatus } from './mcp/desktop.js';
+export { connectDesktopMcp } from './mcp/desktop.js';
 
 export { CheckpointManager };
+export { openRouterTaskContext, withTaskWorkspace } from './concurrency/task-workspace.js';
 export { gitProcessEnv } from './github/gh.js';
 export { acquireLease } from './concurrency/lease.js';
 export { detectLocalHardware, parseNvidiaMemory, linuxGpuMemory, modelFit, inspectHubModel, LOCAL_MODEL_CATALOG } from './providers/local-models.js';
@@ -24,10 +27,13 @@ export { markOwnedRuntime, pruneOwnedRuntimes, rotateRuntimeLog } from './provid
 export { startMlx, stopMlx, loadedMlxModel } from './providers/local-runner.js';
 export { startColibri } from './providers/colibri.js';
 export { COLIBRI_VERSION, prepareColibri, colibriCatalog, colibriStatus, colibriPlan, colibriModels, installColibri, validateColibri, stopColibri, colibriCompatibility, setColibriPreference } from './providers/colibri.js';
-export { STRATA_CONTROL, prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, setStrataDirectory, installStrata, startStrata, stopStrata } from './providers/strata.js';
+export { STRATA_VERSION, STRATA_CONTROL, prepareStrata, strataCatalog, strataModels, strataStatus, strataPlan, setStrataDirectory, installStrata, startStrata, stopStrata } from './providers/strata.js';
 export { autoCompress, fullCompact, safeTailStart, estimateTokens } from './agent/compression.js';
 export type { ModelMessage, AccessMode };
 export interface DesktopTurn {
+  mcpServers?: Record<string, any>;
+  onMcpStatus?: (rows: DesktopMcpStatus[]) => void;
+  knowledge?: ToolContext['knowledge'];
   prepareLocalModel?: () => Promise<void>;
   remoteWorkspace?: ToolContext['remoteWorkspace'] & { instructions: string };
   webSettings?: ToolContext['webSettings'];
@@ -70,7 +76,7 @@ export interface DesktopTurn {
 }
 
 const desktopToolNames: Record<string, string> = { Read: 'read', TaskChanges: 'task_changes', Write: 'write', Edit: 'edit', Bash: 'shell', Glob: 'glob', Grep: 'grep', Git: 'git', GitHub: 'github', ApplyPatch: 'apply_patch', WebFetch: 'web_fetch', WebSearch: 'web_search', BrowserRead: 'browser_read', BrowserInteract: 'browser_interact', Agent: 'task' };
-export function desktopToolName(name: string): string { return desktopToolNames[name] ?? name; }
+export function desktopToolName(name: string): string { return name === 'Knowledge' ? 'knowledge' : desktopToolNames[name] ?? name; }
 export function definitionRules(values: string[] = [], level: 'allow' | 'deny'): PermissionRule[] {
   return values.map(value => {
     const match = /^([\w*.-]+)(?:\((.+)\))?$/.exec(value);
@@ -116,7 +122,8 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     remoteWorkspace: turn.remoteWorkspace,
     webSettings: turn.webSettings ?? (async () => ({ enabled: true, searchProvider: 'duckduckgo', browser: 'auto' })),
     workspaceMode: () => turn.workspaceMode ?? config.workspaceMode ?? 'shared',
-    isolateTasks: () => !turn.remoteWorkspace && provider === 'openrouter' && (turn.workspaceMode ?? config.workspaceMode) === 'isolated',
+    isolateTasks: () => !turn.remoteWorkspace && (turn.workspaceMode ?? config.workspaceMode) === 'isolated',
+    knowledge: turn.knowledge,
     workspaceCheckpoints: {
       finish: async () => { await turn.checkpoints.commit('Desktop turn'); },
       recordBefore: async file => {
@@ -153,6 +160,11 @@ export async function runDesktopTurn(turn: DesktopTurn) {
       }
     },
   };
+  const mcp = turn.remoteWorkspace || turn.tools?.length === 0 ? undefined : await connectDesktopMcp({ cwd, servers: turn.mcpServers, signal: turn.signal, onStatus: turn.onMcpStatus,
+    approve: async (name, args, message) => checkAccess(turn.accessMode, permissions, name, args) !== 'deny' && await turn.approve(name, args, message) });
+  ctx.mcpTools = mcp?.tools ?? [];
+  // The workbench's `tools` array selects built-ins; enabled MCP servers supply their own catalog.
+  if (ctx.onlyTools?.length) ctx.onlyTools = [...ctx.onlyTools, ...ctx.mcpTools.map(tool => tool.name)];
   try {
     return await runAgentLoop(turn.messages, {
       model: resolveModel(selection), modelId: selection.model,
@@ -164,7 +176,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
       onUsage: turn.onUsage,
       maxOutputTokens: turn.maxOutputTokens, onCompact: turn.onCompact,
     });
-  } finally { await turn.checkpoints.commit('Desktop turn'); }
+  } finally { await mcp?.close(); await turn.checkpoints.commit('Desktop turn'); }
 }
 
 export { webSettingsSchema, validSearchKey, installResearchBrowser } from './web/settings.js';

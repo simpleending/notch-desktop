@@ -1,7 +1,8 @@
+import { createEngineUpdateView } from './engine-update-view.mjs';
 import {uiMessage} from './ui-messages.mjs';
 import {focusModelOption,rovingModelOption,syncModelOptions} from './model-navigation.mjs';
 export function createStrataPanel(React){
-  const h=React.createElement;
+  const h=React.createElement, EngineUpdate=createEngineUpdateView(React);
   return function StrataPanel({api,job,onStatus,onInstalled,cached,onCatalog}){
     const [catalog,setCatalog]=React.useState(cached),[busy,setBusy]=React.useState(false),[error,setError]=React.useState(''),[selected,setSelected]=React.useState(null);
     const list=React.useRef(null);
@@ -16,6 +17,7 @@ export function createStrataPanel(React){
     const working=busy||job?.state==='running';
     return h('section',{className:'notch-engine-panel','aria-label':'Experimental Strata'},
       h('p',{className:'notch-model-note'},'Strata · experimental. Runs supported Qwen MoE models with CUDA, AMD HIP or Apple Metal. Hardware and free memory are checked before loading. Speed benchmarks are off.'),
+      h(EngineUpdate,{api,provider:'strata'}),
       !catalog?h('p',{role:'status'},'Checking Strata…'):!catalog.installed?
         h('button',{type:'button',className:'notch-engine-setup',disabled:working,onClick:()=>void act('setup')},'Set up Strata control runtime'):
         h(React.Fragment,null,

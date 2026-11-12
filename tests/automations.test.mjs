@@ -11,6 +11,14 @@ import {createAutomationViews} from '../src/automation-view.mjs';
 import {createAutomations} from '../src/automations.mjs';
 import {automationPolicy,automationReplay,newAutomationPolicy} from '../src/automation-policy.mjs';
 const fixture=await fs.readFile(new URL('./fixtures/automation-main.js',import.meta.url),'utf8');
+test('native window close honors the background controller before running quit logic',()=>{
+  const source=fixture+';u.on("close",Q=>{if(n)return;closeCalls++;});';
+  const patched=patchAutomationsMain(source);assert(patched.includes('if(Q.defaultPrevented||n)return;'));
+  assert.equal(patchAutomationsMain(patched),patched);
+  const body=patched.slice(patched.lastIndexOf('u.on("close",'));
+  const invoke=new Function('prevented',`let closeCalls=0,n=false;const u={on:(_name,fn)=>fn({defaultPrevented:prevented})};${body};return closeCalls;`);
+  assert.equal(invoke(true),0);assert.equal(invoke(false),1);
+});
 const finish=(run,status,finishedAt,error)=>({...run,status,finishedAt,error});
 function native(automations,extra={}){
   let id=0;const context={Ut:class{},globalThis:{__notchHost:{automations}},De:()=>String(++id),RIr:1000,PIr:60000,get:value=>value?JSON.parse(value):null,Vfe:finish,dT:JSON.stringify,h9t:class{},...extra};
@@ -34,7 +42,7 @@ test('native automation controls patch the shipped renderer and survive repeated
 });
 
 test('run-option inputs preserve the rest of a saved policy',()=>{
-  let changed;const state=[],React={createElement:(type,props,...children)=>({type,props,children}),useState:value=>[value,()=>{}]};
+  let changed;const state=[],React={useEffect:()=>{},createElement:(type,props,...children)=>({type,props,children}),useState:value=>[value,()=>{}]};
   const component=createAutomationViews(React).Options,value={...newAutomationPolicy,permissionMode:'read-only'};
   const tree=component({value,onChange:next=>{changed=next;},schedule:{kind:'every',everyMs:60000}});
   const nodes=[];function visit(node){if(!node||typeof node!=='object')return;nodes.push(node);for(const child of node.children||[])if(Array.isArray(child))child.forEach(visit);else visit(child);}visit(tree);
@@ -119,6 +127,15 @@ test('time and token limits stop the run and dispose listeners',async t=>{
 test('temporary local memory pressure waits and remains cancellable before dispatch',async t=>{
   let attempts=0;const runtime=await controller(t,{host:{listModels:async()=>{if(attempts++===0)throw Error('Not enough available memory');return[{key:'ollama/tiny',enabled:true}];}},resourceDelay:1});
   const {executor,run,state}=executorFixture(runtime);run.taskSnapshot.model='ollama/tiny';const result=await executor.execute(run);assert.equal(result.status,'succeeded');assert.equal(attempts,2);assert.equal(state.sends,1);
+});
+
+test('model readiness preserves memory diagnostics and fails unsupported tools without retrying',async t=>{
+  const runtime=await controller(t,{host:{listModels:async()=>[{key:'ollama/tiny',enabled:false,description:'tool support not confirmed'}]},pause:async()=>{throw Error('Unsupported tools must not enter the resource retry loop.');}});
+  const {executor,run,state}=executorFixture(runtime);run.taskSnapshot.model='ollama/tiny';
+  const result=await executor.execute(run);
+  assert.equal(result.status,'failed');assert.match(result.error,/tool support not confirmed/);assert.equal(state.sends,0);
+  const memory=await controller(t,{host:{listModels:async()=>[{key:'ollama/tiny',enabled:false,description:'not enough memory available'}]}});
+  await assert.rejects(memory.preflight({model:'ollama/tiny'},{signal:new AbortController().signal}),/not enough memory available/);
 });
 
 test('notifications report changed results and deduplicate unchanged and repeated errors',async t=>{

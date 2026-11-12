@@ -124,7 +124,7 @@ test('management preserves tabs and context controls, and Back clears the search
   assert.equal(ui.find(node=>node.props.role==='option').length,3);
 });
 
-test('local selection waits for loading, and selecting a loaded model ejects without changing the selected model',async t=>{
+test('local selection waits for loading',async t=>{
  let resolve,selected;const calls=[];
  const {ui}=menu(t,{runtime:async(action,key)=>{calls.push([action,key]);return new Promise(done=>{resolve=done;});}},{onSelect:key=>selected=key});
  await ui.settle();ui.find(node=>node.props.title===local.key&&node.props.role==='option')[0].props.onClick();await ui.settle();
@@ -134,7 +134,7 @@ test('local selection waits for loading, and selecting a loaded model ejects wit
 
 test('eject controls appear in the picker and management, preserve selection, and report load failures',async t=>{
  let selected;const calls=[],mounted={...local,running:true};
- const {ui}=menu(t,{state:async()=>({models:[mounted,cloud,colibri]}),runtime:async(action,key)=>{calls.push([action,key]);return{models:[local,cloud,colibri],loaded:false};}},{onSelect:key=>selected=key});
+ const {ui}=menu(t,{state:async()=>({models:[mounted,cloud,colibri]}),runtime:async(action,key)=>{calls.push([action,key]);return{models:[local,cloud,colibri],loaded:false};}},{value:local.key,onSelect:key=>selected=key});
  await ui.settle();assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,1);
   ui.find(node=>node.props.role==='option'&&node.props.title===local.key)[0].props.onClick();await ui.settle();
   assert.deepEqual(calls,[['toggle',local.key]]);assert.equal(selected,undefined);
@@ -142,6 +142,44 @@ test('eject controls appear in the picker and management, preserve selection, an
  button(ui,'Manage models…').props.onClick();await ui.settle();assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,1);
  ui.find(node=>node.props['aria-label']==='Eject Local coder')[0].props.onClick();await ui.settle();
   assert.deepEqual(calls,[['toggle',local.key],['eject',local.key]]);assert.equal(selected,undefined);assert.equal(ui.find(node=>node.props['aria-label']==='Eject Local coder').length,0);
+});
+
+test('an already loaded model can be selected with left click and ejected with right click',async t=>{
+  const mounted={...local,running:true},calls=[];
+  let selected,prevented=false;
+  const {ui}=menu(t,{state:async()=>({models:[mounted,cloud,colibri]}),runtime:async(action,key)=>{
+    calls.push([action,key]);return{models:[local,cloud,colibri],loaded:false};
+  }},{onSelect:key=>selected=key});
+  await ui.settle();
+  const row=()=>ui.find(node=>node.props.role==='option'&&node.props.title===local.key)[0];
+  row().props.onClick();await ui.settle();
+  assert.equal(selected,local.key);
+  assert.deepEqual(calls,[]);
+  row().props.onContextMenu({preventDefault(){prevented=true;}});await ui.settle();
+  assert.equal(prevented,true);
+  assert.deepEqual(calls,[['eject',local.key]]);
+  assert.equal(ui.find(node=>node.props['aria-label']==='Loaded local models').length,0);
+});
+
+test('the closed composer shows a live loaded badge after an external mount',async t=>{
+  t.mock.timers.enable({apis:['setInterval']});
+  const previous=globalThis.document;
+  globalThis.document={visibilityState:'visible'};
+  t.after(()=>{globalThis.document=previous;});
+  let mounted=[];
+  const {ui}=menu(t,{state:async mode=>mode==='mounted-ollama'?mounted:{models:[local,cloud,colibri]}},{open:false,value:local.key});
+  await ui.settle();
+  const badge=()=>ui.find(node=>node.props.className==='notch-model-loaded-badge')[0];
+  assert.equal(badge(),undefined);
+  mounted=[local.key];
+  t.mock.timers.tick(5000);
+  await ui.settle();
+  assert.equal(content(badge()),'Loaded');
+  assert.equal(badge().props.title,'Local coder is loaded in memory');
+  mounted=[];
+  t.mock.timers.tick(5000);
+  await ui.settle();
+  assert.equal(badge(),undefined);
 });
 
 test('a failed load keeps the previous selection and makes the error and retry controls available',async t=>{

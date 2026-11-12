@@ -13,7 +13,7 @@ import { COLIBRI_PLANNER, colibriContexts, colibriRank, colibriBackendReady, col
 
 const exec = promisify(execFile);
 export const COLIBRI_DEFAULT_CONTEXT = 16384;
-export const COLIBRI_VERSION = '2.0.0';
+export const COLIBRI_VERSION = '2.1.0';
 export const COLIBRI_URL = 'http://127.0.0.1:11437/v1';
 const root = () => path.join(os.homedir(), '.notch', 'runtimes', 'colibri');
 const runtime = () => path.join(root(), `v${COLIBRI_VERSION}`);
@@ -23,9 +23,9 @@ const transactionFile = () => path.join(root(), 'pending-model.json');
 const tuningFile = () => path.join(root(), 'backend-profiles.json');
 const preferencesFile = () => path.join(root(), 'preferences.json');
 const assets: Record<string, [string, string]> = {
-  'win32-x64': ['windows-x86_64.zip', 'fdb8ea2fad7dcfe44d9d37bfb3e444f1299207f268ab499719f98bd772397d79'],
-  'linux-x64': ['linux-x86_64.tar.gz', 'aef2c1e7d5cbad3d27cc90d8432775acdc315ec51f6d7a67a2f13a936f9978ce'],
-  'darwin-arm64': ['macos-arm64.tar.gz', 'faa0841b20b7efe3b3bbd537360a42bb8beeaa5031bfff3813ecb01367edf851'],
+  'win32-x64': ['windows-x86_64.zip', '195ee0be129d563789f1ade2383e023bde5519230d6fb508516e63767ee85465'],
+  'linux-x64': ['linux-x86_64.tar.gz', 'd54b4c57c12417fc9e784b649249ac1aa3480eec44ece2777d4cbc639a25e66a'],
+  'darwin-arm64': ['macos-arm64.tar.gz', '58320c9d92f84873820ced439c5dfe30afec64ebfc5ae7255ed8f34414d9e202'],
 };
 export interface ColibriModel {
   id: string; name: string; family: string; repo: string; download_gb: number;
@@ -111,12 +111,12 @@ async function installRuntimeAsset(asset: { name: string; sha256: string }, sign
   let bytes: Buffer | undefined;
   try { bytes = await readFile(file); } catch { /* First download. */ }
   if (!bytes || createHash('sha256').update(bytes).digest('hex') !== asset.sha256) {
-    output(`Downloading experimental Colibri ${COLIBRI_VERSION} (under 16 MB). Model weights are a separate download.\n`);
+    output(`Downloading experimental Colibri ${COLIBRI_VERSION} (under 32 MB). Model weights are a separate download.\n`);
     const response = await fetch(`https://github.com/JustVugg/colibri/releases/download/v${COLIBRI_VERSION}/${asset.name}`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180000)]) : AbortSignal.timeout(180000) });
     if (!response.ok) throw new Error(`Cannot download Colibri (HTTP ${response.status}).`);
-    if (Number(response.headers.get('content-length')) > 16 * 2 ** 20) throw new Error('Colibri runtime download exceeds its expected size.');
+    if (Number(response.headers.get('content-length')) > 32 * 2 ** 20) throw new Error('Colibri runtime download exceeds its expected size.');
     bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > 16 * 2 ** 20 || createHash('sha256').update(bytes).digest('hex') !== asset.sha256) throw new Error('Colibri runtime checksum mismatch; it was not executed.');
+    if (bytes.length > 32 * 2 ** 20 || createHash('sha256').update(bytes).digest('hex') !== asset.sha256) throw new Error('Colibri runtime checksum mismatch; it was not executed.');
     await writeFile(file, bytes, { mode: 0o600 });
   }
   const tar = process.platform === 'win32' ? path.join(process.env.WINDIR || 'C:/Windows', 'System32', 'tar.exe') : 'tar';
@@ -153,8 +153,8 @@ export async function prepareColibri(signal?: AbortSignal, output: (text: string
           // Never replace engine files while an existing local model is using them.
           const active = await fetch(`${COLIBRI_URL}/models`, { signal: AbortSignal.timeout(1000) }).catch(() => null);
           if (!active?.ok) try {
-            output('Preparing the optional NVIDIA CUDA backend (under 4 MB)…\n');
-            await installRuntimeAsset({ name: `colibri-v${COLIBRI_VERSION}-windows-x86_64-cuda.zip`, sha256: 'e0f7f4ad339909a9ef5dfc3bda6afe46757d3358d8a2d446e460ce14a1f7dc3a' }, signal, output);
+            output('Preparing the optional NVIDIA CUDA backend (under 32 MB)…\n');
+            await installRuntimeAsset({ name: `colibri-v${COLIBRI_VERSION}-windows-x86_64-cuda.zip`, sha256: '69fb93c20f671533eea8d2c18c5c1f6bd1db12dd79c9e570068b9950db58f3fe' }, signal, output);
           } catch (error) { signal?.throwIfAborted(); output('CUDA setup is unavailable; CPU and Vulkan remain available for automatic selection.\n'); }
         }
       }
@@ -446,16 +446,16 @@ export async function validateColibri(contextWindow?: number, signal?: AbortSign
 }
 
 export async function colibriModels(_hardware?: LocalHardware) {
-  const state = await colibriStatus(); if (!state.verified) return [];
+  const state = await colibriStatus(); if (!state.configured || !state.modelId || !state.modelDir) return [];
   const config = await json(path.join(state.modelDir, 'config.hf.json')) || await json(path.join(state.modelDir, 'config.json'));
   const native = config?.text_config?.max_position_embeddings ?? config?.max_position_embeddings;
   if (!Number.isSafeInteger(native) || native < 2048) return [];
   const automatic = state.running ? { fits: true, contextWindow: state.contextWindow } : await colibriPlan().catch(() => ({ fits: false, contextWindow: state.contextWindow }));
-  const fits = automatic.fits;
+  const fits = automatic.fits && state.verified && state.installed;
   const files=(await readdir(state.modelDir,{withFileTypes:true})).filter(file=>file.isFile() && /\.(?:safetensors|qpack)$/.test(file.name));
   const bytes=(await Promise.all(files.map(file=>stat(path.join(state.modelDir,file.name))))).reduce((sum,file)=>sum+file.size,0);
   return [{ key: `colibri/${state.modelId}`, displayName: state.model?.name || state.modelId, provider: 'colibri', source: 'system',
-    enabled: fits, description: state.running ? 'Colibri · experimental · loaded' : fits ? 'Colibri · experimental' : 'Close applications to free memory before loading Colibri',
+    enabled: fits, description: !state.verified ? 'Colibri updated: open Colibri settings and validate the existing model' : state.running ? 'Colibri · experimental · loaded' : fits ? 'Colibri · experimental' : 'Close applications to free memory before loading Colibri',
     bytes, isDefault: false, isNew: false, priceFactor: 0, tags: ['local', 'experimental'], maxInputTokens: native, maxOutputTokens: 2048,
     availableContextWindows: [2048,4096,8192,12288,16384,32768,65536,131072,262144].filter(n => n <= native), defaultContextWindow: automatic.contextWindow || state.contextWindow,
     recommendedContextWindow: automatic.contextWindow || state.contextWindow, efforts: [], defaultEffort: null, supportsDisabled: true }];

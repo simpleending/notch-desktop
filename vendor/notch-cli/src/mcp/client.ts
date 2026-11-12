@@ -103,7 +103,7 @@ export class MCPClient {
   async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
     if (!this.isAlive) {
       try {
-        await this.transport.connect();
+        await this.connect();
       } catch (err: any) {
         throw new Error(`MCP server ${this.serverName} is down and could not reconnect: ${err.message}`);
       }
@@ -143,7 +143,7 @@ export function mcpToolsToNotch(client: MCPClient, serverName: string): NotchToo
               .filter((c: any) => c.type === 'text')
               .map((c: any) => c.text)
               .join('\n');
-            return { content: text || JSON.stringify(result) };
+            return { content: text || JSON.stringify(result), ...(mcpResult.isError ? { isError: true } : {}) };
           }
           return { content: typeof result === 'string' ? result : JSON.stringify(result, null, 2) };
         } catch (err: any) {

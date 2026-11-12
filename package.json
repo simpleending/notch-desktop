@@ -1,6 +1,6 @@
 {
   "name": "@freesyntax/notch-desktop",
-  "version": "0.1.48",
+  "version": "0.1.49",
   "private": true,
   "type": "module",
   "description": "notch by freesyntax.dev: local models first, optional provider API keys",
@@ -45,15 +45,16 @@
     "@earendil-works/pi-ai": "^1.2.0",
     "@ff-labs/fff-node": "0.11.0",
     "@freesyntax/notch-cli": "0.7.34",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@openrouter/ai-sdk-provider": "3.1.0",
     "ai": "^7.0.138",
     "ajv": "^8.20.0",
     "chalk": "^5.3.0",
     "commander": "^12.1.0",
     "electron-updater": "6.8.9",
-    "glob": "13.0.6",
+    "glob": "14.0.6",
     "ignore": "^6.0.2",
-    "minimatch": "^10.2.6",
+    "minimatch": "11.0.8",
     "ora": "^8.1.1",
     "playwright-core": "1.64.1",
     "simple-git": "^4.0.2",
@@ -71,7 +72,9 @@
     "typescript": "5.9.3"
   },
   "overrides": {
-    "esbuild": "0.28.2"
+    "esbuild": "0.28.2",
+    "glob": "$glob",
+    "minimatch": "$minimatch"
   },
   "engines": {
     "node": ">=22.19.0"

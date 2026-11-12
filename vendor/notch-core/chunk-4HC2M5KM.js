@@ -5,7 +5,7 @@ import {
   loadSyncedByokKeys,
   parseByokRef,
   resolveByokModel
-} from "./chunk-76JNJZ2B.js";
+} from "./chunk-ZZBG7PDZ.js";
 import {
   listModels,
   showModel
@@ -938,7 +938,7 @@ function mergePermissions(base, override) {
 
 // vendor/notch-cli/src/permissions/access.ts
 var ACCESS_MODES = ["approve", "read-only", "full-access"];
-var READ_TOOLS = /* @__PURE__ */ new Set(["read", "task_changes", "grep", "glob", "web_fetch", "web_search", "browser_read"]);
+var READ_TOOLS = /* @__PURE__ */ new Set(["read", "task_changes", "grep", "glob", "web_fetch", "web_search", "browser_read", "knowledge"]);
 function parseAccessMode(value) {
   if (typeof value !== "string" || !ACCESS_MODES.includes(value)) {
     throw new Error(`Invalid access mode ${JSON.stringify(value)}. Choose ${ACCESS_MODES.join(", ")}.`);
@@ -964,8 +964,7 @@ import { createHash, randomUUID } from "crypto";
 import { execFile } from "child_process";
 import { promisify } from "util";
 function openRouterTaskContext(ctx, model) {
-  const cloud = typeof model === "string" ? /^openrouter[/:]/.test(model) : /^openrouter(?:\.|$)/.test(model.provider);
-  return { ...ctx, isolateTasks: () => !ctx.remoteWorkspace && cloud && (ctx.workspaceMode?.() === "isolated" || !ctx.workspaceMode && !!ctx.isolateTasks?.()) };
+  return { ...ctx, isolateTasks: () => !ctx.remoteWorkspace && (ctx.workspaceMode?.() === "isolated" || !ctx.workspaceMode && !!ctx.isolateTasks?.()) };
 }
 function parseWorkspaceMode(value) {
   if (value !== "shared" && value !== "isolated") throw new Error("Workspace mode must be shared or isolated.");

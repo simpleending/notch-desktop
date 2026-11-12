@@ -60,7 +60,7 @@ export class NotchQuery {
   async getAvailableModels() { return (await this.host.listModels()).map(row => ({ ...row, value: row.key, isEnabled: row.enabled })); }
   async supportedCommands() { return []; }
   async supportedAgents() { return []; }
-  async mcpServerStatus() { return []; }
+  async mcpServerStatus() { return structuredClone(this.mcpStatus ?? []); }
   async accountInfo() { return { name: 'Local Notch', provider: 'notch' }; }
   async getContextUsage() { await this.ready; const usage = this.state.contextUsage; return usage && usage.model === this.model ? structuredClone(usage) : null; }
   acceptUsage({ inputTokens, outputTokens, contextWindow }) {
@@ -182,6 +182,8 @@ export class NotchQuery {
       this.state.messages.push({ role: 'user', content });
       await this.host.saveSession(this.id, this.state);
       const result = await this.runTurn({
+        mcpServers: this.request.mcpServers,
+        onMcpStatus: rows => { this.mcpStatus = rows; this.emit(this.envelope('system', { subtype: 'mcp_status', mcp_servers: rows })); },
         cwd: this.request.cwd, sessionId: this.id, messages: this.state.messages, model: this.model,
         onQueue: message => { this.queueMessage = message;this.automation?.queue?.(message); },
         accessMode: accessForMode(this.permissionMode, this.planMode), signal: controller.signal,
@@ -194,7 +196,7 @@ export class NotchQuery {
           if (accessForMode(this.permissionMode, this.planMode) === 'read-only') return false;
           // Keep project deny rules in the harness; only skip its remaining approval prompt.
           const approvedTools = Array.isArray(this.state.approvedTools) ? this.state.approvedTools : [];
-          if (this.permissionMode === 'auto' || approvedTools.includes(name)) return true;
+          if (this.permissionMode === 'auto' || accessForMode(this.permissionMode, this.planMode) === 'full-access' || approvedTools.includes(name)) return true;
           if (!this.request.canUseTool) return false;
           const input = wireInput(name, args);
           const suggestion = { type: 'addRules', rules: [{ toolName: toolNames[name] || name }], behavior: 'allow', destination: 'session' };

@@ -18,7 +18,7 @@ export function registerModelIpc(ipcMain, host) {
     return manager[provider]('catalog');
   };
   const handlers = {
-    automations:(action,value)=>host.automations.command(action,value),
+    automations:(action,value)=>action==='background'?host.automationBackground.settings(value):host.automations.command(action,value),
     maintenance:action=>host.runtimeMaintenance(action),
     updates: (action='status',value) => {
       if(!['status','check','automatic','download','quit'].includes(action))throw new Error('Choose a supported update action.');
@@ -40,7 +40,7 @@ export function registerModelIpc(ipcMain, host) {
       throw new Error('Choose a supported phone action.');
     },
     workspace: async mode => mode === undefined ? manager.getWorkspaceMode() : manager.setWorkspaceMode(mode),
-    state: refresh => state(refresh === true,true),
+    state: refresh => refresh === 'mounted-ollama' ? host.mountedOllamaKeys() : state(refresh === true,true),
     runtime: async (action,key) => {
       if(!['mount','toggle','eject'].includes(action))throw Error('Choose a supported local model action.');
       const result=await host.localModelChange(action,key);

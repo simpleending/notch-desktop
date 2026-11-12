@@ -38,9 +38,13 @@ test('an integrated GPU resident does not hide a model that fits after releasing
    if(url.includes(':11434'))throw Error('No secondary daemon');
    if(url.endsWith('/api/tags'))return Response.json({models:[{name:'resident',size:3*GiB,digest:'resident'},{name:'next',size:3*GiB,digest:'next'}]});
    if(url.endsWith('/api/ps'))return Response.json({models:[{name:'resident',digest:'resident',size:4*GiB,size_vram:4*GiB,context_length:8192}]});
-   return Response.json({capabilities:['tools'],model_info:{'general.architecture':'test','test.context_length':8192}});
+   return Response.json({capabilities:['tools'],model_info:{'general.architecture':'test','test.context_length':8192,'general.base_model.0.name':'Base model'}});
   }});
- try{assert.equal((await host.listModels(true)).find(row=>row.key==='ollama/next').enabled,true);}
+ try{
+  const next=(await host.listModels(true)).find(row=>row.key==='ollama/next');
+  assert.equal(next.enabled,true);
+  assert.equal(next.displayName,'next','A named Ollama model keeps its own label instead of the base model name.');
+ }
  finally{await host.workspaceSearch.shutdown();await fs.rm(directory,{recursive:true,force:true});}
 });
 test('switching releases the old Ollama model before mounting the next; toggle and eject keep installed inventory',async()=>{
@@ -146,9 +150,10 @@ test('the same model on a second Ollama daemon is released so only one copy rema
 });
 test('local runtime IPC stays in the primary window and the preload patch upgrades existing builds',async()=>{
  const handlers=new Map(),calls=[];
- registerModelIpc({handle:(key,fn)=>handlers.set(key,fn)},{modelManager:{status:async()=>({}),allFallbacks:()=>({})},listModels:async()=>[],getDefaultModel:()=>null,getModelDiscoveryWarning:()=>null,localModelChange:async(action,key)=>{calls.push([action,key]);return{loaded:false};}});
+ registerModelIpc({handle:(key,fn)=>handlers.set(key,fn)},{modelManager:{status:async()=>({}),allFallbacks:()=>({})},listModels:async()=>[],getDefaultModel:()=>null,getModelDiscoveryWarning:()=>null,mountedOllamaKeys:async()=>['ollama/active'],localModelChange:async(action,key)=>{calls.push([action,key]);return{loaded:false};}});
  const sender={};sender.mainFrame={url:'notch-app://renderer/index.html?workbenchScope=primary'};
  const event={sender,senderFrame:sender.mainFrame};
+ assert.deepEqual(await handlers.get('notch-models:state')(event,'mounted-ollama'),['ollama/active']);
  await assert.rejects(async()=>handlers.get('notch-models:runtime')(event,'delete','ollama/old'),/supported/);
  assert.throws(()=>handlers.get('notch-models:runtime')({sender,senderFrame:{url:sender.mainFrame.url}},'eject','ollama/old'),/primary/);
  assert.equal(patchModelPreload(modelPreload),modelPreload);

@@ -17,7 +17,7 @@ import {
   startColibri,
   stopColibri,
   validateColibri
-} from "./chunk-L4X6AUK3.js";
+} from "./chunk-XN4HRW4L.js";
 import "./chunk-S2VC66HG.js";
 import "./chunk-M6FOGWEU.js";
 import "./chunk-CS6Q4K4N.js";

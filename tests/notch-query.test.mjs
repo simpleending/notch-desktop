@@ -16,6 +16,14 @@ for (const status of ['stalled','verification-failed','max-iterations']) test(`a
   assert.equal(events.at(-1).subtype,'error_during_execution');assert.equal(events.at(-1).is_error,true);
   assert.match(events.at(-1).result,/Checks have not passed/);assert.notEqual(events.at(-1).terminal_reason,'user_interrupted');
 });
+test('full-access MCP connection approval does not require a missing interactive callback',async()=>{
+  const f=fixture();let approved;
+  const query=new NotchQuery(f.host,{cwd:process.cwd(),prompt:'Use my configured tools',permissionMode:'bypassPermissions'},{runTurn:async turn=>{
+    approved=await turn.approve('mcp_connect',{server:'fixture'},'Connect?');
+    return {status:'completed',text:'Done',messages:turn.messages};
+  }});
+  for await(const _event of query){}assert.equal(approved,true);
+});
 test('streamed text and native tool identities drive the existing workbench contract', async () => {
   const f = fixture(); let approved;
   const query = new NotchQuery(f.host, { cwd: process.cwd(), prompt: 'Write a file', sessionId: 'fixture',

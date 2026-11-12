@@ -12,6 +12,7 @@ import { validateLocalPlugin } from './plugin-validation.mjs';
 import { createRemoteWorkspace } from './remote-workspace.mjs';
 import { createAutomations } from './automations.mjs';
 import { createRuntimeMaintenance } from './runtime-maintenance.mjs';
+import { createKnowledge } from './knowledge.mjs';
 
 const localIdentity = Object.freeze({ status: 'signed-in', mode: 'local', user: { id: 'local-notch', name: 'Local workspace', nickname: 'Local workspace', email: null }, error: null, loginUrl: null });
 async function localWorkspace(cwd) {
@@ -37,6 +38,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
   const rewinding = new Set();
   let lifecycle;
   const host = {
+    knowledge: createKnowledge(dataDirectory),
     remoteWorkspace: (target, signal) => createRemoteWorkspace(host.remoteSsh, target, signal),
     workspaceSearch: createWorkspaceSearch(),
     identity: localIdentity,
@@ -48,6 +50,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     getQueueStatus: () => [...queries.values()].filter(query => query.queueMessage).map(query => ({ sessionId: query.id, message: query.queueMessage })),
     localModelBusy: () => lifecycle.busy,
     async localModelChange(action,key) { return lifecycle.change(action,key); },
+    async mountedOllamaKeys() { return [...new Set((await lifecycle.mountedOllama()).map(row=>row.key))]; },
     resolveModelChoice(model) {
       const chosen = !model || model === 'auto' ? defaultModel : model;
       if (!chosen || !models.some(row => row.key === chosen && row.enabled)) throw new Error('The selected model is unavailable or does not fit current memory. Choose a model in the composer.');
@@ -100,7 +103,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
             const maxOutputTokens = Math.min(16384, Math.floor(contextWindow / 4));
             nextProfiles.set(key, { ...fit, contextWindow, maxOutputTokens });
             nextEndpoints.set(key, `${result.value.root}/v1`);
-            const label = metadata.model_info?.['general.base_model.0.name'];
+            const label = row.name.startsWith('notch-hf-') ? metadata.model_info?.['general.name'] : undefined;
             unique.set(key, { key, displayName: typeof label === 'string' && label ? label : row.name,
               description: fit.fits ? 'local Ollama · estimated memory fit' : fit.reason, provider: 'ollama', bytes: size, source: 'system', enabled: fit.fits,
               running:!!mounted,isDefault: row.name.startsWith('notch-hf-'), isNew: false, priceFactor: 0, tags: ['local'],
@@ -206,7 +209,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
           const model = host.resolveModelChoice(turn.model);
           if(unverifiedModels.has(model))throw new Error('Could not verify the local model. Start Ollama or refresh to retry.');
           const apiKey = model.startsWith('openrouter/') ? await host.modelManager?.key('openrouter') : undefined;
-          turn = { ...turn, prepareLocalModel:model.startsWith('openrouter/')?undefined:()=>lifecycle.prepare(model), instructions: desktopInstructionsForContext(turn.instructions, profiles.get(model)?.contextWindow || 8192) };
+          turn = { ...turn, knowledge: host.knowledge, prepareLocalModel:model.startsWith('openrouter/')?undefined:()=>lifecycle.prepare(model), instructions: desktopInstructionsForContext(turn.instructions, profiles.get(model)?.contextWindow || 8192) };
           if (model.startsWith('openrouter/') && !apiKey) throw new Error('Connect an OpenRouter API key in the model picker.');
           const remoteWorkspace = request.executionTarget?.host?.kind === 'ssh' ? await host.remoteWorkspace(request.executionTarget, turn.signal) : undefined;
           return runTurn({ ...turn, model, apiKey, remoteWorkspace, webSettings: async () => await host.webResearch?.configuration() ?? { enabled: true, searchProvider: 'duckduckgo', browser: 'auto' }, workspaceMode: await host.modelManager?.getWorkspaceMode?.() ?? 'shared', workspaceSearch: (operation, params, cwd, signal) => host.workspaceSearch.tool(operation, cwd, params, signal),

@@ -4,6 +4,8 @@ function once(source,before,after){if(source.includes(after))return source;if(so
 
 export function patchAutomationsMain(source){
   if(!source.includes('class QIr'))return source;
+  // The optional background controller runs first; a hidden window must not continue into quit handling.
+  source=source.replace('u.on("close",Q=>{if(n)return;', 'u.on("close",Q=>{if(Q.defaultPrevented||n)return;');
   source=patchFunction(source,'g$e',`function g$e(t){if(!cv(t))throw new Error("Automation execution strategy is invalid.");return globalThis.__notchHost.automations.policy({...t,permissionMode:BZr(t.permissionMode)});}`);
   if(source.includes('/* notch automation reliability */')){
     source=patchClassMethod(source,'pue','listSessionRuns',body=>body.replace(' LIMIT 1000`','`'));

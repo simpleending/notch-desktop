@@ -3,6 +3,7 @@ import path from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {automationPolicy,automationReplay,automationResourceError,automationNoChange} from './automation-policy.mjs';
+import {createAutomationEvents,normalizeWatchFiles} from './automation-events.mjs';
 
 function abortError(message,code='canceled'){return Object.assign(Error(message),{name:code==='canceled'?'AbortError':'Error',code});}
 async function interruptible(promise,signal){
@@ -20,13 +21,14 @@ const starterPresets=[
 export function createAutomations(directory,{host,notify=()=>{},now=Date.now,pause=(ms,signal)=>sleep(ms,undefined,{signal}),resourceDelay=10000}={}){
   const file=path.join(directory,'automation-options.json'),entries=new Map;
   let service,healthMessage=null,closed=false,saved={version:1,presets:[],notices:{}},writes=Promise.resolve();
+  const events=createAutomationEvents({now,onError:()=>{healthMessage='A file change could not queue its automation. Check the task and run history.';},eligible:id=>{try{const task=service?.requireTask(id);return !!task?.enabled&&!task.pauseReason&&(!task.expiresAt||task.expiresAt>now())&&![...entries.values()].some(entry=>entry.task.id===id&&!entry.ended);}catch{return false;}},run:id=>service.runNow(id,'manual')});
   const ready=fs.readFile(file,'utf8').then(text=>{const data=JSON.parse(text);if(!data||data.version!==1||!Array.isArray(data.presets)||data.presets.length>100)throw Error('Automation preferences could not be read.');saved=data;saved.notices??={};}).catch(error=>{if(error.code!=='ENOENT')throw error;});
   // Every mutation commits before the next one reads the new state.
   async function persist(change){const job=writes.catch(()=>{}).then(async()=>{await ready;const next=change(structuredClone(saved)),temporary=file+'.'+randomUUID()+'.tmp';await fs.mkdir(directory,{recursive:true});try{await fs.writeFile(temporary,JSON.stringify(next),{mode:0o600,flag:'wx',flush:true});await fs.rename(temporary,file);saved=next;}finally{await fs.unlink(temporary).catch(()=>{});}return next;});writes=job;return job;}
   const controller={
     setNotifier(value){if(typeof value!=='function')throw Error('Choose a notification handler.');notify=value;},
     policy:automationPolicy,replay:automationReplay,
-    attach(value){service=value;},
+    attach(value){service=value;void ready.then(()=>{if(!closed)for(const [id,files] of Object.entries(saved.watchFiles??{}))events.set(id,files);}).catch(error=>{healthMessage=error.message;});},
     health(error){healthMessage=error?'Scheduling could not access storage. Retrying automatically.':null;},
     recover(value,reason){try{value.replayOfflineSchedules(reason);healthMessage=null;}catch(error){value.logger.error('Automation recovery will retry',{error});controller.health(error);}},
     status(){return{schedulerError:healthMessage,active:[...entries.values()].filter(entry=>!entry.ended).map(entry=>({taskId:entry.task.id,runId:entry.run.id,sessionId:entry.run.executionSessionId,name:entry.task.name,message:entry.message,startedAt:entry.startedAt,tokens:entry.tokens,maxTokens:entry.policy.maxTokens,maxRuntimeMs:entry.policy.maxRuntimeMs}))};},
@@ -38,7 +40,7 @@ export function createAutomations(directory,{host,notify=()=>{},now=Date.now,pau
       usage:usage=>{const tokens=usage.inputTokens+usage.outputTokens;if(Number.isSafeInteger(tokens)&&tokens>=0){entry.tokens+=tokens;if(entry.policy.maxTokens&&entry.tokens>=entry.policy.maxTokens)entry.abort.abort(abortError('The automation reached its token limit.','token-limit'));}},
     };},
     async cancel(run){const entry=entries.get(run.executionSessionId);if(entry?.run.id===run.id){entry.message='Stopping…';entry.abort.abort(abortError('Automation stopped.'));}await service?.chatSessionService.interrupt(run.executionSessionId);},
-    shutdown(){closed=true;for(const entry of entries.values())entry.abort.abort(abortError('Notch is closing.'));},
+    shutdown(){closed=true;events.close();for(const entry of entries.values())entry.abort.abort(abortError('Notch is closing.'));},
     async execute(executor,claim,adapters){
       const task=claim.taskSnapshot,policy=automationPolicy(task.executionPolicy),abort=new AbortController,signal=abort.signal;
       if(closed||executor.options.isCancellationRequested(claim.run.id))abort.abort(abortError('Automation stopped.'));
@@ -76,7 +78,7 @@ export function createAutomations(directory,{host,notify=()=>{},now=Date.now,pau
       if(!host?.listModels)return;
       entry.signal.throwIfAborted();const rows=await host.listModels(true);entry.signal.throwIfAborted();
       const key=task.model||host.getDefaultModel(),row=rows.find(row=>row.key===key);
-      if(!row||!row.enabled){const reason=row?.reason||row?.disabledReason||`The selected ${key?.split('/')[0]||'local'} model is unavailable. Refresh models or choose another model.`;throw Error(reason);}
+      if(!row||!row.enabled){const reason=row?.reason||row?.disabledReason||row?.description||`The selected ${key?.split('/')[0]||'local'} model is unavailable. Refresh models or choose another model.`;throw Error(reason);}
       if(!key.startsWith('openrouter/')&&host.localModelBusy?.())throw Error('Wait for the local model to finish loading or ejecting.');
     },
     async completed(claim,run){
@@ -92,7 +94,13 @@ export function createAutomations(directory,{host,notify=()=>{},now=Date.now,pau
     async savePreset(taskId){if(!service)throw Error('Automations are still starting.');const task=service.get(taskId);if(!task)throw Error('Choose an existing automation.');const template={id:'saved-'+randomUUID(),name:localized(task.name),description:localized('Saved local automation preset'),instruction:localized(task.instruction.text),schedule:structuredClone(task.trigger.schedule),location:'local',productMode:task.productMode||'coding',outputMode:task.outputMode,notch:{agentId:task.agentId,model:task.model,executionPolicy:automationPolicy(task.executionPolicy),instruction:structuredClone(task.instruction),executionScope:structuredClone(task.executionScope)}};await persist(data=>{if(data.presets.length>=100)throw Error('Keep up to 100 local presets. Remove an unused preset first.');data.presets.push(template);return data;});return template;},
     async deletePreset(id){if(typeof id!=='string'||!id.startsWith('saved-'))throw Error('Choose a saved local preset.');await persist(data=>{data.presets=data.presets.filter(row=>row.id!==id);return data;});},
     preview(schedule){if(!service)throw Error('Automations are still starting.');if(!schedule||typeof schedule!=='object'||JSON.stringify(schedule).length>4096)throw Error('Choose a valid schedule.');const trigger={kind:'schedule',schedule};service.triggerRegistry.validate(trigger,now());const runs=[];let at=service.triggerRegistry.nextRunAt(trigger,now());for(let i=0;i<3&&at!==null;i++){runs.push(at);at=service.triggerRegistry.followingRunAt(trigger,at,at);}return{runs,timeZone:schedule.kind==='cron'?schedule.timeZone:Intl.DateTimeFormat().resolvedOptions().timeZone};},
-    async command(action,value){if(action==='status')return controller.status();if(action==='catalog')return controller.catalog();if(action==='savePreset')return controller.savePreset(value);if(action==='deletePreset')return controller.deletePreset(value);if(action==='preview')return controller.preview(value);throw Error('Choose a supported automation action.');},
+    async command(action,value){
+      if(action==='watch'){
+        await ready;if(!service||typeof value?.taskId!=='string')throw Error('Save the automation before adding file triggers.');service.requireTask(value.taskId);
+        if(value.files!==undefined){const files=normalizeWatchFiles(value.files);await persist(data=>{data.watchFiles??={};if(files.length)data.watchFiles[value.taskId]=files;else delete data.watchFiles[value.taskId];return data;});events.set(value.taskId,files);}
+        return {files:saved.watchFiles?.[value.taskId]??[]};
+      }
+      if(action==='status')return controller.status();if(action==='catalog')return controller.catalog();if(action==='savePreset')return controller.savePreset(value);if(action==='deletePreset')return controller.deletePreset(value);if(action==='preview')return controller.preview(value);throw Error('Choose a supported automation action.');},
   };
   // A damaged preferences file remains in place and its error is shown when used.
   void ready.catch(error=>{healthMessage=error.message;});

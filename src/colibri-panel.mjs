@@ -1,8 +1,9 @@
+import { createEngineUpdateView } from './engine-update-view.mjs';
 import { uiMessage } from "./ui-messages.mjs";
 import { focusModelOption, rovingModelOption, syncModelOptions } from './model-navigation.mjs';
 
 export function createColibriPanel(React) {
-  const h=React.createElement;
+  const h=React.createElement, EngineUpdate=createEngineUpdateView(React);
   return function ColibriPanel({api,job,onStatus,onInstalled,cached,onCatalog}) {
     const [catalog,setCatalog]=React.useState(cached),[error,setError]=React.useState(''),[busy,setBusy]=React.useState(false),[selected,setSelected]=React.useState(null);
     const list=React.useRef(null),confirmation=React.useRef(null),returnFocus=React.useRef(null);
@@ -15,10 +16,12 @@ export function createColibriPanel(React) {
     const memory=catalog?.models?.[0]?.memory;
     return h('section',{className:'notch-engine-panel','aria-label':'Experimental Colibri'},
       h('p',{className:'notch-model-note'},'Experimental local engine. Streams model experts from disk; a fast SSD helps. Fitting in RAM does not guarantee fast responses.'),
+      h(EngineUpdate,{api,provider:'colibri'}),
       !catalog?h('p',{role:'status'},'Checking Colibri…'):!catalog.installed?h(React.Fragment,null,
-        h('p',{className:'notch-model-note'},'Set up the isolated engine (under 16 MB). Requires 64-bit Python 3.10+. Model weights download separately after you choose one.'),
+        h('p',{className:'notch-model-note'},'Set up the isolated engine (under 32 MB). Requires 64-bit Python 3.10+. Model weights download separately after you choose one.'),
         h('button',{type:'button',className:'notch-engine-setup',disabled:working,onClick:()=>void act('setup')},'Set up Colibri (experimental)')):h(React.Fragment,null,
         h('div',{className:'notch-provider-status'},h('span',null,`Colibri ${catalog.version} · ${catalog.running?'loaded':'unloaded'}${catalog.backend?` · ${catalog.backend.toUpperCase()}`:''}`),h('button',{type:'button',disabled:working,onClick:()=>void act('unload')},'Unload model')),
+        catalog.configured&&!catalog.verified?h('button',{type:'button',disabled:working,onClick:()=>void act('validate')},'Validate existing model'):null,
         catalog.gpu?h('p',{className:'notch-model-note'},`Detected GPU: ${catalog.gpu}`):null,
         h('fieldset',{className:'notch-engine-backends',disabled:working||catalog.running},
           h('legend',null,'Colibri backend'),
