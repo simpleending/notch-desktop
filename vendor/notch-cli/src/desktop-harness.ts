@@ -49,10 +49,12 @@ export interface DesktopTurn {
   contextWindow?: number;
   automaticContext?: boolean;
   availableContextWindows?: number[];
+  refreshContextWindows?: () => Promise<number[]>;
   colibriAutoContext?: boolean;
   strataAutoContext?: boolean;
   nativeContextWindow?: number;
   ollamaBatch?: number;
+  ollamaKeepAlive?: -1;
   tools?: string[];
   allowedTools?: string[];
   disallowedTools?: string[];
@@ -100,6 +102,7 @@ export async function runDesktopTurn(turn: DesktopTurn) {
     ...(turn.maxOutputTokens ? { maxOutputTokens: turn.maxOutputTokens } : {}),
     ...(turn.contextWindow ? { contextWindow: turn.contextWindow } : {}),
     ...(turn.nativeContextWindow ? { nativeContextWindow: turn.nativeContextWindow } : {}),
+    ...(turn.ollamaKeepAlive === -1 ? { ollamaKeepAlive: -1 as const } : {}),
     ...(turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {}),
     ...(Array.isArray(turn.fallbacks) && turn.fallbacks.length ? { fallbacks: turn.fallbacks } : {}),
   };
@@ -168,7 +171,8 @@ export async function runDesktopTurn(turn: DesktopTurn) {
   try {
     return await runAgentLoop(turn.messages, {
       model: resolveModel(selection), modelId: selection.model,
-      contextWindows: turn.automaticContext ? turn.availableContextWindows : undefined,
+      contextWindows: turn.automaticContext ? turn.availableContextWindows?.filter(n => n <= (turn.nativeContextWindow ?? 262144)) : undefined,
+      refreshContextWindows: turn.automaticContext && turn.refreshContextWindows ? async () => (await turn.refreshContextWindows!()).filter(n => n <= (turn.nativeContextWindow ?? 262144)) : undefined,
       resolveContext: contextWindow => resolveModel({ ...selection, contextWindow }),
       systemPrompt: (turn.remoteWorkspace ? `You are Notch, an AI coding assistant. All workspace tools operate over SSH on the user's host.\n${turn.remoteWorkspace.instructions}` : await buildSystemPrompt(cwd, selection.model, ctx, selection.contextWindow)) + (turn.instructions ? `\n\nDesktop agent instructions:\n${turn.instructions}` : ''), toolContext: ctx,
       maxIterations: turn.maxIterations,maxTotalTokens:turn.maxTotalTokens, contextWindow: selection.contextWindow, strataModelId: provider === 'strata' ? (isByokRef(selection.model) ? parseByokRef(selection.model).model : selection.model) : undefined, strataAutoContext: turn.strataAutoContext, colibriAutoContext: turn.colibriAutoContext ?? selection.contextWindow === undefined, colibriModelId: selection.byokProvider === 'colibri' ? (selection.model.startsWith('colibri/') ? selection.model.slice(8) : selection.model) : undefined,

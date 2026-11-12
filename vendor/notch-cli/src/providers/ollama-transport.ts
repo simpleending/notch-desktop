@@ -34,7 +34,7 @@ interface Frame {
 }
 
 /** Adapt SDK messages to native /api/chat and NDJSON to SSE, preserving backpressure and cancellation. */
-export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; nativeContextWindow?: number; ollamaBatch?: number } = {}): typeof fetch {
+export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; nativeContextWindow?: number; ollamaBatch?: number; ollamaKeepAlive?: -1 } = {}): typeof fetch {
   // The OpenAI chat adapter omits thinking; Ollama needs it between tool calls.
   const thoughts = new Map<string, string>();
   return async (_input, init) => {
@@ -70,6 +70,7 @@ export function ollamaFetch(baseUrl: string, options: { contextWindow?: number; 
       ...init,
       body: JSON.stringify({
         model: body.model, messages, stream: body.stream === true,
+        ...(options.ollamaKeepAlive === -1 ? { keep_alive: -1 } : {}),
         ...(body.tools?.length ? { tools: body.tools } : {}),
         ...(body.response_format ? { format: body.response_format.json_schema?.schema || 'json' } : {}),
         ...(['0', '1'].includes(process.env.NOTCH_OLLAMA_THINK || '') ? { think: process.env.NOTCH_OLLAMA_THINK === '1' } : {}),

@@ -74,6 +74,7 @@ export interface ModelConfig {
   nativeContextWindow?: number;
   /** Memory-sensitive native Ollama prompt batch size. */
   ollamaBatch?: number;
+  ollamaKeepAlive?: -1;
   sourceRepo?: string;
   /** Max output tokens (auto-set from model catalog) */
   maxOutputTokens?: number;

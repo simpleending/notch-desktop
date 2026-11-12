@@ -109,6 +109,7 @@ function ollamaFetch(baseUrl, options = {}) {
         model: body.model,
         messages,
         stream: body.stream === true,
+        ...options.ollamaKeepAlive === -1 ? { keep_alive: -1 } : {},
         ...body.tools?.length ? { tools: body.tools } : {},
         ...body.response_format ? { format: body.response_format.json_schema?.schema || "json" } : {},
         ...["0", "1"].includes(process.env.NOTCH_OLLAMA_THINK || "") ? { think: process.env.NOTCH_OLLAMA_THINK === "1" } : {},

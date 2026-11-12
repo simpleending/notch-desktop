@@ -16,13 +16,13 @@ import {
   selectModel,
   withSharedWorker,
   withTaskWorkspace
-} from "./chunk-4HC2M5KM.js";
+} from "./chunk-ZBH5FS65.js";
 import {
   getConfigDir,
   isByokRef,
   ollamaContextLength,
   parseByokRef
-} from "./chunk-ZZBG7PDZ.js";
+} from "./chunk-QCUOEX4F.js";
 import {
   Rollout
 } from "./chunk-S5MWOFHZ.js";
@@ -101,6 +101,68 @@ function toolResultValue(part) {
   const output = part.output;
   if (!output) return part.result;
   return output.type === "execution-denied" ? output.reason : output.value;
+}
+
+// vendor/notch-cli/src/agent/retry.ts
+var DEFAULT_RETRYABLE = (err) => {
+  if (err.retryable === false) return false;
+  if (err.name === "AbortError" || err.name === "TimeoutError") return false;
+  const msg = err.message.toLowerCase();
+  if (/out of memory|insufficient memory|context.*(?:exceed|limit)|invalid.*(?:context|argument)/.test(msg)) return false;
+  const status = err.statusCode ?? err.status;
+  if (typeof status === "number") return status === 408 || status === 429 || status >= 500 && status <= 599;
+  if (msg.includes("fetch") || msg.includes("econnrefused") || msg.includes("econnreset") || msg.includes("etimedout") || msg.includes("network") || msg.includes("socket")) {
+    return true;
+  }
+  if (msg.includes("429") || msg.includes("rate limit") || msg.includes("too many requests")) {
+    return true;
+  }
+  if (/\b5\d{2}\b/.test(msg)) {
+    return true;
+  }
+  return false;
+};
+async function withRetry(fn, options = {}) {
+  const maxAttempts = options.maxAttempts ?? 3;
+  const baseDelay = options.baseDelay ?? 1e3;
+  const maxDelay = options.maxDelay ?? 3e4;
+  const factor = options.factor ?? 2;
+  const jitter = options.jitter ?? true;
+  const isRetryable = options.isRetryable ?? DEFAULT_RETRYABLE;
+  let lastError;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    options.signal?.throwIfAborted();
+    try {
+      return await fn();
+    } catch (err) {
+      options.signal?.throwIfAborted();
+      lastError = err;
+      if (attempt === maxAttempts || !isRetryable(err)) {
+        throw err;
+      }
+      let delay = Math.min(baseDelay * Math.pow(factor, attempt - 1), maxDelay);
+      if (jitter) {
+        delay += Math.random() * delay * 0.5;
+      }
+      options.onRetry?.(attempt, err, delay);
+      await sleep(delay, options.signal);
+    }
+  }
+  throw lastError;
+}
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
 }
 
 // vendor/notch-cli/src/agent/execution-guard.ts
@@ -5291,20 +5353,19 @@ function contextBudget(window, overhead = 0, outputLimit) {
   if (history < 512) throw new Error("Instructions and tool definitions leave too little context. Increase the context limit or reduce project instructions.");
   return { output, history, compactAt: Math.floor(history * 0.8) };
 }
-function fitContextWindow(window, overhead, outputLimit, choices = []) {
-  try {
-    contextBudget(window, overhead, outputLimit);
-    return window;
-  } catch (error) {
-    for (const next of [...new Set(choices)].filter((n) => Number.isSafeInteger(n) && n > window).sort((a, b) => a - b)) {
-      try {
-        contextBudget(next, overhead, outputLimit);
-        return next;
-      } catch {
-      }
+function fitContextWindow(window, overhead, outputLimit, choices = [], historyTokens = 0) {
+  let valid, failure;
+  for (const next of [window, ...[...new Set(choices)].filter((n) => Number.isSafeInteger(n) && n > window).sort((a, b) => a - b)]) {
+    try {
+      const budget = contextBudget(next, overhead, outputLimit);
+      valid = next;
+      if (historyTokens < budget.compactAt) return next;
+    } catch (error) {
+      failure = error;
     }
-    throw error;
   }
+  if (valid !== void 0) return valid;
+  throw failure;
 }
 
 // vendor/notch-cli/src/agent/compression.ts
@@ -5593,25 +5654,26 @@ async function autoCompress(messages, model, contextWindow, onCompress, signal, 
 async function autoCompressWithStats(messages, model, contextWindow, signal, historyBudget = contextBudget(contextWindow).history, billing) {
   const stats = { budgetStashed: 0, snipped: 0, collapsed: false, autoCompacted: false, fullCompacted: false };
   const threshold = Math.floor(historyBudget * 0.8);
+  const target = Math.floor(historyBudget * 0.65);
   if (estimateTokens(messages) < threshold) return { messages, stats };
   const br = budgetReduce(messages);
   let result = microCompact(br.messages);
   stats.budgetStashed = br.stashed;
   if (estimateTokens(result) >= threshold) {
-    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget, billing });
+    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget: target, billing });
     result = auto.messages;
     stats.autoCompacted = auto.compressed;
   }
-  if (estimateTokens(result) > historyBudget) {
+  if (estimateTokens(result) >= threshold) {
     const recent = budgetReduce(result, {
       keepLastN: 0,
-      maxToolResultChars: Math.min(BUDGET_TOOL_RESULT_MAX, Math.max(BUDGET_PREVIEW_CHARS * 2, historyBudget))
+      maxToolResultChars: Math.min(BUDGET_TOOL_RESULT_MAX, Math.max(BUDGET_PREVIEW_CHARS * 2, target))
     });
     result = recent.messages;
     stats.budgetStashed += recent.stashed;
   }
   if (estimateTokens(result) > historyBudget) {
-    const full = await fullCompact(result, model, contextWindow, signal, historyBudget, billing);
+    const full = await fullCompact(result, model, contextWindow, signal, target, billing);
     result = full.messages;
     stats.fullCompacted = full.compressed;
   }
@@ -6319,7 +6381,7 @@ async function runAgentLoopInternal(messages, config) {
     if (!automatic) contextBudget(contextWindow, overhead, outputLimit);
     await startColibri2(colibriModelId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, config.toolContext.log, useful);
     contextWindow = (await colibriStatus2()).contextWindow;
-    const { resolveByokModel } = await import("./byok-RUV5326F.js");
+    const { resolveByokModel } = await import("./byok-JVNIA2NZ.js");
     config.model = resolveByokModel({ provider: "colibri", model: colibriModelId, contextWindow }).model;
   }
   const strataId = config.strataModelId ?? (/^strata[/:]/.test(config.modelId ?? "") ? config.modelId.slice(7) : void 0);
@@ -6336,7 +6398,7 @@ async function runAgentLoopInternal(messages, config) {
     if (!useful) throw new Error("Instructions and tools exceed the Strata context limit.");
     const ready = await startStrata2(strataId, automatic ? void 0 : config.contextWindow, config.toolContext.abortSignal, useful);
     contextWindow = ready.contextWindow;
-    const { resolveByokModel } = await import("./byok-RUV5326F.js");
+    const { resolveByokModel } = await import("./byok-JVNIA2NZ.js");
     config.model = resolveByokModel({ provider: "strata", model: strataId, contextWindow }).model;
   }
   const fittedContext = fitContextWindow(contextWindow, overhead, outputLimit, config.contextWindows);
@@ -6347,9 +6409,23 @@ async function runAgentLoopInternal(messages, config) {
   }
   let budget = contextBudget(contextWindow, overhead, outputLimit);
   let tokenRatio = 1;
+  let lastCompactedHistory;
   const compact = async () => {
     const estimated = estimateTokens(history);
     if (estimated * tokenRatio < budget.compactAt) return;
+    if (config.resolveContext && (config.contextWindows?.length || config.refreshContextWindows)) {
+      const choices = config.refreshContextWindows ? await config.refreshContextWindows() : config.contextWindows;
+      const next = fitContextWindow(contextWindow, overhead, outputLimit, choices, estimated * tokenRatio);
+      if (next > contextWindow) {
+        contextWindow = next;
+        config.model = config.resolveContext(next);
+        budget = contextBudget(next, overhead, outputLimit);
+        toolCtxWithCache.promptContextWindow = next;
+        if (estimated * tokenRatio < budget.compactAt) return;
+      }
+    }
+    const fingerprint2 = JSON.stringify(history);
+    if (fingerprint2 === lastCompactedHistory && estimated * tokenRatio <= budget.history) return;
     await config.onCompact?.(history);
     await config.toolContext.runHook?.("pre-compact", { messageCount: history.length });
     history = await autoCompress(history, config.model, contextWindow, () => {
@@ -6365,6 +6441,7 @@ async function runAgentLoopInternal(messages, config) {
       }
     } : void 0);
     if (estimateTokens(history) * tokenRatio > budget.history) throw new Error("The current request or tool results exceed the selected context. Increase context or split the request; the transcript has been saved.");
+    lastCompactedHistory = JSON.stringify(history);
     await config.toolContext.runHook?.("post-compact", { messageCount: history.length });
   };
   await compact();
@@ -6414,55 +6491,82 @@ async function runAgentLoopInternal(messages, config) {
     let streamUsage = null;
     const remainingTokens = config.maxTotalTokens ? config.maxTotalTokens - totalPromptTokens - totalCompletionTokens - estimateTokens(modelMessages) - overhead : Infinity;
     if (remainingTokens < 1) throw Object.assign(new Error("The automation reached its token limit."), { code: "token-limit" });
-    const result = streamText2({
-      // The stream consumer propagates failures; the SDK default also dumps raw requests to stderr.
-      onError() {
-      },
-      model: config.model,
-      messages: modelMessages,
-      abortSignal: config.toolContext.abortSignal,
-      instructions,
-      tools,
-      activeTools,
-      stopWhen: isStepCount2(1),
-      repairToolCall: activeTools.length ? feedback.repair : void 0,
-      maxRetries: 0,
-      maxOutputTokens: Math.min(budget.output, remainingTokens)
-    });
-    for await (const event of result.stream) {
-      if (event.type === "error") {
-        const error = event.error instanceof Error ? event.error : new Error(String(event.error));
-        if (totalToolCalls > 0 || toolCalls.length > 0) Object.assign(error, { retryable: false });
-        throw error;
-      }
-      if (event.type === "text-delta") {
-        fullText += event.text;
-        if (!holdText && !guard.failedChecks.length) config.onTextChunk?.(event.text);
-      } else if (event.type === "tool-call") {
-        toolCalls.push({
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          args: event.input
-        });
-        config.onToolCall?.(event.toolName, event.input, event.toolCallId);
-      }
-      const evt = event;
-      if (evt.type === "tool-result" || evt.type === "tool-error") {
-        const output = evt.type === "tool-error" ? { content: evt.error instanceof Error ? evt.error.message : String(evt.error), isError: true } : evt.output;
-        const res = output;
-        toolResults.push({
-          toolCallId: evt.toolCallId,
-          result: output
-        });
-        config.onToolResult?.(
-          toolCalls.find((tc) => tc.toolCallId === evt.toolCallId)?.toolName ?? "unknown",
-          res?.content ?? String(output),
-          res?.isError ?? false,
-          evt.toolCallId
-        );
-      }
+    let result;
+    let retryNotice = false;
+    try {
+      await withRetry(async () => {
+        fullText = "";
+        let toolActivity = false;
+        try {
+          result = streamText2({
+            // The stream consumer propagates failures; the SDK default also dumps raw requests to stderr.
+            onError() {
+            },
+            model: config.model,
+            messages: modelMessages,
+            abortSignal: config.toolContext.abortSignal,
+            instructions,
+            tools,
+            activeTools,
+            stopWhen: isStepCount2(1),
+            repairToolCall: activeTools.length ? feedback.repair : void 0,
+            maxRetries: 0,
+            maxOutputTokens: Math.min(budget.output, remainingTokens)
+          });
+          for await (const event of result.stream) {
+            if (String(event.type).startsWith("tool-")) toolActivity = true;
+            if (event.type === "error") {
+              const error = event.error instanceof Error ? event.error : new Error(String(event.error));
+              if (toolCalls.length > 0 || toolResults.length > 0 || !holdText && fullText.length > 0) Object.assign(error, { retryable: false });
+              throw error;
+            }
+            if (event.type === "text-delta") {
+              fullText += event.text;
+              if (!holdText && !guard.failedChecks.length) config.onTextChunk?.(event.text);
+            } else if (event.type === "tool-call") {
+              toolCalls.push({
+                toolCallId: event.toolCallId,
+                toolName: event.toolName,
+                args: event.input
+              });
+              config.onToolCall?.(event.toolName, event.input, event.toolCallId);
+            }
+            const evt = event;
+            if (evt.type === "tool-result" || evt.type === "tool-error") {
+              const output = evt.type === "tool-error" ? { content: evt.error instanceof Error ? evt.error.message : String(evt.error), isError: true } : evt.output;
+              const res = output;
+              toolResults.push({
+                toolCallId: evt.toolCallId,
+                result: output
+              });
+              config.onToolResult?.(
+                toolCalls.find((tc) => tc.toolCallId === evt.toolCallId)?.toolName ?? "unknown",
+                res?.content ?? String(output),
+                res?.isError ?? false,
+                evt.toolCallId
+              );
+            }
+          }
+          config.toolContext.abortSignal?.throwIfAborted();
+        } catch (error) {
+          if (error instanceof Error && (toolActivity || toolCalls.length || toolResults.length || !holdText && fullText.length)) Object.assign(error, { retryable: false });
+          throw error;
+        }
+      }, {
+        signal: config.toolContext.abortSignal,
+        onRetry: (attempt) => {
+          const notice = `Temporary model error. Retrying (${attempt + 1}/3)\u2026`;
+          config.toolContext.log?.(notice);
+          retryNotice = true;
+          config.toolContext.onQueue?.(notice);
+        }
+      });
+    } catch (error) {
+      if (error instanceof Error) Object.assign(error, { retryable: false });
+      throw error;
+    } finally {
+      if (retryNotice) config.toolContext.onQueue?.(null);
     }
-    config.toolContext.abortSignal?.throwIfAborted();
     try {
       const u = await result.usage;
       if (u) streamUsage = { promptTokens: u.inputTokens, completionTokens: u.outputTokens };
@@ -7276,6 +7380,7 @@ async function runDesktopTurn(turn) {
     ...turn.maxOutputTokens ? { maxOutputTokens: turn.maxOutputTokens } : {},
     ...turn.contextWindow ? { contextWindow: turn.contextWindow } : {},
     ...turn.nativeContextWindow ? { nativeContextWindow: turn.nativeContextWindow } : {},
+    ...turn.ollamaKeepAlive === -1 ? { ollamaKeepAlive: -1 } : {},
     ...turn.ollamaBatch ? { ollamaBatch: turn.ollamaBatch } : {},
     ...Array.isArray(turn.fallbacks) && turn.fallbacks.length ? { fallbacks: turn.fallbacks } : {}
   };
@@ -7361,7 +7466,8 @@ async function runDesktopTurn(turn) {
     return await runAgentLoop(turn.messages, {
       model: resolveModel(selection),
       modelId: selection.model,
-      contextWindows: turn.automaticContext ? turn.availableContextWindows : void 0,
+      contextWindows: turn.automaticContext ? turn.availableContextWindows?.filter((n) => n <= (turn.nativeContextWindow ?? 262144)) : void 0,
+      refreshContextWindows: turn.automaticContext && turn.refreshContextWindows ? async () => (await turn.refreshContextWindows()).filter((n) => n <= (turn.nativeContextWindow ?? 262144)) : void 0,
       resolveContext: (contextWindow) => resolveModel({ ...selection, contextWindow }),
       systemPrompt: (turn.remoteWorkspace ? `You are Notch, an AI coding assistant. All workspace tools operate over SSH on the user's host.
 ${turn.remoteWorkspace.instructions}` : await buildSystemPrompt(cwd, selection.model, ctx, selection.contextWindow)) + (turn.instructions ? `

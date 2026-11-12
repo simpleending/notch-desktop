@@ -27,6 +27,7 @@ import { parseWorkspaceMode } from './concurrency/task-workspace.js';
 export interface ByokConfigBlock {
   contextWindow?: number;
   ollamaBatch?: number;
+  ollamaKeepAlive?: -1;
   sourceRepo?: string;
   /** Provider id (openai, anthropic, openrouter, together, ...). */
   provider?: string;
@@ -139,6 +140,7 @@ export function selectModel(current: ModelConfig, selection: ModelSelection): Mo
       delete next.nativeContextWindow;
       delete next.maxOutputTokens;
       delete next.ollamaBatch;
+      delete next.ollamaKeepAlive;
       delete next.sourceRepo;
     }
     if (provider) {

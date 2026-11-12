@@ -219,7 +219,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
               await turn.onLifecycle?.(event, payload);
             },
             ripgrepPath: process.resourcesPath ? path.join(process.resourcesPath, 'bin', 'notch-rg.exe') : undefined,
-            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || (model.startsWith('colibri/') ? 16384 : 8192), automaticContext: model.startsWith('ollama/') && !host.modelManager?.requestedContext?.(model), availableContextWindows: profiles.get(model)?.choices, strataAutoContext: model.startsWith('strata/') ? !host.modelManager?.requestedContext(model) : undefined, colibriAutoContext: model.startsWith('colibri/') ? !host.modelManager?.requestedContext(model) : undefined, nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 128, fallbacks: model.startsWith('openrouter/') ? host.modelManager?.fallbacks(model) : undefined });
+            baseUrl: model.startsWith('openrouter/') ? 'https://openrouter.ai/api/v1' : endpoints.get(model), contextWindow: profiles.get(model)?.contextWindow || (model.startsWith('colibri/') ? 16384 : 8192), automaticContext: model.startsWith('ollama/') && !host.modelManager?.requestedContext?.(model), availableContextWindows: profiles.get(model)?.choices, refreshContextWindows: async()=>{await host.listModels(true);return profiles.get(model)?.choices || [];}, strataAutoContext: model.startsWith('strata/') ? !host.modelManager?.requestedContext(model) : undefined, colibriAutoContext: model.startsWith('colibri/') ? !host.modelManager?.requestedContext(model) : undefined, nativeContextWindow:profiles.get(model)?.nativeContext, maxOutputTokens: profiles.get(model)?.maxOutputTokens, ollamaBatch: 128, ollamaKeepAlive: await lifecycle.keepAlive(model), fallbacks: model.startsWith('openrouter/') ? host.modelManager?.fallbacks(model) : undefined });
         },
       });
       queries.set(query.id, query);
@@ -231,7 +231,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
   };
   host.automations=createAutomations(dataDirectory,{host});
   host.runtimeMaintenance=createRuntimeMaintenance();
-  lifecycle=createLocalModelLifecycle({fetcher,runtime,catalog:()=>host.listModels(true),endpoint:key=>endpoints.get(key),
+  lifecycle=createLocalModelLifecycle({fetcher,runtime,preferenceFile:path.join(dataDirectory,'manual-model-mounts.json'),catalog:()=>host.listModels(true),endpoint:key=>endpoints.get(key),
     invalidate:()=>{modelRevision++;fetchedAt=0;},
     context:(key,row)=>key.startsWith('ollama/')||host.modelManager?.requestedContext?.(key)?row.defaultContextWindow:undefined,
     assertIdle:()=>{if([...queries.values()].some(query=>query.active&&!query.model?.startsWith('openrouter/')))throw Error('Finish or interrupt the current local response before loading or ejecting a model.');}});

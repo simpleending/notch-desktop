@@ -356,6 +356,7 @@ export interface ByokSpec {
   nativeContextWindow?: number;
   contextWindow?: number;
   ollamaBatch?: number;
+  ollamaKeepAlive?: -1;
   /** Provider id (must match a BUILTIN_BYOK_PROVIDERS entry). */
   provider: string;
   /** Remote model id (e.g. `anthropic/claude-sonnet-4.6`). */

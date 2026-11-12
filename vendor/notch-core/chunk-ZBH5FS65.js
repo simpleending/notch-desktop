@@ -5,7 +5,7 @@ import {
   loadSyncedByokKeys,
   parseByokRef,
   resolveByokModel
-} from "./chunk-ZZBG7PDZ.js";
+} from "./chunk-QCUOEX4F.js";
 import {
   listModels,
   showModel
@@ -203,6 +203,7 @@ function resolveModel(config) {
       nativeContextWindow: config.nativeContextWindow,
       maxOutputTokens: config.maxOutputTokens,
       ollamaBatch: config.ollamaBatch,
+      ollamaKeepAlive: config.ollamaKeepAlive,
       fallbacks: config.fallbacks
     });
     firePiAiShadowProbe(config, resolved.model);
@@ -221,6 +222,7 @@ function resolveModel(config) {
       nativeContextWindow: config.nativeContextWindow,
       maxOutputTokens: config.maxOutputTokens,
       ollamaBatch: config.ollamaBatch,
+      ollamaKeepAlive: config.ollamaKeepAlive,
       fallbacks: config.fallbacks
     });
     firePiAiShadowProbe(config, resolved.model);
@@ -1440,6 +1442,7 @@ function selectModel(current, selection) {
       delete next.nativeContextWindow;
       delete next.maxOutputTokens;
       delete next.ollamaBatch;
+      delete next.ollamaKeepAlive;
       delete next.sourceRepo;
     }
     if (provider) {

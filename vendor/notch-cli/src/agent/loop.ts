@@ -1,4 +1,5 @@
 import { toolOutput } from '../messages.js';
+import { withRetry } from './retry.js';
 import { ExecutionGuard, isWebResearchTool } from './execution-guard.js';
 import { executionContext, withLocalInference } from '../concurrency/local-inference.js';
 import { withTaskWorkspace, openRouterTaskContext } from '../concurrency/task-workspace.js';
@@ -52,6 +53,7 @@ export interface AgentConfig {
   /** Context window size for compression decisions */
   contextWindow?: number;
   contextWindows?: number[];
+  refreshContextWindows?: () => Promise<number[]>;
   resolveContext?: (contextWindow: number) => LanguageModel;
   colibriAutoContext?: boolean;
   strataAutoContext?: boolean;
@@ -222,9 +224,24 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
   }
   let budget = contextBudget(contextWindow, overhead, outputLimit);
   let tokenRatio = 1;
+  let lastCompactedHistory: string | undefined;
   const compact = async () => {
     const estimated = estimateTokens(history);
     if (estimated * tokenRatio < budget.compactAt) return;
+    if (config.resolveContext && (config.contextWindows?.length || config.refreshContextWindows)) {
+      const choices = config.refreshContextWindows ? await config.refreshContextWindows() : config.contextWindows;
+      const next = fitContextWindow(contextWindow, overhead, outputLimit, choices, estimated * tokenRatio);
+      if (next > contextWindow) {
+        contextWindow = next;
+        config.model = config.resolveContext(next);
+        budget = contextBudget(next, overhead, outputLimit);
+        toolCtxWithCache.promptContextWindow = next;
+        if (estimated * tokenRatio < budget.compactAt) return;
+      }
+    }
+    // The pre-loop check and first step can see the same protected active turn.
+    const fingerprint = JSON.stringify(history);
+    if (fingerprint === lastCompactedHistory && estimated * tokenRatio <= budget.history) return;
     await config.onCompact?.(history);
     await config.toolContext.runHook?.('pre-compact', { messageCount: history.length });
     history = await autoCompress(history, config.model, contextWindow, () => {
@@ -235,6 +252,7 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       usage:(input,output)=>{totalPromptTokens+=input;totalCompletionTokens+=output;config.onUsage?.({inputTokens:input,outputTokens:output,contextWindow});if(totalPromptTokens+totalCompletionTokens>=config.maxTotalTokens!)throw Object.assign(Error('The automation reached its token limit.'),{code:'token-limit'});},
     }:undefined);
     if (estimateTokens(history) * tokenRatio > budget.history) throw new Error('The current request or tool results exceed the selected context. Increase context or split the request; the transcript has been saved.');
+    lastCompactedHistory = JSON.stringify(history);
     await config.toolContext.runHook?.('post-compact', { messageCount: history.length });
   };
 
@@ -299,7 +317,7 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
       ].filter(Boolean).join('\n\n') }];
     }
 
-    // --- Stream (retry is handled by outer withRetry in index.ts) ---
+    // Retry only this model request, never replay completed tools from prior steps.
     guard.beginStep();
     const webCallsBefore = guard.webCallCount;
     const holdText = totalToolCalls > 0 || guard.failedChecks.length > 0;
@@ -310,57 +328,83 @@ async function runAgentLoopInternal(messages: ModelMessage[], config: AgentConfi
 
     const remainingTokens=config.maxTotalTokens?config.maxTotalTokens-totalPromptTokens-totalCompletionTokens-estimateTokens(modelMessages)-overhead:Infinity;
     if(remainingTokens<1)throw Object.assign(new Error('The automation reached its token limit.'),{code:'token-limit'});
-    const result = streamText({
-      // The stream consumer propagates failures; the SDK default also dumps raw requests to stderr.
-      onError() {},
-      model: config.model,
-      messages: modelMessages,
-      abortSignal: config.toolContext.abortSignal,
-      instructions,
-      tools,
-      activeTools,
-      stopWhen: isStepCount(1),
-      repairToolCall: activeTools.length ? feedback.repair : undefined,
-      maxRetries: 0,
-      maxOutputTokens: Math.min(budget.output,remainingTokens),
-    });
+    let result!: ReturnType<typeof streamText>;
+    let retryNotice = false;
+    try {
+      await withRetry(async () => {
+        fullText = '';
+        let toolActivity = false;
+        try {
+        result = streamText({
+          // The stream consumer propagates failures; the SDK default also dumps raw requests to stderr.
+          onError() {},
+          model: config.model,
+          messages: modelMessages,
+          abortSignal: config.toolContext.abortSignal,
+          instructions,
+          tools,
+          activeTools,
+          stopWhen: isStepCount(1),
+          repairToolCall: activeTools.length ? feedback.repair : undefined,
+          maxRetries: 0,
+          maxOutputTokens: Math.min(budget.output,remainingTokens),
+        });
 
-    for await (const event of result.stream) {
-      if (event.type === 'error') {
-        const error = event.error instanceof Error ? event.error : new Error(String(event.error));
-        // Retrying the whole turn after actions ran could repeat edits or shell
-        // commands. Let the user resume from the current filesystem instead.
-        if (totalToolCalls > 0 || toolCalls.length > 0) Object.assign(error, { retryable: false });
-        throw error;
-      }
-      if (event.type === 'text-delta') {
-        fullText += event.text;
-        if (!holdText && !guard.failedChecks.length) config.onTextChunk?.(event.text);
-      } else if (event.type === 'tool-call') {
-        toolCalls.push({
-          toolCallId: event.toolCallId,
-          toolName: event.toolName,
-          args: event.input as Record<string, unknown>,
-        });
-        config.onToolCall?.(event.toolName, event.input as Record<string, unknown>, event.toolCallId);
-      }
-      const evt = event as Record<string, unknown>;
-      if (evt.type === 'tool-result' || evt.type === 'tool-error') {
-          const output = evt.type === 'tool-error' ? { content: evt.error instanceof Error ? evt.error.message : String(evt.error), isError: true } : evt.output;
-        const res = output as { content: string; isError?: boolean } | undefined;
-        toolResults.push({
-          toolCallId: evt.toolCallId as string,
-          result: output,
-        });
-        config.onToolResult?.(
-          toolCalls.find((tc) => tc.toolCallId === evt.toolCallId)?.toolName ?? 'unknown',
-          res?.content ?? String(output),
-          res?.isError ?? false,
-          evt.toolCallId as string,
-        );
-      }
+        for await (const event of result.stream) {
+          if (String(event.type).startsWith('tool-')) toolActivity = true;
+          if (event.type === 'error') {
+            const error = event.error instanceof Error ? event.error : new Error(String(event.error));
+            if (toolCalls.length > 0 || toolResults.length > 0 || (!holdText && fullText.length > 0)) Object.assign(error, { retryable: false });
+            throw error;
+          }
+          if (event.type === 'text-delta') {
+            fullText += event.text;
+            if (!holdText && !guard.failedChecks.length) config.onTextChunk?.(event.text);
+          } else if (event.type === 'tool-call') {
+            toolCalls.push({
+              toolCallId: event.toolCallId,
+              toolName: event.toolName,
+              args: event.input as Record<string, unknown>,
+            });
+            config.onToolCall?.(event.toolName, event.input as Record<string, unknown>, event.toolCallId);
+          }
+          const evt = event as Record<string, unknown>;
+          if (evt.type === 'tool-result' || evt.type === 'tool-error') {
+              const output = evt.type === 'tool-error' ? { content: evt.error instanceof Error ? evt.error.message : String(evt.error), isError: true } : evt.output;
+            const res = output as { content: string; isError?: boolean } | undefined;
+            toolResults.push({
+              toolCallId: evt.toolCallId as string,
+              result: output,
+            });
+            config.onToolResult?.(
+              toolCalls.find((tc) => tc.toolCallId === evt.toolCallId)?.toolName ?? 'unknown',
+              res?.content ?? String(output),
+              res?.isError ?? false,
+              evt.toolCallId as string,
+            );
+          }
+        }
+        config.toolContext.abortSignal?.throwIfAborted();
+        } catch (error) {
+          if (error instanceof Error && (toolActivity || toolCalls.length || toolResults.length || (!holdText && fullText.length))) Object.assign(error, { retryable: false });
+          throw error;
+        }
+    }, {
+      signal: config.toolContext.abortSignal,
+      onRetry: attempt => {
+        const notice = `Temporary model error. Retrying (${attempt + 1}/3)…`;
+        config.toolContext.log?.(notice);
+        retryNotice = true;
+        config.toolContext.onQueue?.(notice);
+      },
+      });
+    } catch (error) {
+      // CLI callers must not retry the whole turn after the request retries finish.
+      if (error instanceof Error) Object.assign(error, { retryable: false });
+      throw error;
+    } finally {
+      if (retryNotice) config.toolContext.onQueue?.(null);
     }
-    config.toolContext.abortSignal?.throwIfAborted();
 
     // Collect usage
     try {

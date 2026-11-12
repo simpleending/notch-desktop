@@ -16,8 +16,16 @@ export function localContextProfile(bytes, hardware, metadata = {}, mounted = {}
   const layers = number('block_count'), heads = number('attention.head_count_kv');
   const key = number('attention.key_length') || number('embedding_length') / number('attention.head_count');
   const value = number('attention.value_length') || key;
-  // FP16 KV cache, all layers: deliberately overestimates hybrid attention models.
-  const kvBytesPerToken = layers * heads * (key + value) * 2;
+  // Qwen3.5 recurrent layers keep fixed state, not a growing attention KV cache.
+  // Unknown or malformed layouts retain the conservative all-layer estimate.
+  const recurrent = info[`${arch}.attention.recurrent_layers`];
+  const interval = info[`${arch}.full_attention_interval`];
+  let attentionLayers = layers;
+  if (['qwen35','qwen35moe'].includes(arch) && Number.isSafeInteger(layers) && layers > 0) {
+    if (Array.isArray(recurrent) && recurrent.length === layers && recurrent.every(n => n === true || n === false || n === 0 || n === 1)) attentionLayers = recurrent.filter(n => !n).length;
+    else if (Number.isSafeInteger(interval) && interval > 1 && interval <= layers) attentionLayers = Math.ceil(layers / interval);
+  }
+  const kvBytesPerToken = attentionLayers * heads * (key + value) * 2;
   const known = Number.isFinite(kvBytesPerToken) && kvBytesPerToken > 0;
   // A running copy already occupies memory; count only that same model's reclaimable allocation.
   const resident = Number.isSafeInteger(mounted.size) && mounted.size>0 ? mounted.size : 0;
@@ -29,7 +37,10 @@ export function localContextProfile(bytes, hardware, metadata = {}, mounted = {}
   const budget = ramBudget + vramBudget;
   const weights = bytes * 1.2 + 1.5 * GiB;
   const cap = nativeKnown ? native : 8192;
-  const required = context => weights + (known ? kvBytesPerToken * context : GiB * context / 8192);
+  const verifiedContext = resident > 0 && Number.isSafeInteger(mounted.context_length) && mounted.context_length >= 2048 && mounted.context_length <= cap ? mounted.context_length : undefined;
+  const required = context => verifiedContext
+    ? resident + Math.max(0, context - verifiedContext) * (known ? kvBytesPerToken : GiB / 8192) * 1.2 + GiB / 4
+    : weights + (known ? kvBytesPerToken * context : GiB * context / 8192);
   const choices = [2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144].filter(context => nativeKnown && context <= cap && required(context) <= budget);
   // The matching daemon digest proves this allocation already exists. Do not resize a live conversation from cold-load estimates.
   const activeContext=resident>0 && nativeKnown && Number.isSafeInteger(mounted.context_length) && mounted.context_length>=2048 && mounted.context_length<=cap ? mounted.context_length : undefined;

@@ -8,6 +8,7 @@
  */
 
 export interface RetryOptions {
+  signal?: AbortSignal;
   /** Maximum number of attempts (default 3) */
   maxAttempts?: number;
   /** Base delay in ms (default 1000) */
@@ -26,7 +27,11 @@ export interface RetryOptions {
 
 const DEFAULT_RETRYABLE = (err: Error): boolean => {
   if ((err as Error & { retryable?: boolean }).retryable === false) return false;
+  if (err.name === 'AbortError' || err.name === 'TimeoutError') return false;
   const msg = err.message.toLowerCase();
+  if (/out of memory|insufficient memory|context.*(?:exceed|limit)|invalid.*(?:context|argument)/.test(msg)) return false;
+  const status = (err as Error & { statusCode?: number; status?: number }).statusCode ?? (err as Error & { status?: number }).status;
+  if (typeof status === 'number') return status === 408 || status === 429 || status >= 500 && status <= 599;
   // Network errors
   if (msg.includes('fetch') || msg.includes('econnrefused') || msg.includes('econnreset') ||
       msg.includes('etimedout') || msg.includes('network') || msg.includes('socket')) {
@@ -60,9 +65,11 @@ export async function withRetry<T>(
   let lastError: Error | undefined;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    options.signal?.throwIfAborted();
     try {
       return await fn();
     } catch (err: any) {
+      options.signal?.throwIfAborted();
       lastError = err;
 
       if (attempt === maxAttempts || !isRetryable(err)) {
@@ -79,15 +86,20 @@ export async function withRetry<T>(
 
       options.onRetry?.(attempt, err, delay);
 
-      await sleep(delay);
+      await sleep(delay, options.signal);
     }
   }
 
   throw lastError;
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
+    const abort = () => { clearTimeout(timer); reject(signal?.reason); };
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }
 
 /**

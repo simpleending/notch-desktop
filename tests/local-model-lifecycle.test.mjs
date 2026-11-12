@@ -144,7 +144,7 @@ test('an overlapping catalog refresh cannot put a stale Loaded label back after 
 test('the same model on a second Ollama daemon is released so only one copy remains resident',async()=>{
  const primary='http://127.0.0.1:11436',secondary='http://127.0.0.1:11434',active=new Set([primary,secondary]),ejected=[];
  const runtime={withLocalInference:fn=>fn(),colibriStatus:async()=>({running:false}),strataStatus:async()=>({running:false}),loadedMlxModel:()=>undefined};
- const lifecycle=createLocalModelLifecycle({runtime,fetcher:async(url,init)=>{const root=new URL(url).origin;if(init?.body){assert.equal(JSON.parse(init.body).keep_alive,0);active.delete(root);ejected.push(root);}return{ok:true,json:async()=>({models:active.has(root)?[{name:'same'}]:[]})};},
+ const lifecycle=createLocalModelLifecycle({runtime,fetcher:async(url,init)=>{const root=new URL(url).origin;if(init?.body){const keep=JSON.parse(init.body).keep_alive;if(keep===0){active.delete(root);ejected.push(root);}else{assert.equal(keep,-1);assert.equal(root,primary);}}return{ok:true,json:async()=>({models:active.has(root)?[{name:'same'}]:[]})};},
   catalog:async()=>[{key:'ollama/same',enabled:true,defaultContextWindow:8192}],endpoint:()=>primary+'/v1',context:()=>8192,assertIdle(){}});
  await lifecycle.change('mount','ollama/same');assert.deepEqual([...active],[primary]);assert.deepEqual(ejected,[secondary]);
 });

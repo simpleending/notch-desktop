@@ -678,25 +678,26 @@ export async function autoCompressWithStats(
 ): Promise<{ messages: ModelMessage[]; stats: AutoCompressStats }> {
   const stats: AutoCompressStats = { budgetStashed: 0, snipped: 0, collapsed: false, autoCompacted: false, fullCompacted: false };
   const threshold = Math.floor(historyBudget * .8);
+  const target = Math.floor(historyBudget * .65);
   if (estimateTokens(messages) < threshold) return { messages, stats };
   const br = budgetReduce(messages);
   let result = microCompact(br.messages);
   stats.budgetStashed = br.stashed;
   if (estimateTokens(result) >= threshold) {
-    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget,billing });
+    const auto = await autoCompactSummarize(result, { model, contextWindow, signal, historyBudget: target,billing });
     result = auto.messages; stats.autoCompacted = auto.compressed;
   }
-  if (estimateTokens(result) > historyBudget) {
+  if (estimateTokens(result) >= threshold) {
     // A recent batch can exceed the window on its own. Keep its tool chain with previews.
     const recent = budgetReduce(result, {
       keepLastN: 0,
-      maxToolResultChars: Math.min(BUDGET_TOOL_RESULT_MAX, Math.max(BUDGET_PREVIEW_CHARS * 2, historyBudget)),
+      maxToolResultChars: Math.min(BUDGET_TOOL_RESULT_MAX, Math.max(BUDGET_PREVIEW_CHARS * 2, target)),
     });
     result = recent.messages;
     stats.budgetStashed += recent.stashed;
   }
   if (estimateTokens(result) > historyBudget) {
-    const full = await fullCompact(result, model, contextWindow, signal, historyBudget,billing);
+    const full = await fullCompact(result, model, contextWindow, signal, target,billing);
     result = full.messages; stats.fullCompacted = full.compressed;
   }
   return { messages: result, stats };

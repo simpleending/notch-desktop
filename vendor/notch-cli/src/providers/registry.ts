@@ -150,6 +150,7 @@ export function resolveModel(config: ModelConfig): LanguageModel {
       nativeContextWindow: config.nativeContextWindow,
       maxOutputTokens: config.maxOutputTokens,
       ollamaBatch: config.ollamaBatch,
+      ollamaKeepAlive: config.ollamaKeepAlive,
       fallbacks: config.fallbacks,
     });
     firePiAiShadowProbe(config, resolved.model);
@@ -170,6 +171,7 @@ export function resolveModel(config: ModelConfig): LanguageModel {
       nativeContextWindow: config.nativeContextWindow,
       maxOutputTokens: config.maxOutputTokens,
       ollamaBatch: config.ollamaBatch,
+      ollamaKeepAlive: config.ollamaKeepAlive,
       fallbacks: config.fallbacks,
     });
     firePiAiShadowProbe(config, resolved.model);
