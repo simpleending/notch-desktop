@@ -13,7 +13,7 @@ test('update settings expose status, opt out, manual download and normal quit ac
   await all(tree).find(n=>n.type==='input').props.onChange({target:{checked:false}});assert.deepEqual(calls.at(-1),['automatic',false]);
   await button(render(),'Check for updates').props.onClick();assert.equal(calls.at(-1)[0],'check');
   await button(render(),'Download update').props.onClick();assert.equal(calls.at(-1)[0],'download');
-  tree=render();await button(tree,'Quit and install').props.onClick();assert.equal(calls.at(-1)[0],'quit');
-  state[0]={...state[0],canInstall:false};assert.equal(button(render(),'Quit and install').props.disabled,true);
+  tree=render();await button(tree,'Update').props.onClick();assert.equal(calls.at(-1)[0],'quit');
+  state[0]={...state[0],canInstall:false};assert.equal(button(render(),'Update').props.disabled,true);
  }finally{globalThis.window=previous;}
 });

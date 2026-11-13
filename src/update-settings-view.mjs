@@ -10,7 +10,7 @@ export function createUpdateSettings(React) {
     const act=async(action,value)=>{const revision=++request.current;acting.current=true;setBusy(true);setError('');setPollError('');try{const next=await window.notchModels.updates(action,value);if(revision===request.current)setState(next);}catch{if(revision===request.current)setError('The update action could not finish. Try again or visit GitHub releases.');}finally{if(revision===request.current){acting.current=false;setBusy(false);}}};
     return h('section',{className:'notch-web-settings notch-update-settings','aria-labelledby':'notch-updates-title'},
       h('h3',{id:'notch-updates-title',tabIndex:-1},'Updates'),
-      h('p',{className:'notch-appearance-copy'},'Check GitHub releases when notch opens. Updates download in the background and install after you quit normally. During Windows shutdown, installation waits for a later normal quit.'),
+      h('p',{className:'notch-appearance-copy'},'Updates download automatically when Notch opens and are checked periodically while it runs. Choose Update to install and restart. Normal quit installs without reopening; Windows shutdown defers installation.'),
       state?h(React.Fragment,null,
         h('p',null,`Installed version: ${state.currentVersion}`),
         h('label',{className:'notch-setting-row'},h('span',null,h('strong',null,'Automatic updates'),h('small',null,'Check and download new stable releases on startup.')),
@@ -19,7 +19,7 @@ export function createUpdateSettings(React) {
         state.phase==='downloading'?h('progress',{value:state.progress||0,max:100,'aria-label':'Update download progress'}):null,
         h('div',{className:'notch-update-actions'},h('button',{type:'button',disabled:busy||!state.supported||['checking','downloading'].includes(state.phase),onClick:()=>void act('check')},'Check for updates'),
           state.phase==='available'?h('button',{type:'button',disabled:busy||!state.canInstall,onClick:()=>void act('download')},'Download update'):null,
-          state.phase==='ready'?h('button',{type:'button',disabled:busy||!state.canInstall,onClick:()=>void act('quit')},'Quit and install'):null)):
+          state.phase==='ready'?h('button',{type:'button',disabled:busy||!state.canInstall,onClick:()=>void act('quit')},'Update'):null)):
         !pollError?h(LoadingSkeleton,{label:'Loading update settings…',rows:2}):null,
       h('a',{href:'https://github.com/simpleending/notch-desktop/releases/latest',target:'_blank',rel:'noopener noreferrer'},'View releases on GitHub'),
       error||pollError?h('p',{role:'alert'},uiMessage(error||pollError)):null);

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-export function createAutomationBackground({ app, BrowserWindow, Tray, Menu, directory }) {
+export function createAutomationBackground({ app, BrowserWindow, Tray, Menu, directory, onHide=async()=>{}, onError=console.error }) {
   const file = path.join(directory, 'automation-background.json');
   let enabled = false, quitting = false, tray, writes = Promise.resolve();
   const primary = window => { try { return !window.isDestroyed() && !new URL(window.webContents.getURL() || 'about:blank').searchParams.has('surface'); } catch { return false; } };
@@ -18,7 +18,7 @@ export function createAutomationBackground({ app, BrowserWindow, Tray, Menu, dir
   }
   app.on('before-quit', () => { quitting = true; });
   app.on('browser-window-created', (_event, window) => {
-    window.prependListener('close', event => { if (enabled && tray && !quitting && primary(window)) { event.preventDefault(); window.hide(); } });
+    window.prependListener('close', event => { if (enabled && tray && !quitting && primary(window)) { event.preventDefault(); window.hide();void onHide().catch(onError); } });
     window.on('query-session-end', () => { quitting = true; });
     window.on('session-end', () => { quitting = true; });
   });

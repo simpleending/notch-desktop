@@ -37,6 +37,7 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
   const queries = new Map();
   const rewinding = new Set();
   let lifecycle;
+  let localShutdown;
   const host = {
     knowledge: createKnowledge(dataDirectory),
     remoteWorkspace: (target, signal) => createRemoteWorkspace(host.remoteSsh, target, signal),
@@ -50,6 +51,18 @@ export function createHost(dataDirectory, { hardware: detectHardware = detectLoc
     getQueueStatus: () => [...queries.values()].filter(query => query.queueMessage).map(query => ({ sessionId: query.id, message: query.queueMessage })),
     localModelBusy: () => lifecycle.busy,
     async localModelChange(action,key) { return lifecycle.change(action,key); },
+    shutdownLocalModels(permanent=true) {
+      if(localShutdown)return localShutdown;
+      if(permanent)host.automations.shutdown();
+      localShutdown=(async()=>{
+        await host.runtimeReady?.catch(()=>{});
+        const queriesClosed=await Promise.allSettled([...queries.values()].filter(query=>permanent||!query.model?.startsWith('openrouter/')).map(query=>query.close()));
+        const released=await Promise.allSettled([lifecycle.releaseAll(permanent),host.voice?.shutdown()]);
+        const failures=[...queriesClosed,...released].filter(row=>row.status==='rejected').map(row=>row.reason);
+        if(failures.length)throw new AggregateError(failures,'Local model shutdown did not complete.');
+      })().finally(()=>{if(!permanent)localShutdown=undefined;});
+      return localShutdown;
+    },
     async mountedOllamaKeys() { return [...new Set((await lifecycle.mountedOllama()).map(row=>row.key))]; },
     resolveModelChoice(model) {
       const chosen = !model || model === 'auto' ? defaultModel : model;

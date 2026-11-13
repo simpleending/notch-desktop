@@ -195,6 +195,9 @@ export function patchPersistedContextUsage(source) {
 
 export function patchStartupShutdown(source) {
   source = patchMcpShutdownBudget(source);
+  const models='yo("notch.models.shutdown","critical",6e3,()=>globalThis.__notchHost.shutdownLocalModels()),';
+  if(!source.includes(models))source=source.replace('yo("mcp.shutdown",',models+'yo("mcp.shutdown",');
+  if(source.includes('async function S7e('))source=patchFunction(source,'S7e',body=>body.includes('cancelRestart')?body:body.replace('.every(Boolean)', '.every(Boolean)||(globalThis.__notchHost.updates?.cancelRestart(),false)'));
   source = patchClassMethod(source, 'D8e', 'handle', body => {
     const invoke = 'Promise.resolve().then(()=>r(a,...s))';
     const cancellable = 'Promise.resolve().then(()=>globalThis.__notchDiscovery.read(e,()=>r(a,...s)))';

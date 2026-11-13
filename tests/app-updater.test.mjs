@@ -68,3 +68,21 @@ test('update IPC accepts only primary-window actions and repairs the previous pr
  const previous=modelPreload.replace("\n  updates:(action,value)=>ipcRenderer.invoke('notch-models:updates',action,value),",'');
  assert.equal(patchModelPreload(previous),modelPreload);assert.equal(patchModelPreload(modelPreload),modelPreload);
 });
+
+test('Update installs with restart only after confirmed successful quit; cancelled close preserves the app',async()=>{
+ const app=Object.assign(new EventEmitter(),{isPackaged:true,getVersion:()=> '0.1.50',quit(){this.requests=(this.requests||0)+1;}}),updater=new EventEmitter(),installs=[];
+ updater.quitAndInstall=(...args)=>installs.push(args);updater.checkForUpdates=async()=>({});
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'notch-update-restart-'));
+ const service=createAppUpdater({app,updater,directory,platform:'win32',arch:'x64',startupDelay:999999});
+ try{
+  await service.status();updater.emit('update-downloaded',{version:'0.1.51'});
+  await service.quit();await service.quit();assert.equal(app.requests,1);assert.deepEqual(installs,[]);assert.equal(updater.autoInstallOnAppQuit,false);
+  service.cancelRestart();app.emit('quit',{},0);assert.deepEqual(installs,[]);assert.equal(updater.autoInstallOnAppQuit,true);
+  await service.quit();service.close();app.emit('quit',{},0);assert.deepEqual(installs,[[true,true]]);
+ }finally{service.close();}
+});
+
+test('automatic checks repeat while open and stop when opted out',async()=>{
+ const f=await fixture({pollInterval:15,startupDelay:999999});
+ try{await new Promise(r=>setTimeout(r,55));assert(f.checks>=2);await f.service.automatic(false);const count=f.checks;await new Promise(r=>setTimeout(r,40));assert.equal(f.checks,count);}finally{f.service.close();}
+});

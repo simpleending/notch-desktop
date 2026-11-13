@@ -15,6 +15,16 @@ const brandCardUrl = 'data:image/svg+xml;base64,' + readFileSync(new URL('../ass
 const symbolUrl = 'data:image/svg+xml;base64,' + Buffer.from(symbolMarkup).toString('base64');
 export const legacyBrandAsset = /^(?:duck|Qoduck|userCard|voice_|activeDays\d+Sticker|(?:automationFirstCreate|desktopPetFirstUse|forkFirstUse|goalFirstUse|mobileMessageFirstReceive|snakeFirstPlay|voiceFirstUse)Sticker|notch(?:Anniversary|Pioneer|-(?:loading-line|metal|mobile-download-visual))|profileStickerSparseState|quickNote(?:AddButton|EmptyState|OnboardingFirstNote|TitleQuick)|onboardingWallpaper|parchmentDoodle|(?:bird|crocodile|dog|gorilla)-|planAgentAvatar|agent(?:-team)?-creation-figure|Login_poster|update-notification-card|feedbackWatermark|(?:failed|idle|jumping|look|review|running|waiting|waving|glass)(?:-|_))/;
 export function patchSecondaryArtwork(source) {
+  if(source.includes('function ProfileMenu(')&&!source.includes('/* notch update indicator */')){
+    source=patchFunction(source,'ProfileMenu',body=>{
+      const anchor='return jsxRuntimeExports.jsxs(DropdownMenu,';
+      const at=body.indexOf(anchor);
+      if(at<0)throw Error('Profile menu update indicator anchor changed.');
+      const expression=body.slice(at+7,body.lastIndexOf('}')).trim().replace(/;$/,'');
+      return body.slice(0,at)+'return reactExports.createElement("div",{className:"notch-profile-updates"},reactExports.createElement(notchUpdateIndicator),'+expression+');}';
+    });
+    source='/* notch update indicator */\nimport {createUpdateIndicator} from "./update-indicator.mjs";\n'+source+'\nconst notchUpdateIndicator=createUpdateIndicator(reactExports);\n';
+  }
   source = patchModelLoading(source);
   if(source.includes('function RadialMenu(')&&!source.includes('const notchDiamondMenu=')){
     source=patchFunction(source,'RadialMenu','function RadialMenu(props){return jsxRuntimeExports.jsx(notchDiamondMenu,props);}');
@@ -318,7 +328,7 @@ export async function installWorkbenchAssets(application, root) {
   await cp(path.join(root, 'src/ui-messages.mjs'), path.join(assets, 'ui-messages.mjs'));
   await cp(path.join(root, 'src/web-search-providers.mjs'), path.join(assets, 'web-search-providers.mjs'));
   for(const name of ['automation-view.mjs','automation-policy.mjs'])await cp(path.join(root,'src',name),path.join(assets,name));
-  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'diamond-menu.mjs', 'model-menu.mjs', 'model-activity.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'loading-skeleton.mjs', 'task-attention.mjs', 'colibri-panel.mjs', 'strata-panel.mjs', 'engine-update-view.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
+  for (const name of ['workbench-skin.mjs', 'workbench-skin.css', 'diamond-menu.mjs', 'model-menu.mjs', 'model-activity.mjs', 'model-navigation.mjs', 'model-policy.mjs', 'loading-skeleton.mjs', 'task-attention.mjs', 'colibri-panel.mjs', 'strata-panel.mjs', 'engine-update-view.mjs', 'web-settings-view.mjs', 'phone-settings-view.mjs', 'update-settings-view.mjs', 'update-indicator.mjs', 'github-settings-view.mjs', 'github-repository.mjs', 'github-browser.mjs', 'origin-settings-view.mjs', 'origin-repository.mjs', 'notes-branding.mjs', 'voice-model-picker.mjs']) await cp(path.join(root, 'src', name), path.join(assets, name));
   await verifyWorkbenchImports(assets, false);
   await cp(path.join(root,'assets/providers'),path.join(assets,'providers'),{recursive:true});
   await cp(path.join(root,'assets/github'),path.join(assets,'github'),{recursive:true});

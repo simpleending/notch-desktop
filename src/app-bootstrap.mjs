@@ -26,7 +26,7 @@ const requestedProfile = app.commandLine.getSwitchValue('user-data-dir');
 app.setPath('userData', requestedProfile ? path.resolve(requestedProfile) : path.join(app.getPath('appData'), 'com.freesyntax.notch.desktop'));
 globalThis.__notchProfileOverride = requestedProfile ? { directory: app.getPath('userData'), existed: existsSync(path.join(app.getPath('userData'), 'main.sqlite')) } : null;
 globalThis.__notchHost = createHost(app.getPath('userData'));
-const automationBackground = createAutomationBackground({app,BrowserWindow,Tray,Menu,directory:app.getPath('userData')});
+const automationBackground = createAutomationBackground({app,BrowserWindow,Tray,Menu,directory:app.getPath('userData'),onHide:()=>globalThis.__notchHost.shutdownLocalModels(false)});
 globalThis.__notchHost.automationBackground = automationBackground;
 void app.whenReady().then(()=>automationBackground.start()).catch(error=>console.error('Background automations:',error.message));
 globalThis.__notchHost.automations.setNotifier(({title,body,sessionId})=>{
